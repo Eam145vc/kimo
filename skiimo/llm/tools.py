@@ -645,6 +645,76 @@ def consultar_stock(producto_query: str) -> dict:
     return {"query": producto_query, "productos": out_productos}
 
 
+def proponer_anular_ultima_factura_cliente(
+    cliente_query: str,
+    n: int = 1,
+    motivo: str = "Anulacion solicitada por admin",
+) -> dict:
+    """Propone anular la N-esima factura mas reciente de un cliente.
+
+    n=1 -> ultima
+    n=2 -> penultima
+    n=3 -> antepenultima
+    etc.
+
+    Usar cuando el admin dice:
+    - 'anula la ultima factura de Hugo'
+    - 'cancela la penultima factura de Diego'
+    - 'anulame el ultimo pedido de Maria'
+    - 'borra la antepenultima de X'
+    """
+    from skiimo.matcher import Matcher
+    m = Matcher()
+    hits = m.search_customer(cliente_query, limit=5)
+    if not hits:
+        return {"error": f"Cliente '{cliente_query}' no encontrado"}
+
+    # Re-rankear: cliente con mas facturas gana
+    conn = get_conn()
+    try:
+        scored = []
+        for h in hits:
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM siigo_invoices WHERE customer_id = ?",
+                (h.id,),
+            ).fetchone()[0]
+            scored.append((cnt, h))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        c = scored[0][1] if scored[0][0] > 0 else hits[0]
+
+        # Buscar las facturas mas recientes
+        rows = conn.execute(
+            """SELECT name, date FROM siigo_invoices
+               WHERE customer_id = ?
+               ORDER BY date DESC, created_at DESC
+               LIMIT ?""",
+            (c.id, max(n, 1) + 2),  # traigo unas extras por si acaso
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return {
+            "error": f"{c.name} no tiene facturas registradas",
+            "cliente": c.name,
+        }
+    if len(rows) < n:
+        return {
+            "error": f"{c.name} solo tiene {len(rows)} factura(s), no la #{n}",
+            "cliente": c.name,
+            "facturas_disponibles": [r["name"] for r in rows],
+        }
+
+    factura_target = rows[n - 1]["name"]
+    # Delegar a proponer_anular_factura usando el nombre exacto
+    resultado = proponer_anular_factura(factura_target, motivo)
+    if isinstance(resultado, dict) and resultado.get("pendiente_confirmacion_anulacion"):
+        ordinal = {1: "ultima", 2: "penultima", 3: "antepenultima"}.get(n, f"#{n}")
+        resultado["cliente_match"] = c.name
+        resultado["ordinal"] = ordinal
+    return resultado
+
+
 def proponer_anular_factura(factura: str, motivo: str = "Anulacion solicitada por admin") -> dict:
     """Propone anular una factura de venta. NO la anula directamente; devuelve info
     para que el sistema muestre botones de confirmacion al admin.
@@ -988,6 +1058,7 @@ TOOLS_MAP: dict[str, Any] = {
     "analizar_pago_factura": analizar_pago_factura,
     "analizar_pago_a_proveedor": analizar_pago_a_proveedor,
     "proponer_anular_factura": proponer_anular_factura,
+    "proponer_anular_ultima_factura_cliente": proponer_anular_ultima_factura_cliente,
     "repetir_pedido_cliente": repetir_pedido_cliente,
     "estado_cuenta_cliente": estado_cuenta_cliente,
     "consultar_stock": consultar_stock,
@@ -1197,12 +1268,12 @@ TOOL_DECLARATIONS: list[dict] = [
     {
         "name": "proponer_anular_factura",
         "description": (
-            "Propone anular una factura de venta. NO la anula directamente — devuelve "
-            "informacion y opciones para que el admin confirme con botones. "
-            "Usar cuando el admin dice: 'anula la factura X', 'cancela esa factura', "
-            "'borra ese pedido', 'tira la factura Y'. "
-            "El sistema decide automaticamente si usar /annul o nota credito segun "
-            "el estado de la factura (electronica, pagada, etc.)."
+            "Propone anular una factura de venta CUANDO YA TENES EL NUMERO/NOMBRE EXACTO. "
+            "Usar cuando el admin menciona la factura por su identificador: "
+            "'anula la factura FV-1-5192', 'cancela la 5192', 'tira la FV-2-680'. "
+            "Si el admin dice 'la ultima de Hugo' o 'la penultima de Diego', usar "
+            "proponer_anular_ultima_factura_cliente en su lugar. "
+            "NO ejecuta nada — devuelve botones de confirmacion."
         ),
         "parameters": {
             "type": "object",
@@ -1211,6 +1282,26 @@ TOOL_DECLARATIONS: list[dict] = [
                 "motivo": {"type": "string", "description": "Motivo de la anulacion. Opcional."},
             },
             "required": ["factura"],
+        },
+    },
+    {
+        "name": "proponer_anular_ultima_factura_cliente",
+        "description": (
+            "Propone anular la N-esima factura mas reciente de un cliente. "
+            "n=1 = ultima, n=2 = penultima, n=3 = antepenultima. "
+            "Usar cuando el admin dice: 'anula la ultima factura de Hugo', "
+            "'cancela el ultimo pedido de Maria', 'borra la penultima de Diego', "
+            "'tira la antepenultima factura de X'. "
+            "NO ejecuta — devuelve botones de confirmacion."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cliente_query": {"type": "string", "description": "Nombre o NIT del cliente"},
+                "n": {"type": "integer", "description": "1=ultima, 2=penultima, 3=antepenultima. Default 1."},
+                "motivo": {"type": "string", "description": "Motivo de la anulacion. Opcional."},
+            },
+            "required": ["cliente_query"],
         },
     },
     {

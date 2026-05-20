@@ -947,9 +947,11 @@ async def _dispatch_agent_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, 
                 and reply.last_tool_result.get("pendiente_confirmacion_pago_proveedor")):
             await _send_pago_proveedor_proposal(update, ctx, msg, reply.last_tool_result)
             return
-        # Detectar propuesta de anulacion de factura
-        if (reply.tools_used and "proponer_anular_factura" in reply.tools_used
-                and reply.last_tool_result
+        # Detectar propuesta de anulacion de factura (por numero o por cliente)
+        if (reply.tools_used and reply.last_tool_result
+                and any(t in reply.tools_used for t in (
+                    "proponer_anular_factura", "proponer_anular_ultima_factura_cliente",
+                ))
                 and reply.last_tool_result.get("pendiente_confirmacion_anulacion")):
             await _send_anulacion_proposal(update, ctx, msg, reply.last_tool_result)
             return
@@ -1020,14 +1022,18 @@ async def _send_anulacion_proposal(update: Update, ctx: ContextTypes.DEFAULT_TYP
     razones = analisis.get("razones", []) or []
     es_electronica = analisis.get("es_electronica", False)
     fue_pagada = analisis.get("fue_pagada", False)
+    cliente_match = analisis.get("cliente_match")
+    ordinal = analisis.get("ordinal")
 
     lines = [
         f"🗑 *Anular factura {factura_name}*",
-        "",
-        f"Total factura: `${total:,.0f}`",
-        f"Saldo actual: `${saldo:,.0f}`",
-        "",
     ]
+    if cliente_match and ordinal:
+        lines.append(f"_(la {ordinal} factura de {cliente_match})_")
+    lines.append("")
+    lines.append(f"Total factura: `${total:,.0f}`")
+    lines.append(f"Saldo actual: `${saldo:,.0f}`")
+    lines.append("")
     if es_electronica:
         lines.append("⚠️ Factura electronica con CUFE DIAN")
     if fue_pagada:

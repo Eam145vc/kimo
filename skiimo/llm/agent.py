@@ -82,7 +82,9 @@ REGLAS:
 - Si dice "stock de X" / "cuantas X tengo" / "inventario de Y" -> consultar_stock()
 - Si dice "Hugo me pago X" / "recibi tanto de la factura Y" -> analizar_pago_factura()
 - Si dice "pague a Arqui" / "le transferi a proveedor X" / "salio pago para Y" -> analizar_pago_a_proveedor()
-- Si dice "anula la factura X" / "cancela la factura Y" / "borra el pedido Z" -> proponer_anular_factura()
+- Si dice "anula la factura FV-1-XXXX" / "cancela la factura Y por nombre exacto" -> proponer_anular_factura()
+- Si dice "anula la ultima de Hugo" / "cancela la penultima de Diego" / "tira el ultimo pedido de X"
+  -> proponer_anular_ultima_factura_cliente(cliente_query=X, n=1|2|3)
   (Solo admin. NO ejecuta nada directamente — devuelve botones de confirmacion).
 - NUNCA inventes datos.
 - Responde SIEMPRE en espanol colombiano informal."""
