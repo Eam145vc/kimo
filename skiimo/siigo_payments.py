@@ -84,10 +84,11 @@ def _audit(action: str, payload: dict, actor: str = "bot") -> None:
 
 
 def _buscar_factura_por_nombre(name: str) -> dict | None:
-    """Busca factura por su 'name' (ej: FV-1-5192) en el espejo local."""
+    """Busca factura por su 'name' (ej: FV-1-5192) en el espejo local.
+    Si no la encuentra local, consulta Siigo en vivo y la cachea.
+    """
     conn = get_conn()
     try:
-        # Reemplazo flexible: aceptar variantes (FV-1-5192, fv1-5192, 5192)
         norm = name.strip().upper().replace(" ", "")
         row = conn.execute(
             "SELECT * FROM siigo_invoices WHERE UPPER(name) = ? OR UPPER(REPLACE(name, '-', '')) = ?",
@@ -95,7 +96,6 @@ def _buscar_factura_por_nombre(name: str) -> dict | None:
         ).fetchone()
         if row:
             return dict(row)
-        # Buscar por consecutivo numerico
         if norm.isdigit():
             row = conn.execute(
                 "SELECT * FROM siigo_invoices WHERE number = ? ORDER BY date DESC LIMIT 1",
@@ -105,6 +105,82 @@ def _buscar_factura_por_nombre(name: str) -> dict | None:
                 return dict(row)
     finally:
         conn.close()
+
+    # Fallback: consultar Siigo en vivo y cachear
+    return _buscar_factura_en_siigo_live(name)
+
+
+def _buscar_factura_en_siigo_live(name: str) -> dict | None:
+    """Consulta directo a Siigo si la factura no esta en el espejo local.
+    La cachea para futuras consultas. Util cuando una factura recien creada
+    por el bot todavia no fue sincronizada al espejo.
+    """
+    import json
+    # Parsear nombre tipo FV-1-5218 -> consecutivo 5218
+    parts = name.strip().upper().replace(" ", "").split("-")
+    if not parts:
+        return None
+    consecutivo: int | None = None
+    if parts[-1].isdigit():
+        consecutivo = int(parts[-1])
+    elif name.strip().isdigit():
+        consecutivo = int(name.strip())
+    if consecutivo is None:
+        return None
+
+    # Buscar en Siigo recientes (created_start = hace 7 dias)
+    from datetime import timedelta
+    start = (date.today() - timedelta(days=14)).isoformat()
+    try:
+        with SiigoClient() as s:
+            data = s.get("/v1/invoices", params={
+                "created_start": start,
+                "page_size": 100,
+                "page": 1,
+            })
+    except Exception:
+        return None
+
+    for inv in (data.get("results") if isinstance(data, dict) else []) or []:
+        if inv.get("number") == consecutivo or inv.get("name", "").upper() == name.strip().upper():
+            # Cachear en el espejo local
+            cust = inv.get("customer") or {}
+            stamp = inv.get("stamp") or {}
+            conn = get_conn()
+            try:
+                from datetime import datetime as _dt
+                now = _dt.now().isoformat(timespec="seconds")
+                conn.execute(
+                    """INSERT INTO siigo_invoices (
+                        id, name, number, prefix, document_id, date, customer_id, customer_ident,
+                        seller_id, total, balance, stamp_status, public_url, observations,
+                        items_json, payments_json, raw, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        total=excluded.total, balance=excluded.balance,
+                        stamp_status=excluded.stamp_status, public_url=excluded.public_url,
+                        items_json=excluded.items_json, payments_json=excluded.payments_json,
+                        raw=excluded.raw, updated_at=excluded.updated_at""",
+                    (
+                        inv["id"], inv.get("name", ""), inv.get("number"), inv.get("prefix", ""),
+                        (inv.get("document") or {}).get("id"), inv.get("date", ""),
+                        cust.get("id"), cust.get("identification"), inv.get("seller"),
+                        float(inv.get("total", 0) or 0),
+                        float(inv.get("balance", 0) or 0) if inv.get("balance") is not None else None,
+                        stamp.get("status") if isinstance(stamp, dict) else None,
+                        inv.get("public_url", ""), inv.get("observations", ""),
+                        json.dumps(inv.get("items") or [], ensure_ascii=False),
+                        json.dumps(inv.get("payments") or [], ensure_ascii=False),
+                        json.dumps(inv, ensure_ascii=False),
+                        (inv.get("metadata") or {}).get("created", now), now,
+                    ),
+                )
+                conn.commit()
+                # Volver a leer del espejo para que tenga el mismo formato
+                row = conn.execute("SELECT * FROM siigo_invoices WHERE id = ?", (inv["id"],)).fetchone()
+                return dict(row) if row else None
+            finally:
+                conn.close()
     return None
 
 

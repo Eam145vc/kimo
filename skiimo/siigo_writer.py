@@ -42,6 +42,47 @@ class InvoiceResult:
     raw: dict | None = None
 
 
+def _cachear_factura_en_espejo(invoice_response: dict) -> None:
+    """Inserta o actualiza una factura recien creada en siigo_invoices local.
+    Esto evita el lag entre creacion y sync periodico — el bot ve sus propias
+    facturas inmediatamente.
+    """
+    inv = invoice_response
+    cust = inv.get("customer") or {}
+    stamp = inv.get("stamp") or {}
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO siigo_invoices (
+                id, name, number, prefix, document_id, date, customer_id, customer_ident,
+                seller_id, total, balance, stamp_status, public_url, observations,
+                items_json, payments_json, raw, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                total=excluded.total, balance=excluded.balance,
+                stamp_status=excluded.stamp_status, public_url=excluded.public_url,
+                items_json=excluded.items_json, payments_json=excluded.payments_json,
+                raw=excluded.raw, updated_at=excluded.updated_at""",
+            (
+                inv["id"], inv.get("name", ""), inv.get("number"), inv.get("prefix", ""),
+                (inv.get("document") or {}).get("id"), inv.get("date", ""),
+                cust.get("id"), cust.get("identification"), inv.get("seller"),
+                float(inv.get("total", 0) or 0),
+                float(inv.get("balance", 0) or 0) if inv.get("balance") is not None else None,
+                stamp.get("status") if isinstance(stamp, dict) else None,
+                inv.get("public_url", ""), inv.get("observations", ""),
+                json.dumps(inv.get("items") or [], ensure_ascii=False),
+                json.dumps(inv.get("payments") or [], ensure_ascii=False),
+                json.dumps(inv, ensure_ascii=False),
+                (inv.get("metadata") or {}).get("created", now), now,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _audit(entity: str, entity_id: str | None, action: str, actor: str, payload: dict) -> None:
     conn = get_conn()
     try:
@@ -191,6 +232,14 @@ def crear_factura_venta(
         return InvoiceResult(ok=False, error=str(e))
 
     _audit("invoice", response.get("id"), "post_success", actor, response)
+
+    # Cachear la factura en el espejo local inmediatamente
+    # (asi ultima_venta, anular_factura, etc. la ven sin esperar al sync periodico)
+    try:
+        _cachear_factura_en_espejo(response)
+    except Exception:
+        # Best-effort. Si falla el cache, no falla la creacion.
+        pass
 
     # Si hubo descuento puntual, registrar la excepcion
     if dto_pct > 0:
