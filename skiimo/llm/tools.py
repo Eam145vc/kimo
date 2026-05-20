@@ -837,6 +837,112 @@ def proponer_anular_ultima_factura_cliente(
     return resultado
 
 
+def agregar_usuario(
+    chat_id: int,
+    nombre: str,
+    rol: str = "vendedor",
+    siigo_seller_id: int | None = None,
+) -> dict:
+    """Registra a un usuario en bot_vendedores para que pueda usar el bot.
+
+    Usar cuando el admin dice:
+    - 'agrega como admin al chat_id 123456 llamado Maria'
+    - 'da de alta a Frank con chat 999, rol vendedor'
+    - 'registra al chat 555 como admin con nombre Juan'
+
+    chat_id: el chat_id de Telegram del nuevo usuario
+    nombre: como llamarlo (ej. 'Maria', 'Frank Tabares')
+    rol: 'admin' o 'vendedor' (default vendedor)
+    siigo_seller_id: id de vendedor en Siigo. Si no se especifica, usa el default del .env.
+    """
+    from datetime import datetime as _dt
+    from skiimo.config import DEFAULT_SELLER_ID
+
+    rol_clean = (rol or "vendedor").lower().strip()
+    if rol_clean not in ("admin", "vendedor"):
+        return {"error": f"Rol invalido '{rol}'. Debe ser 'admin' o 'vendedor'."}
+
+    seller = int(siigo_seller_id) if siigo_seller_id else DEFAULT_SELLER_ID
+
+    conn = get_conn()
+    try:
+        # Verificar si ya existe
+        existing = conn.execute(
+            "SELECT nombre, rol, activo FROM bot_vendedores WHERE telegram_chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        accion = "actualizado" if existing else "creado"
+        conn.execute(
+            """INSERT INTO bot_vendedores (telegram_chat_id, nombre, siigo_seller_id, rol, activo, created_at)
+               VALUES (?, ?, ?, ?, 1, ?)
+               ON CONFLICT(telegram_chat_id) DO UPDATE SET
+                 nombre = excluded.nombre,
+                 siigo_seller_id = excluded.siigo_seller_id,
+                 rol = excluded.rol,
+                 activo = 1""",
+            (chat_id, nombre, seller, rol_clean,
+             _dt.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        "ok": True,
+        "accion": accion,
+        "chat_id": chat_id,
+        "nombre": nombre,
+        "rol": rol_clean,
+        "siigo_seller_id": seller,
+    }
+
+
+def listar_usuarios() -> dict:
+    """Lista los usuarios registrados en el bot (vendedores y admins)."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT telegram_chat_id, nombre, rol, activo, siigo_seller_id, created_at
+               FROM bot_vendedores ORDER BY rol DESC, created_at"""
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "usuarios": [
+            {
+                "chat_id": r["telegram_chat_id"],
+                "nombre": r["nombre"],
+                "rol": r["rol"],
+                "activo": bool(r["activo"]),
+                "siigo_seller_id": r["siigo_seller_id"],
+            }
+            for r in rows
+        ],
+    }
+
+
+def desactivar_usuario(chat_id: int) -> dict:
+    """Desactiva un usuario para que no pueda usar el bot.
+    Usar cuando el admin dice: 'sacale acceso al chat X', 'desactiva a Y'.
+    No lo borra, solo marca activo=0.
+    """
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT nombre FROM bot_vendedores WHERE telegram_chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if not row:
+            return {"error": f"chat_id {chat_id} no esta registrado"}
+        conn.execute(
+            "UPDATE bot_vendedores SET activo = 0 WHERE telegram_chat_id = ?",
+            (chat_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "chat_id": chat_id, "nombre": row["nombre"], "estado": "desactivado"}
+
+
 def proponer_anular_factura(factura: str, motivo: str = "Anulacion solicitada por admin") -> dict:
     """Propone anular una factura de venta. NO la anula directamente; devuelve info
     para que el sistema muestre botones de confirmacion al admin.
@@ -1181,6 +1287,9 @@ TOOLS_MAP: dict[str, Any] = {
     "analizar_pago_a_proveedor": analizar_pago_a_proveedor,
     "proponer_anular_factura": proponer_anular_factura,
     "proponer_anular_ultima_factura_cliente": proponer_anular_ultima_factura_cliente,
+    "agregar_usuario": agregar_usuario,
+    "listar_usuarios": listar_usuarios,
+    "desactivar_usuario": desactivar_usuario,
     "repetir_pedido_cliente": repetir_pedido_cliente,
     "estado_cuenta_cliente": estado_cuenta_cliente,
     "consultar_stock": consultar_stock,
@@ -1385,6 +1494,48 @@ TOOL_DECLARATIONS: list[dict] = [
                 },
             },
             "required": ["factura", "monto"],
+        },
+    },
+    {
+        "name": "agregar_usuario",
+        "description": (
+            "Registra a un usuario para que pueda usar el bot. "
+            "Usar cuando el admin dice: 'agrega como admin al chat 123 llamado Maria', "
+            "'da de alta a Frank con chat 999', 'registra al chat 555 como vendedor'. "
+            "Si no especifica rol, asumir 'vendedor'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "chat_id": {"type": "integer", "description": "chat_id de Telegram del usuario nuevo"},
+                "nombre": {"type": "string", "description": "Como llamarlo (ej: 'Maria', 'Frank Tabares')"},
+                "rol": {"type": "string", "description": "'admin' o 'vendedor'. Default vendedor"},
+                "siigo_seller_id": {"type": "integer", "description": "ID vendedor en Siigo. Opcional."},
+            },
+            "required": ["chat_id", "nombre"],
+        },
+    },
+    {
+        "name": "listar_usuarios",
+        "description": (
+            "Lista los usuarios registrados en el bot (vendedores y admins). "
+            "Usar cuando el admin dice: 'quien tiene acceso', 'lista de usuarios', "
+            "'que vendedores tengo registrados'."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "desactivar_usuario",
+        "description": (
+            "Desactiva un usuario para que no pueda usar el bot. No lo borra. "
+            "Usar cuando el admin dice: 'sacale acceso al chat X', 'desactiva a Y'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "chat_id": {"type": "integer", "description": "chat_id del usuario a desactivar"},
+            },
+            "required": ["chat_id"],
         },
     },
     {

@@ -86,6 +86,9 @@ REGLAS:
 - Si dice "anula la ultima de Hugo" / "cancela la penultima de Diego" / "tira el ultimo pedido de X"
   -> proponer_anular_ultima_factura_cliente(cliente_query=X, n=1|2|3)
   (Solo admin. NO ejecuta nada directamente — devuelve botones de confirmacion).
+- Si dice "agrega como admin/vendedor al chat X" / "registra a Y" / "da de alta a Z" -> agregar_usuario()
+- Si dice "lista de usuarios" / "quien tiene acceso" -> listar_usuarios()
+- Si dice "sacale acceso a X" / "desactiva al chat Y" -> desactivar_usuario()
 - NUNCA inventes datos.
 - Responde SIEMPRE en espanol colombiano informal."""
 

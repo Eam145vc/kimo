@@ -207,6 +207,64 @@ async def cmd_nuevo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Listo, empezamos de cero.")
 
 
+async def cmd_agregar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """/agregar <chat_id> <nombre...> [admin|vendedor]
+    Atajo para registrar usuarios. Solo admins.
+    """
+    assert update.message and update.effective_chat
+    chat_id = update.effective_chat.id
+    ok, info = _is_authorized(chat_id)
+    if not ok or (info and info.get("rol") != "admin"):
+        await update.message.reply_text("Solo el admin puede registrar usuarios.")
+        return
+
+    args = ctx.args or []
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Uso:\n"
+            "  /agregar <chat_id> <nombre...> [admin|vendedor]\n\n"
+            "Ejemplos:\n"
+            "  /agregar 8162731878 Maria admin\n"
+            "  /agregar 999111222 Frank Tabares vendedor\n"
+            "  /agregar 8162731878 Maria  (default: vendedor)",
+            parse_mode="Markdown",
+        )
+        return
+
+    try:
+        new_chat_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text(f"chat_id invalido: {args[0]} (debe ser numero)")
+        return
+
+    # Detectar rol al final
+    rol = "vendedor"
+    nombre_parts = args[1:]
+    if nombre_parts and nombre_parts[-1].lower() in ("admin", "vendedor"):
+        rol = nombre_parts[-1].lower()
+        nombre_parts = nombre_parts[:-1]
+    if not nombre_parts:
+        await update.message.reply_text("Falta el nombre.")
+        return
+    nombre = " ".join(nombre_parts)
+
+    from skiimo.llm.tools import agregar_usuario
+    r = await asyncio.to_thread(agregar_usuario, new_chat_id, nombre, rol)
+    if r.get("error"):
+        await update.message.reply_text(f"Error: {r['error']}")
+        return
+    accion = r.get("accion", "creado")
+    emoji = "✅" if accion == "creado" else "🔄"
+    await update.message.reply_text(
+        f"{emoji} Usuario {accion}:\n\n"
+        f"chat_id: `{r['chat_id']}`\n"
+        f"nombre: *{r['nombre']}*\n"
+        f"rol: *{r['rol']}*\n"
+        f"siigo_seller_id: `{r['siigo_seller_id']}`",
+        parse_mode="Markdown",
+    )
+
+
 async def cmd_resumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Genera y manda el resumen diario al chat actual."""
     assert update.message and update.effective_chat
@@ -1958,6 +2016,7 @@ def main() -> None:
     app.add_handler(CommandHandler("cancelar", cmd_cancelar))
     app.add_handler(CommandHandler("correos", cmd_correos))
     app.add_handler(CommandHandler("resumen", cmd_resumen))
+    app.add_handler(CommandHandler("agregar", cmd_agregar))
 
     # Job de resumen diario a las 8:00 hora Colombia (UTC-5 = 13:00 UTC)
     from datetime import time as _time
