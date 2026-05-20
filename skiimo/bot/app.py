@@ -947,6 +947,12 @@ async def _dispatch_agent_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, 
                 and reply.last_tool_result.get("pendiente_confirmacion_pago_proveedor")):
             await _send_pago_proveedor_proposal(update, ctx, msg, reply.last_tool_result)
             return
+        # Detectar propuesta de anulacion de factura
+        if (reply.tools_used and "proponer_anular_factura" in reply.tools_used
+                and reply.last_tool_result
+                and reply.last_tool_result.get("pendiente_confirmacion_anulacion")):
+            await _send_anulacion_proposal(update, ctx, msg, reply.last_tool_result)
+            return
         await update.message.reply_text(msg)
         return
 
@@ -999,6 +1005,75 @@ async def _send_pago_proveedor_proposal(update: Update, ctx: ContextTypes.DEFAUL
         texto[:3500],
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode="Markdown" if "*" in texto or "_" in texto else None,
+    )
+
+
+async def _send_anulacion_proposal(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
+                                     texto: str, analisis: dict) -> None:
+    """Muestra propuesta de anulacion de factura con botones de confirmacion."""
+    propuesta_id = _save_pago_propuesta(analisis)  # reusamos el cache
+
+    factura_name = analisis.get("factura_name", "?")
+    total = analisis.get("total", 0)
+    saldo = analisis.get("saldo", 0)
+    metodo_rec = analisis.get("metodo_recomendado", "annul")
+    razones = analisis.get("razones", []) or []
+    es_electronica = analisis.get("es_electronica", False)
+    fue_pagada = analisis.get("fue_pagada", False)
+
+    lines = [
+        f"🗑 *Anular factura {factura_name}*",
+        "",
+        f"Total factura: `${total:,.0f}`",
+        f"Saldo actual: `${saldo:,.0f}`",
+        "",
+    ]
+    if es_electronica:
+        lines.append("⚠️ Factura electronica con CUFE DIAN")
+    if fue_pagada:
+        lines.append("⚠️ Factura ya tiene cobros aplicados")
+
+    if metodo_rec == "credit_note":
+        lines.append("")
+        lines.append("📋 *Recomiendo: Nota Credito*")
+        for r in razones:
+            lines.append(f"  • {r}")
+    else:
+        lines.append("")
+        lines.append("✅ *Recomiendo: Anulacion directa* (factura limpia, sin cobros)")
+
+    lines.append("")
+    lines.append("_Operacion destructiva. Elegi metodo:_")
+
+    buttons: list[list[InlineKeyboardButton]] = []
+    # Boton recomendado primero
+    if metodo_rec == "annul":
+        buttons.append([InlineKeyboardButton(
+            "✅ Anular directo (recomendado)",
+            callback_data=f"anul:{propuesta_id}:annul",
+        )])
+        buttons.append([InlineKeyboardButton(
+            "📋 Forzar nota credito",
+            callback_data=f"anul:{propuesta_id}:credit_note",
+        )])
+    else:
+        buttons.append([InlineKeyboardButton(
+            "📋 Nota credito (recomendado)",
+            callback_data=f"anul:{propuesta_id}:credit_note",
+        )])
+        buttons.append([InlineKeyboardButton(
+            "⚠️ Intentar /annul igual",
+            callback_data=f"anul:{propuesta_id}:annul",
+        )])
+    buttons.append([InlineKeyboardButton(
+        "❌ Cancelar (no hacer nada)",
+        callback_data=f"anul:{propuesta_id}:cancel",
+    )])
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown",
     )
 
 
@@ -1095,6 +1170,82 @@ async def _handle_pago_callback(cb, ctx, accion: str, parts: list[str]) -> None:
         )
 
     _PAGO_CACHE.pop(pid, None)
+
+
+async def _handle_anulacion_callback(cb, ctx, parts: list[str]) -> None:
+    """anul:<propuesta_id>:<metodo>  donde metodo = annul | credit_note | cancel"""
+    pid = int(parts[1])
+    metodo = parts[2]
+    analisis = _PAGO_CACHE.get(pid)
+    if not analisis:
+        await cb.edit_message_text("⚠️ Propuesta expirada. Pide la anulacion de nuevo.")
+        return
+
+    factura_id = analisis["factura_id"]
+    factura_name = analisis["factura_name"]
+    motivo = analisis.get("motivo", "Anulacion solicitada")
+
+    if metodo == "cancel":
+        _PAGO_CACHE.pop(pid, None)
+        await cb.edit_message_text(
+            f"❌ Anulacion cancelada. La factura {factura_name} sigue activa.",
+            parse_mode="Markdown",
+        )
+        return
+
+    await cb.edit_message_text(
+        f"⏳ Procesando anulacion de {factura_name}...",
+        parse_mode="Markdown",
+    )
+
+    from skiimo.siigo_writer import anular_factura, crear_nota_credito_anulacion
+
+    if metodo == "annul":
+        result = await asyncio.to_thread(anular_factura, factura_id, actor=f"chat:admin")
+        if result.ok:
+            msg = (
+                f"✅ *Factura {factura_name} anulada*\n\n"
+                f"Metodo: `/annul` directo\n"
+                f"_Motivo: {motivo}_"
+            )
+            await cb.edit_message_text(msg, parse_mode="Markdown")
+        else:
+            err = (result.error or "")[:300]
+            # Si /annul fallo, sugerir nota credito
+            buttons = [
+                [InlineKeyboardButton("📋 Probar con nota credito", callback_data=f"anul:{pid}:credit_note")],
+                [InlineKeyboardButton("❌ Cerrar", callback_data=f"anul:{pid}:cancel")],
+            ]
+            await cb.edit_message_text(
+                f"⚠️ *No pude anular directamente*\n\n`{err}`\n\n"
+                f"_Probable: factura ya tiene cobros o es electronica DIAN._",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode="Markdown",
+            )
+        return
+
+    if metodo == "credit_note":
+        result = await asyncio.to_thread(
+            crear_nota_credito_anulacion, factura_id, motivo, "chat:admin",
+        )
+        if result.ok:
+            msg = (
+                f"✅ *Nota credito creada*\n\n"
+                f"Factura original: {factura_name}\n"
+                f"Nota credito: `{result.siigo_name}`\n"
+                f"Valor: `${(result.total or 0):,.0f}`\n"
+                f"Saldo neto factura: $0\n"
+                f"_Motivo: {motivo}_"
+            )
+            await cb.edit_message_text(msg, parse_mode="Markdown")
+            _PAGO_CACHE.pop(pid, None)
+        else:
+            err = (result.error or "")[:400]
+            await cb.edit_message_text(
+                f"⚠️ *Error al crear nota credito*\n\n`{err}`",
+                parse_mode="Markdown",
+            )
+        return
 
 
 async def _handle_pago_proveedor_callback(cb, ctx, accion: str, parts: list[str]) -> None:
@@ -1550,6 +1701,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     # Callbacks de PAGOS A PROVEEDOR
     if accion in ("prvopt", "prvcanc"):
         await _handle_pago_proveedor_callback(cb, ctx, accion, parts)
+        return
+
+    # Callbacks de ANULACION de factura
+    if accion == "anul":
+        await _handle_anulacion_callback(cb, ctx, parts)
         return
 
     # Callbacks de COMPROBANTES (foto OCR)

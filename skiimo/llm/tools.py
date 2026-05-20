@@ -645,6 +645,63 @@ def consultar_stock(producto_query: str) -> dict:
     return {"query": producto_query, "productos": out_productos}
 
 
+def proponer_anular_factura(factura: str, motivo: str = "Anulacion solicitada por admin") -> dict:
+    """Propone anular una factura de venta. NO la anula directamente; devuelve info
+    para que el sistema muestre botones de confirmacion al admin.
+
+    Usar cuando el admin dice: 'anula la factura X', 'cancela esa factura',
+    'borra el pedido Y', 'tira esa factura'.
+
+    factura: nombre (FV-1-5192) o consecutivo (5192).
+    motivo: motivo de la anulacion para el audit log.
+    """
+    from skiimo.siigo_payments import _buscar_factura_por_nombre
+    inv = _buscar_factura_por_nombre(factura)
+    if not inv:
+        return {"error": f"Factura '{factura}' no encontrada"}
+
+    # Refrescar saldo desde Siigo
+    from skiimo.siigo_payments import _refresh_balance_from_siigo
+    saldo_actual = _refresh_balance_from_siigo(inv["id"])
+    if saldo_actual is None:
+        saldo_actual = float(inv.get("balance") or 0)
+
+    total = float(inv.get("total") or 0)
+    fue_pagada = saldo_actual < total - 0.5
+
+    # Tipo de doc para decidir camino
+    doc_id = int(inv.get("document_id") or 0)
+    es_electronica = doc_id == 27703  # FV-2 con DIAN
+    stamp_status = inv.get("stamp_status")
+    tiene_stamp = stamp_status in ("Accepted", "ACCEPTED")
+
+    # Recomendar mecanismo
+    metodo_recomendado = "annul"
+    razones = []
+    if es_electronica or tiene_stamp:
+        metodo_recomendado = "credit_note"
+        razones.append("factura electronica con CUFE DIAN - obligatorio nota credito")
+    if fue_pagada:
+        metodo_recomendado = "credit_note"
+        razones.append(f"factura tiene cobros (saldo ${saldo_actual:,.0f} < total ${total:,.0f})")
+
+    return {
+        "pendiente_confirmacion_anulacion": True,
+        "factura_id": inv["id"],
+        "factura_name": inv["name"],
+        "total": total,
+        "saldo": saldo_actual,
+        "fecha": inv.get("date"),
+        "cliente_ident": inv.get("customer_ident"),
+        "doc_id": doc_id,
+        "es_electronica": es_electronica,
+        "fue_pagada": fue_pagada,
+        "metodo_recomendado": metodo_recomendado,
+        "razones": razones,
+        "motivo": motivo[:200],
+    }
+
+
 def analizar_pago_a_proveedor(compra: str, monto: float, metodo_pago: str = "banco_ahorros") -> dict:
     """Analiza un pago saliente sobre una factura de COMPRA y devuelve opciones.
 
@@ -930,6 +987,7 @@ TOOLS_MAP: dict[str, Any] = {
     "cambiar_categoria_cliente": cambiar_categoria_cliente,
     "analizar_pago_factura": analizar_pago_factura,
     "analizar_pago_a_proveedor": analizar_pago_a_proveedor,
+    "proponer_anular_factura": proponer_anular_factura,
     "repetir_pedido_cliente": repetir_pedido_cliente,
     "estado_cuenta_cliente": estado_cuenta_cliente,
     "consultar_stock": consultar_stock,
@@ -1134,6 +1192,25 @@ TOOL_DECLARATIONS: list[dict] = [
                 },
             },
             "required": ["factura", "monto"],
+        },
+    },
+    {
+        "name": "proponer_anular_factura",
+        "description": (
+            "Propone anular una factura de venta. NO la anula directamente — devuelve "
+            "informacion y opciones para que el admin confirme con botones. "
+            "Usar cuando el admin dice: 'anula la factura X', 'cancela esa factura', "
+            "'borra ese pedido', 'tira la factura Y'. "
+            "El sistema decide automaticamente si usar /annul o nota credito segun "
+            "el estado de la factura (electronica, pagada, etc.)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "factura": {"type": "string", "description": "Nombre de factura (FV-1-5192) o consecutivo"},
+                "motivo": {"type": "string", "description": "Motivo de la anulacion. Opcional."},
+            },
+            "required": ["factura"],
         },
     },
     {

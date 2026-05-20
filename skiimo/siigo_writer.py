@@ -353,3 +353,72 @@ def anular_factura(invoice_id: str, actor: str = "bot") -> InvoiceResult:
         return InvoiceResult(ok=False, error=f"HTTP {e.response.status_code}: {e.response.text[:300]}")
     except Exception as e:
         return InvoiceResult(ok=False, error=str(e))
+
+
+def crear_nota_credito_anulacion(invoice_id: str, motivo: str = "Anulacion solicitada",
+                                    actor: str = "bot") -> InvoiceResult:
+    """Crea nota credito que neutraliza toda la factura (devolucion total).
+    Usar cuando /annul no funciona (factura electronica DIAN o con pagos).
+
+    Toma los items originales de la factura y los replica en la NC.
+    """
+    # Traer la factura completa
+    try:
+        with SiigoClient() as s:
+            inv = s.get(f"/v1/invoices/{invoice_id}")
+    except Exception as e:
+        return InvoiceResult(ok=False, error=f"No pude obtener la factura: {e}")
+
+    fv_doc_id = (inv.get("document") or {}).get("id")
+    nc_doc_id = 27704 if fv_doc_id == 27703 else 13221  # electronica vs tradicional
+
+    items_fv = inv.get("items") or []
+    if not items_fv:
+        return InvoiceResult(ok=False, error="La factura no tiene items")
+
+    nc_items = []
+    for it in items_fv:
+        nc_items.append({
+            "code": it.get("code"),
+            "description": it.get("description"),
+            "quantity": float(it.get("quantity") or 1),
+            "price": float(it.get("price") or 0),
+            "taxes": it.get("taxes") or [{"id": DEFAULT_IVA_TAX_ID}],
+        })
+
+    total = float(inv.get("total") or 0)
+    customer_ident = (inv.get("customer") or {}).get("identification") or ""
+
+    payload = {
+        "document": {"id": nc_doc_id},
+        "date": date.today().isoformat(),
+        "invoice": invoice_id,
+        "reason": 2,  # 2 = Anulacion
+        "customer": {"identification": customer_ident, "branch_office": 0},
+        "seller": DEFAULT_SELLER_ID,
+        "observations": f"Anulacion factura {inv.get('name')} - {motivo}"[:300],
+        "items": nc_items,
+        "payments": [{"id": 3043, "value": round(total, 2)}],  # Efectivo (formalismo)
+    }
+
+    _audit("credit_note", None, "annul_request", actor,
+           {"invoice_id": invoice_id, "payload": payload})
+    try:
+        with SiigoClient() as s:
+            r = s.post("/v1/credit-notes", payload)
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:400]
+        _audit("credit_note", None, "annul_error", actor,
+               {"invoice_id": invoice_id, "status": e.response.status_code, "body": body})
+        return InvoiceResult(ok=False, error=f"HTTP {e.response.status_code}: {body}")
+    except Exception as e:
+        return InvoiceResult(ok=False, error=str(e))
+
+    _audit("credit_note", r.get("id"), "annul_success", actor, r)
+    return InvoiceResult(
+        ok=True,
+        siigo_id=r.get("id"),
+        siigo_name=r.get("name"),
+        total=r.get("total"),
+        raw=r,
+    )

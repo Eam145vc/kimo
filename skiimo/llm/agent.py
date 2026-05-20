@@ -82,6 +82,8 @@ REGLAS:
 - Si dice "stock de X" / "cuantas X tengo" / "inventario de Y" -> consultar_stock()
 - Si dice "Hugo me pago X" / "recibi tanto de la factura Y" -> analizar_pago_factura()
 - Si dice "pague a Arqui" / "le transferi a proveedor X" / "salio pago para Y" -> analizar_pago_a_proveedor()
+- Si dice "anula la factura X" / "cancela la factura Y" / "borra el pedido Z" -> proponer_anular_factura()
+  (Solo admin. NO ejecuta nada directamente — devuelve botones de confirmacion).
 - NUNCA inventes datos.
 - Responde SIEMPRE en espanol colombiano informal."""
 
