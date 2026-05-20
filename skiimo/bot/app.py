@@ -220,6 +220,20 @@ async def cmd_resumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(texto, parse_mode="Markdown")
 
 
+async def _job_sync_periodico(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sincroniza facturas recientes desde Siigo cada N minutos.
+    Mantiene el espejo local al dia con facturas creadas desde Siigo web o
+    cualquier otra fuente externa al bot.
+    """
+    try:
+        from skiimo.llm.tools import _sync_invoices_recientes
+        n = await asyncio.to_thread(_sync_invoices_recientes, 2)  # ultimos 2 dias
+        if n > 0:
+            log.info("Sync periodico: %d facturas actualizadas", n)
+    except Exception:
+        log.exception("Error en sync periodico")
+
+
 async def _job_resumen_diario(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Job que corre cada mañana y manda el resumen a ADMIN_TELEGRAM_CHAT_ID."""
     from skiimo.config import ADMIN_TELEGRAM_CHAT_ID
@@ -1954,6 +1968,15 @@ def main() -> None:
             name="resumen_diario",
         )
         log.info("Job resumen diario programado: 8:00 hora Colombia (13:00 UTC)")
+    # Sync periodico de facturas recientes (cada 5 min)
+    if app.job_queue:
+        app.job_queue.run_repeating(
+            _job_sync_periodico,
+            interval=300,  # 5 minutos
+            first=30,       # primera ejecucion 30s despues del arranque
+            name="sync_invoices_periodico",
+        )
+        log.info("Job sync periodico programado: cada 5 minutos")
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.IMAGE | filters.Document.PDF, handle_photo))

@@ -60,6 +60,8 @@ def _parse_periodo(periodo: str | None) -> tuple[str, str, str]:
 
 def consultar_ventas(periodo: str = "este_mes", vendedor_id: int | None = None) -> dict:
     """Total y cantidad de facturas de venta en un periodo."""
+    # Sync ligero (ultimos 2 dias) para asegurar datos al momento
+    _sync_invoices_recientes(dias=2)
     start, end, label = _parse_periodo(periodo)
     conn = get_conn()
     try:
@@ -88,6 +90,7 @@ def consultar_ventas(periodo: str = "este_mes", vendedor_id: int | None = None) 
 
 def consultar_gastos(periodo: str = "este_mes") -> dict:
     """Total y cantidad de facturas de compra en un periodo."""
+    _sync_purchases_recientes(dias=2)
     start, end, label = _parse_periodo(periodo)
     conn = get_conn()
     try:
@@ -109,6 +112,7 @@ def consultar_gastos(periodo: str = "este_mes") -> dict:
 
 def top_clientes(periodo: str = "este_mes", limit: int = 5) -> dict:
     """Top-N clientes por monto comprado en el periodo."""
+    _sync_invoices_recientes(dias=2)
     start, end, _ = _parse_periodo(periodo)
     conn = get_conn()
     try:
@@ -144,6 +148,7 @@ def top_productos(periodo: str = "este_mes", limit: int = 5) -> dict:
     """Top-N productos mas vendidos (por monto) en el periodo.
     Itera items_json de invoices.
     """
+    _sync_invoices_recientes(dias=2)
     start, end, _ = _parse_periodo(periodo)
     conn = get_conn()
     try:
@@ -176,8 +181,121 @@ def top_productos(periodo: str = "este_mes", limit: int = 5) -> dict:
     }
 
 
+def _sync_purchases_recientes(dias: int = 7) -> int:
+    """Mismo concepto que invoices pero para facturas de COMPRA (gastos)."""
+    from datetime import timedelta
+    from siigo_client import SiigoClient
+    start = (date.today() - timedelta(days=dias)).isoformat()
+    n = 0
+    try:
+        with SiigoClient() as s:
+            data = s.get("/v1/purchases", params={
+                "created_start": start, "page_size": 100, "page": 1,
+            })
+    except Exception:
+        return 0
+    conn = get_conn()
+    try:
+        from datetime import datetime as _dt
+        now = _dt.now().isoformat(timespec="seconds")
+        for pur in (data.get("results") if isinstance(data, dict) else []) or []:
+            sup = pur.get("supplier") or {}
+            prov = pur.get("provider_invoice") or {}
+            conn.execute(
+                """INSERT INTO siigo_purchases (
+                    id, name, number, document_id, date, supplier_id, supplier_ident,
+                    total, balance, provider_inv_prefix, provider_inv_number, observations,
+                    items_json, payments_json, raw, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    total=excluded.total, balance=excluded.balance,
+                    items_json=excluded.items_json, payments_json=excluded.payments_json,
+                    raw=excluded.raw, updated_at=excluded.updated_at""",
+                (
+                    pur["id"], pur.get("name", ""), pur.get("number"),
+                    (pur.get("document") or {}).get("id"), pur.get("date", ""),
+                    sup.get("id"), sup.get("identification"),
+                    float(pur.get("total", 0) or 0),
+                    float(pur.get("balance", 0) or 0) if pur.get("balance") is not None else None,
+                    prov.get("prefix", "") if isinstance(prov, dict) else "",
+                    prov.get("number", "") if isinstance(prov, dict) else "",
+                    pur.get("observations", ""),
+                    json.dumps(pur.get("items") or [], ensure_ascii=False),
+                    json.dumps(pur.get("payments") or [], ensure_ascii=False),
+                    json.dumps(pur, ensure_ascii=False),
+                    (pur.get("metadata") or {}).get("created", now), now,
+                ),
+            )
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
+def _sync_invoices_recientes(dias: int = 7) -> int:
+    """Trae las facturas creadas en los ultimos N dias de Siigo y las cachea local.
+    Devuelve cuantas inserto/actualizo. Best-effort; no falla si Siigo no responde.
+    """
+    from datetime import timedelta
+    from siigo_client import SiigoClient
+    start = (date.today() - timedelta(days=dias)).isoformat()
+    n = 0
+    try:
+        with SiigoClient() as s:
+            data = s.get("/v1/invoices", params={
+                "created_start": start, "page_size": 100, "page": 1,
+            })
+    except Exception:
+        return 0
+    conn = get_conn()
+    try:
+        from datetime import datetime as _dt
+        now = _dt.now().isoformat(timespec="seconds")
+        for inv in (data.get("results") if isinstance(data, dict) else []) or []:
+            cust = inv.get("customer") or {}
+            stamp = inv.get("stamp") or {}
+            conn.execute(
+                """INSERT INTO siigo_invoices (
+                    id, name, number, prefix, document_id, date, customer_id, customer_ident,
+                    seller_id, total, balance, stamp_status, public_url, observations,
+                    items_json, payments_json, raw, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    total=excluded.total, balance=excluded.balance,
+                    stamp_status=excluded.stamp_status, public_url=excluded.public_url,
+                    items_json=excluded.items_json, payments_json=excluded.payments_json,
+                    raw=excluded.raw, updated_at=excluded.updated_at""",
+                (
+                    inv["id"], inv.get("name", ""), inv.get("number"), inv.get("prefix", ""),
+                    (inv.get("document") or {}).get("id"), inv.get("date", ""),
+                    cust.get("id"), cust.get("identification"), inv.get("seller"),
+                    float(inv.get("total", 0) or 0),
+                    float(inv.get("balance", 0) or 0) if inv.get("balance") is not None else None,
+                    stamp.get("status") if isinstance(stamp, dict) else None,
+                    inv.get("public_url", ""), inv.get("observations", ""),
+                    json.dumps(inv.get("items") or [], ensure_ascii=False),
+                    json.dumps(inv.get("payments") or [], ensure_ascii=False),
+                    json.dumps(inv, ensure_ascii=False),
+                    (inv.get("metadata") or {}).get("created", now), now,
+                ),
+            )
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
 def ultima_venta(vendedor_id: int | None = None) -> dict:
-    """Devuelve la factura mas reciente (opcionalmente filtrada por vendedor)."""
+    """Devuelve la factura mas reciente (opcionalmente filtrada por vendedor).
+    Antes de consultar el espejo local, sincroniza las facturas creadas en los
+    ultimos 7 dias desde Siigo. Asi siempre devuelve la MAS reciente real,
+    incluso si fue creada desde Siigo web u otra integracion.
+    """
+    # Sync ligero: trae lo de los ultimos 7 dias (max 100 facturas, una sola llamada API)
+    _sync_invoices_recientes(dias=7)
+
     conn = get_conn()
     try:
         q = (
@@ -213,7 +331,11 @@ def ultima_venta(vendedor_id: int | None = None) -> dict:
 
 
 def resumen_dia(dia: str | None = None) -> dict:
-    """Resumen del dia: ventas, gastos, balance."""
+    """Resumen del dia: ventas, gastos, balance.
+    Sincroniza con Siigo en vivo para tener datos del momento.
+    """
+    _sync_invoices_recientes(dias=2)
+    _sync_purchases_recientes(dias=2)
     d = dia or date.today().isoformat()
     conn = get_conn()
     try:

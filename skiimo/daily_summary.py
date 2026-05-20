@@ -16,6 +16,14 @@ from skiimo.db.schema import get_conn
 
 def construir_resumen_diario() -> str:
     """Devuelve el texto markdown del resumen para mandar al admin."""
+    # Sync con Siigo en vivo para datos al momento
+    try:
+        from skiimo.llm.tools import _sync_invoices_recientes, _sync_purchases_recientes
+        _sync_invoices_recientes(dias=3)
+        _sync_purchases_recientes(dias=3)
+    except Exception:
+        pass
+
     today = date.today()
     ayer = today - timedelta(days=1)
     horizonte_dias = 7
