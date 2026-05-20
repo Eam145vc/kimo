@@ -9,6 +9,7 @@ Mantiene historial corto por chat para coherencia conversacional.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -20,6 +21,7 @@ from skiimo.llm.schemas import Pedido, PedidoItem
 from skiimo.llm.tools import TOOL_DECLARATIONS, TOOLS_MAP
 
 
+log = logging.getLogger("skiimo.llm.agent")
 _client: genai.Client | None = None
 
 
@@ -64,6 +66,10 @@ TU MISION: en cada mensaje, decidir el camino:
    Despues responde en lenguaje natural y formato chat. Usa $ y comas en montos.
 
 3) **CONVERSACION GENERAL**: saludo, agradecimiento, off-topic. Responde breve.
+
+REGLA CRITICA: si el usuario ya te dio toda la info necesaria, LLAMA LA TOOL en lugar de
+preguntarle de nuevo. Si en turnos anteriores faltaba un dato y el usuario lo aporta ahora,
+USA EL CONTEXTO para completar la tool y llamarla. NO devuelvas mensajes vacios.
 
 REGLAS:
 - Si dice "ultima venta" / "ultima factura" -> ultima_venta()
@@ -190,6 +196,75 @@ def reset_history(chat_id: int) -> None:
     _history.pop(chat_id, None)
 
 
+def _fallback_text_from_tool(tool_name: str, result: dict) -> str:
+    """Cuando Gemini ejecuta una tool pero no genera texto al final, armar uno basico
+    con la informacion del resultado. Mejor un texto plano que '(sin respuesta)'.
+    """
+    if not isinstance(result, dict):
+        return ""
+
+    # Tools de gestion de usuarios
+    if tool_name == "agregar_usuario":
+        if result.get("error"):
+            return f"❌ {result['error']}"
+        if result.get("ok"):
+            accion = result.get("accion", "registrado")
+            return (
+                f"✅ Usuario {accion}:\n"
+                f"chat_id: {result.get('chat_id')}\n"
+                f"nombre: {result.get('nombre')}\n"
+                f"rol: {result.get('rol')}\n"
+                f"siigo_seller_id: {result.get('siigo_seller_id')}"
+            )
+
+    if tool_name == "listar_usuarios":
+        usuarios = result.get("usuarios", [])
+        if not usuarios:
+            return "No hay usuarios registrados."
+        lines = ["Usuarios registrados:"]
+        for u in usuarios:
+            estado = "✅" if u.get("activo") else "❌"
+            lines.append(f"{estado} {u.get('nombre')} - chat {u.get('chat_id')} - {u.get('rol')}")
+        return "\n".join(lines)
+
+    if tool_name == "desactivar_usuario":
+        if result.get("error"):
+            return f"❌ {result['error']}"
+        return f"✅ Usuario {result.get('nombre')} (chat {result.get('chat_id')}) desactivado."
+
+    # Tool de ultima venta
+    if tool_name == "ultima_venta":
+        if not result.get("encontrado"):
+            return "No encontre ventas recientes."
+        return (
+            f"Ultima venta: {result.get('factura')}\n"
+            f"Cliente: {result.get('cliente_nombre')}\n"
+            f"Total: ${float(result.get('total', 0)):,.0f}\n"
+            f"Fecha: {result.get('fecha')}"
+        )
+
+    # Generico para reportes
+    if tool_name == "consultar_ventas":
+        return (
+            f"Ventas {result.get('periodo', '')}:\n"
+            f"Total: ${float(result.get('total_ventas', 0)):,.0f}\n"
+            f"Cantidad: {result.get('cantidad_facturas', 0)} facturas"
+        )
+
+    if tool_name == "consultar_gastos":
+        return (
+            f"Gastos {result.get('periodo', '')}:\n"
+            f"Total: ${float(result.get('total_gastos', 0)):,.0f}\n"
+            f"Cantidad: {result.get('cantidad_compras', 0)} compras"
+        )
+
+    # Fallback super generico
+    if result.get("error"):
+        return f"⚠️ {result['error']}"
+
+    return ""
+
+
 def _pedido_from_args(args: dict) -> Pedido | None:
     """Convierte args de tool registrar_pedido en Pedido pydantic."""
     try:
@@ -251,13 +326,15 @@ def process_message(
 
     tools_used: list[str] = []
     last_tool_result: dict | None = None
+    intentos_vacio = 0  # cuantas veces Gemini devolvio vacio (sin texto ni tool)
 
-    for _step in range(6):
+    for _step in range(8):
         try:
             response = client.models.generate_content(
                 model=GEMINI_MODEL, contents=contents, config=config,
             )
         except Exception as e:
+            log.exception("Error LLM en step %d", _step)
             return AgentReply(kind="error", texto=f"Error LLM: {e}")
 
         if not response.candidates:
@@ -304,11 +381,50 @@ def process_message(
         for p in parts:
             if getattr(p, "text", None):
                 text_out += p.text
+        text_out = text_out.strip()
+
+        # RETRY: si Gemini no genero texto NI llamo tools y es el primer intento, reintentar
+        if not text_out and not tools_used and intentos_vacio < 2:
+            intentos_vacio += 1
+            log.warning("Gemini devolvio vacio sin tool, reintento #%d", intentos_vacio)
+            # No agregamos el cand vacio al history, repetimos
+            continue
+
+        # FALLBACK: si el modelo no genero texto pero ejecuto tools, armar respuesta
+        # con los datos del ultimo tool result (Gemini a veces deja vacio el final)
+        if not text_out and last_tool_result and tools_used:
+            text_out = _fallback_text_from_tool(tools_used[-1], last_tool_result)
+
+        # FALLBACK 2: ultimo intento con un mensaje del sistema pidiendo resumen
+        if not text_out and tools_used:
+            log.warning("Gemini devolvio vacio despues de %s. Reintentando con prompt directo.",
+                        tools_used)
+            try:
+                followup = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=contents + [genai_types.Content(
+                        role="user",
+                        parts=[genai_types.Part.from_text(
+                            text="Resumime en lenguaje natural el resultado anterior para el usuario.")],
+                    )],
+                    config=genai_types.GenerateContentConfig(
+                        system_instruction=_system_instruction(user_role),
+                        temperature=0.2,
+                    ),
+                )
+                if followup.candidates and followup.candidates[0].content:
+                    for p in (followup.candidates[0].content.parts or []):
+                        if getattr(p, "text", None):
+                            text_out += p.text
+                    text_out = text_out.strip()
+            except Exception:
+                log.exception("Followup fallo tambien")
+
         _push_history(chat_id, user_content)
         _push_history(chat_id, cand.content)
         return AgentReply(
             kind="texto",
-            texto=text_out.strip() or "(sin respuesta)",
+            texto=text_out or "(sin respuesta)",
             tools_used=tools_used,
             last_tool_result=last_tool_result,
         )
