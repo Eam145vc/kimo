@@ -1,0 +1,49 @@
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+node_modules/
+.DS_Store
+Thumbs.db
+
+# Datos locales (Railway monta volume aparte)
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# Exploraciones y CSVs generados localmente
+explorations/*.json
+explorations/*.log
+explorations/*.pdf
+!explorations/.gitkeep
+
+data/precios_sugeridos.csv
+data/clientes_categorias.csv
+data/pronto_pago_sugerido.csv
+data/propuesta_categorias_para_dueno.csv
+
+# Imagenes adjuntas locales
+*.jpg
+*.jpeg
+*.png
+*.webp
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+.claude/
