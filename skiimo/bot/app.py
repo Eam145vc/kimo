@@ -55,8 +55,15 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
 
-# Matcher singleton recargable
-_matcher = Matcher()
+# Matcher singleton recargable (inicializacion lazy para que bootstrap pueda crear la DB primero)
+_matcher: Matcher | None = None
+
+
+def _get_matcher() -> Matcher:
+    global _matcher
+    if _matcher is None:
+        _matcher = Matcher()
+    return _matcher
 
 
 # =============================================================================
@@ -1388,7 +1395,7 @@ async def _send_proposal(update: Update, ctx: ContextTypes.DEFAULT_TYPE, pedido)
         )
         return
 
-    rp = resolve_pedido(pedido, _matcher)
+    rp = resolve_pedido(pedido, _get_matcher())
     pedido_id = _save_pedido(update.effective_chat.id, update.message.message_id, rp)
 
     resumen = format_summary(rp)
@@ -1764,8 +1771,9 @@ def main() -> None:
     from skiimo.bootstrap import ensure_db_ready
     ensure_db_ready()
     # Recargar matcher por si bootstrap sincronizo datos
-    _matcher.reload()
-    log.info("Stats matcher: %s", _matcher.stats())
+    m = _get_matcher()
+    m.reload()
+    log.info("Stats matcher: %s", m.stats())
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
