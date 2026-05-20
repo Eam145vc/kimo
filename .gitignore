@@ -25,11 +25,22 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 
-# Exploraciones y CSVs generados localmente
-explorations/*.json
-explorations/*.log
-explorations/*.pdf
-!explorations/.gitkeep
+# Exploraciones (datos sensibles de la cuenta Siigo - no van al repo)
+explorations/
+
+# Scripts one-off de configuracion inicial con NITs/UUIDs reales (ya aplicados)
+apply_owner_approval.py
+apply_owner_rules.py
+apply_full_prices.py
+cleanup_residual.py
+propuesta_categorias.py
+analyze_pricing.py
+test_capabilities.py
+test_documented.py
+test_extras.py
+test_final.py
+test_full_pipeline.py
+test_webhooks_topics.py
 
 data/precios_sugeridos.csv
 data/clientes_categorias.csv
@@ -47,3 +58,6 @@ data/propuesta_categorias_para_dueno.csv
 .vscode/
 *.swp
 .claude/
+
+# Scripts locales del usuario
+PUSH_A_GITHUB.bat

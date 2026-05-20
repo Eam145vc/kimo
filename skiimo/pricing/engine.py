@@ -224,11 +224,6 @@ def registrar_excepcion(
 if __name__ == "__main__":
     import sys
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
-    # Test
-    print("Categoria default Hugo:", get_categoria_cliente("307a83aa-f601-4bde-bcbe-9d94d4ad54ed"))
-    print("Categoria default Diego:", get_categoria_cliente("a3782c85-c881-49ad-84d2-1cdabc62ac48"))
-    print()
-    p = sugerir_precio("A1AO", "a3782c85-c881-49ad-84d2-1cdabc62ac48")
-    print(f"A1AO para Diego: {p}")
-    p = sugerir_precio("P23", None)
-    print(f"P23 sin cliente: {p}")
+    # Smoke test: sugerencia sin cliente
+    p = sugerir_precio("A1AO", None)
+    print(f"A1AO sin cliente: categoria={p.categoria} precio_pre_iva=${p.precio_pre_iva:,.2f}")
