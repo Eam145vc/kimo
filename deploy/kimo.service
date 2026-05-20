@@ -1,0 +1,25 @@
+[Unit]
+Description=Kimo bot - Skiimo Cocktails
+After=network.target
+
+[Service]
+Type=simple
+User=kimo
+Group=kimo
+WorkingDirectory=/srv/kimo
+EnvironmentFile=/srv/kimo/.env
+ExecStart=/srv/kimo/.venv/bin/python -m skiimo.bot.app
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kimo
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/srv/kimo/data /srv/kimo/logs
+
+[Install]
+WantedBy=multi-user.target
