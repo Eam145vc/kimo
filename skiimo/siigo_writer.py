@@ -378,6 +378,98 @@ def crear_factura_compra(
     )
 
 
+DS_DOC_ID = 25720
+DS_DEFAULT_ACCOUNT_CODE = "511040"  # Honorarios. Se puede sobreescribir por item.
+
+
+def crear_documento_soporte(
+    factura: dict,
+    actor: str = "bot",
+) -> InvoiceResult:
+    """Crea Documento Soporte (DS) en Siigo para gastos a personas naturales
+    o proveedores sin factura electronica DIAN.
+
+    Endpoint: POST /v1/purchase-support-documents
+    """
+    nit = factura.get("proveedor_nit")
+    if not nit:
+        return InvoiceResult(ok=False, error="Sin NIT/cedula del proveedor")
+
+    fecha = factura.get("fecha") or date.today().isoformat()
+    try:
+        date.fromisoformat(fecha)
+    except ValueError:
+        fecha = date.today().isoformat()
+
+    items_in = factura.get("items") or []
+    siigo_items = []
+    total_calc = 0.0
+    if items_in:
+        for it in items_in:
+            qty = float(it.get("cantidad") or 1)
+            precio = float(it.get("precio_unitario") or 0)
+            if precio <= 0:
+                continue
+            siigo_items.append({
+                "type": "Account",
+                "code": DS_DEFAULT_ACCOUNT_CODE,
+                "description": (it.get("descripcion") or "Servicio")[:200],
+                "quantity": qty,
+                "price": round(precio, 2),
+                "discount": 0.0,
+            })
+            total_calc += qty * precio
+    if not siigo_items:
+        total = float(factura.get("total") or 0)
+        if total <= 0:
+            return InvoiceResult(ok=False, error="Sin items ni total")
+        siigo_items.append({
+            "type": "Account",
+            "code": DS_DEFAULT_ACCOUNT_CODE,
+            "description": f"Servicio - {factura.get('numero_factura', 'sin numero')}",
+            "quantity": 1,
+            "price": round(total, 2),
+            "discount": 0.0,
+        })
+        total_calc = total
+
+    payload = {
+        "document": {"id": DS_DOC_ID},
+        "date": fecha,
+        "supplier": {"identification": nit, "branch_office": 0},
+        "supplier_receipt_number": {
+            "prefix": (factura.get("prefijo_factura") or "DS")[:10],
+            "number": str(factura.get("numero_factura") or "0"),
+        },
+        "discount_type": "Value",
+        "observations": f"[CORREO] {(factura.get('observaciones') or '')[:200]}",
+        "items": siigo_items,
+        "payments": [{
+            "id": 3049,  # Credito proveedores
+            "value": round(total_calc, 2),
+            "due_date": (date.fromisoformat(fecha) + timedelta(days=30)).isoformat(),
+        }],
+    }
+
+    _audit("support_document", None, "post_request", actor, payload)
+    try:
+        with SiigoClient() as s:
+            r = s.post("/v1/purchase-support-documents", payload)
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:500]
+        _audit("support_document", None, "post_error", actor,
+               {"status": e.response.status_code, "body": body})
+        return InvoiceResult(ok=False, error=f"HTTP {e.response.status_code}: {body}")
+    except Exception as e:
+        return InvoiceResult(ok=False, error=str(e))
+
+    _audit("support_document", r.get("id"), "post_success", actor, r)
+    return InvoiceResult(
+        ok=True, siigo_id=r.get("id"), siigo_name=r.get("name"),
+        total=r.get("total"), raw=r,
+    )
+
+
 def get_invoice_pdf(invoice_id: str) -> bytes | None:
     """Devuelve el PDF de la factura como bytes."""
     try:

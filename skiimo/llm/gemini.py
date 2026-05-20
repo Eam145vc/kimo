@@ -51,8 +51,19 @@ Importante:
 - fecha: YYYY-MM-DD.
 - items: lee cada linea de la factura. Si no son claras las cantidades/precios, baja confidence.
 - IVA en Colombia generalmente 19%. Si la factura indica otro, ponlo.
-- categoria: "materias_primas" si son insumos para produccion (acidos, azucares, saborizantes, empaques).
-  "gasto_administrativo" si son servicios, papeleria, arriendo, servicios publicos, transporte.
+- categoria:
+  * "materias_primas" si son insumos para produccion (acidos, azucares, saborizantes, empaques, etc.).
+  * "gasto_administrativo" si son servicios o gastos generales DE EMPRESAS con factura electronica DIAN
+    (arriendo de empresa, servicios publicos, papeleria de empresa, transporte de empresa).
+  * "documento_soporte" si el proveedor es una PERSONA NATURAL sin factura electronica DIAN:
+    - No tiene NIT empresarial (cedula de ciudadania o RUT de persona natural)
+    - Es un freelancer, contratista, consultor independiente
+    - Honorarios profesionales (contadores, abogados, asesores)
+    - Servicios informales (taxi, mensajero, mantenimiento)
+    - Cuando no hay numero de factura DIAN visible (CUFE/CUDE)
+    - Reembolsos de gastos personales
+    Si dudas entre "gasto_administrativo" y "documento_soporte", elegi documento_soporte solo si
+    es claramente persona natural o servicio informal.
 - confidence alto (0.85+) solo si todos los campos numericos son claros y suman bien."""
 
 

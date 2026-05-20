@@ -113,7 +113,12 @@ class FacturaProveedor(BaseModel):
     iva_total: float | None = None
     retenciones: float | None = None
     total: float | None = None
-    categoria: Literal["materias_primas", "gasto_administrativo", "otro"] = "gasto_administrativo"
+    categoria: Literal[
+        "materias_primas",
+        "gasto_administrativo",
+        "documento_soporte",
+        "otro",
+    ] = "gasto_administrativo"
     forma_pago: str | None = None
     observaciones: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)

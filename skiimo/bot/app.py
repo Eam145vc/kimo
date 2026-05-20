@@ -374,7 +374,12 @@ async def _mostrar_factura_correo(update_or_cb, ctx, factura_id: int) -> None:
 
     payload = json.loads(fc["payload_extraido"] or "{}")
     cat = payload.get("categoria") or "gasto_administrativo"
-    cat_label = {"materias_primas": "📦 MATERIAS PRIMAS", "gasto_administrativo": "🧾 GASTO ADMINISTRATIVO"}.get(cat, cat)
+    cat_labels = {
+        "materias_primas": "📦 MATERIAS PRIMAS",
+        "gasto_administrativo": "🧾 GASTO ADMINISTRATIVO",
+        "documento_soporte": "📄 DOCUMENTO SOPORTE",
+    }
+    cat_label = cat_labels.get(cat, cat)
 
     lines = [
         f"📨 *Factura de correo #{factura_id}*",
@@ -396,17 +401,24 @@ async def _mostrar_factura_correo(update_or_cb, ctx, factura_id: int) -> None:
 
     buttons: list[list[InlineKeyboardButton]] = []
     if fc["estado"] == "pendiente":
+        # Boton recomendado primero (la categoria detectada)
         buttons.append([InlineKeyboardButton(
-            f"✅ Crear en Siigo como {cat_label[2:]}",
+            f"✅ Crear como {cat_label}",
             callback_data=f"fcok:{factura_id}:{cat}",
         )])
-        # Boton para cambiar categoria
-        otra_cat = "materias_primas" if cat == "gasto_administrativo" else "gasto_administrativo"
-        otra_label = {"materias_primas": "📦 Materias primas", "gasto_administrativo": "🧾 Gasto admin"}[otra_cat]
-        buttons.append([InlineKeyboardButton(
-            f"🔄 Cambiar a {otra_label}",
-            callback_data=f"fcok:{factura_id}:{otra_cat}",
-        )])
+        # Botones para cambiar a las otras 2 categorias
+        opciones_cambio = [
+            ("materias_primas", "📦 Materias primas"),
+            ("gasto_administrativo", "🧾 Gasto admin"),
+            ("documento_soporte", "📄 Doc. soporte (persona natural)"),
+        ]
+        for opt_cat, opt_label in opciones_cambio:
+            if opt_cat == cat:
+                continue
+            buttons.append([InlineKeyboardButton(
+                f"🔄 Cambiar a {opt_label}",
+                callback_data=f"fcok:{factura_id}:{opt_cat}",
+            )])
         buttons.append([InlineKeyboardButton(
             "❌ Descartar",
             callback_data=f"fcno:{factura_id}",
@@ -1449,19 +1461,34 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
 
     if accion == "fcok":
         categoria = parts[2] if len(parts) > 2 else "gasto_administrativo"
-        doc_id = PURCHASE_DOC_ID_MATERIAS if categoria == "materias_primas" else DEFAULT_PURCHASE_DOC_ID
+
+        cat_labels = {
+            "materias_primas": "MATERIAS PRIMAS",
+            "gasto_administrativo": "GASTO ADMINISTRATIVO",
+            "documento_soporte": "DOCUMENTO SOPORTE",
+        }
+        cat_label = cat_labels.get(categoria, categoria)
 
         await cb.edit_message_text(
-            f"⏳ Creando factura de compra en Siigo (#{factura_id})...",
+            f"⏳ Creando {cat_label} en Siigo (#{factura_id})...",
             parse_mode="Markdown",
         )
 
         payload = json.loads(fc["payload_extraido"] or "{}")
         payload["categoria"] = categoria
-        result = await asyncio.to_thread(
-            crear_factura_compra, payload, doc_id=doc_id,
-            actor=f"correo:{factura_id}",
-        )
+
+        # Routing al endpoint correcto segun categoria
+        if categoria == "documento_soporte":
+            from skiimo.siigo_writer import crear_documento_soporte
+            result = await asyncio.to_thread(
+                crear_documento_soporte, payload, actor=f"correo:{factura_id}",
+            )
+        else:
+            doc_id = PURCHASE_DOC_ID_MATERIAS if categoria == "materias_primas" else DEFAULT_PURCHASE_DOC_ID
+            result = await asyncio.to_thread(
+                crear_factura_compra, payload, doc_id=doc_id,
+                actor=f"correo:{factura_id}",
+            )
 
         if result.ok:
             marcar_factura_correo(
@@ -1469,9 +1496,8 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
                 siigo_purchase_id=result.siigo_id,
                 siigo_purchase_name=result.siigo_name,
             )
-            cat_label = "MATERIAS PRIMAS" if categoria == "materias_primas" else "GASTO ADMINISTRATIVO"
             msg = (
-                f"✅ *Factura de compra creada en Siigo*\n\n"
+                f"✅ *Documento creado en Siigo*\n\n"
                 f"Documento: `{result.siigo_name}`\n"
                 f"Tipo: _{cat_label}_\n"
                 f"Total: `${(result.total or 0):,.0f}`\n"
@@ -1481,7 +1507,7 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
         else:
             marcar_factura_correo(factura_id, "error", error=(result.error or "")[:500])
             await cb.edit_message_text(
-                f"⚠️ *Error al crear factura*\n\n`{(result.error or '')[:400]}`",
+                f"⚠️ *Error al crear*\n\n`{(result.error or '')[:400]}`",
                 parse_mode="Markdown",
             )
 
