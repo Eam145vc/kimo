@@ -34,8 +34,9 @@ DEFAULT_PAYMENT_ID = int(_get("DEFAULT_PAYMENT_ID", "3043"))  # Efectivo
 INVOICE_DOC_ID_ELECTRONIC = 27703
 PURCHASE_DOC_ID_MATERIAS = 13219
 
-# Modo prueba: si esta activo, las facturas usan doc tradicional + cliente test
-SIIGO_INVOICE_TEST_MODE = _get("SIIGO_INVOICE_TEST_MODE", "true").lower() in ("1", "true", "yes")
+# Modo prueba: si esta activo, las facturas se envian al cliente test y se etiquetan [TEST BOT].
+# Default OFF: produccion real. Solo activar manualmente para pruebas de regresion locales.
+SIIGO_INVOICE_TEST_MODE = _get("SIIGO_INVOICE_TEST_MODE", "false").lower() in ("1", "true", "yes")
 SIIGO_TEST_CUSTOMER_ID = _get("SIIGO_TEST_CUSTOMER_ID", "")
 
 # Telegram

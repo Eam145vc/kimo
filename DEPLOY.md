@@ -31,9 +31,9 @@ TELEGRAM_BOT_TOKEN=<token_de_BotFather>
 # Gemini — copiar desde .env local
 GEMINI_API_KEY=<api_key_de_aistudio>
 
-# Admin / Modo prueba
+# Admin / Modo prueba (produccion: false)
 ADMIN_TELEGRAM_CHAT_ID=<tu_chat_id>
-SIIGO_INVOICE_TEST_MODE=true
+SIIGO_INVOICE_TEST_MODE=false
 SIIGO_TEST_CUSTOMER_ID=<uuid_cliente_test>
 
 # Defaults Siigo (estos son fijos para esta cuenta)

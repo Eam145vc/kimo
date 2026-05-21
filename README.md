@@ -28,7 +28,7 @@ Editar `.env`:
 - `TELEGRAM_BOT_TOKEN` (ya cargado, bot @soykiimo_bot)
 - `GEMINI_API_KEY` (ya cargada)
 - `ADMIN_TELEGRAM_CHAT_ID` — opcional, te identifica como admin
-- `SIIGO_INVOICE_TEST_MODE=true` — fuerza factura tradicional + cliente test
+- `SIIGO_INVOICE_TEST_MODE=false` — produccion. Poner `true` solo para regresion local (manda al cliente test y agrega `[TEST BOT]` en observaciones).
 
 ### 3. Sincronizar catálogos Siigo → SQLite
 
@@ -80,15 +80,22 @@ Una vez registrado tu chat_id, mandale al bot `@soykiimo_bot`:
 - **`/reporte gastos`**: te dice gastos del mes.
 - **`/cancelar`**: cancela el pedido en curso.
 
+## Tipo de factura (electrónica vs tradicional)
+
+Al confirmar un pedido el vendedor ve 2 botones:
+
+- **📧 Factura electrónica** → FV-2 (doc `27703`), con CUFE DIAN, va por correo al cliente.
+- **🧾 Factura** → FV-1 tradicional (doc `13214`, `DEFAULT_INVOICE_DOC_ID`). Sin CUFE.
+
+Después de elegir tipo de factura aparece el paso de pago: **CRÉDITO** o **PAGADA** (con submenú de método).
+
 ## Modo prueba
 
-Mientras `SIIGO_INVOICE_TEST_MODE=true`:
-- Todas las facturas usan tipo **tradicional (13214)**, no electrónica DIAN.
-- Todas las facturas se asignan al **cliente ZZZ TEST BOT PRUEBAS** (id `406be39e-...`).
+Default `SIIGO_INVOICE_TEST_MODE=false` (producción). Si se pone en `true`:
+- Las facturas se asignan al **cliente ZZZ TEST BOT PRUEBAS** (`SIIGO_TEST_CUSTOMER_ID`).
 - Las observaciones llevan prefijo `[TEST BOT]`.
-- El consecutivo DIAN sigue avanzando (es la única limitación de Siigo).
-
-Para producción cambiar `SIIGO_INVOICE_TEST_MODE=false`.
+- El tipo de factura sigue siendo el que elija el vendedor (electrónica o tradicional).
+- El consecutivo DIAN sigue avanzando (limitación de Siigo).
 
 ## Arquitectura local
 

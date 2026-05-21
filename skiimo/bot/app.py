@@ -1666,24 +1666,26 @@ async def _send_proposal(update: Update, ctx: ContextTypes.DEFAULT_TYPE, pedido)
 def _build_pedido_buttons(pedido_id: int, rp) -> list[list[InlineKeyboardButton]]:
     """Construye el teclado inline para un pedido.
 
+    Paso 1: el vendedor elige el tipo de documento.
+
     Layout:
-      [ 📅 Enviar como CRÉDITO ]
-      [ 💰 Enviar como PAGADA ]
+      [ 📧 Factura electronica ]
+      [ 🧾 Factura ]
       [ ✏️ Cambiar producto 1 ]  [ ✏️ Cambiar producto 2 ]
       [ ❌ Cancelar pedido ]
     """
     bloqueado = bool(rp.necesita_input_humano) or rp.cliente_elegido is None
     buttons: list[list[InlineKeyboardButton]] = []
 
-    # Acciones principales: 2 botones de envio
+    # Paso 1: tipo de documento
     if not bloqueado:
         buttons.append([InlineKeyboardButton(
-            "📅  Enviar como CRÉDITO",
-            callback_data=f"sendcr:{pedido_id}",
+            "📧  Factura electronica",
+            callback_data=f"dtyp:{pedido_id}:elec",
         )])
         buttons.append([InlineKeyboardButton(
-            "💰  Enviar como PAGADA",
-            callback_data=f"sendpag:{pedido_id}",
+            "🧾  Factura",
+            callback_data=f"dtyp:{pedido_id}:trad",
         )])
 
     # Botones para cambiar items (compactos, 2 por fila si caben)
@@ -1723,16 +1725,38 @@ def _build_pedido_buttons(pedido_id: int, rp) -> list[list[InlineKeyboardButton]
     return buttons
 
 
-def _build_payment_method_picker(pedido_id: int) -> list[list[InlineKeyboardButton]]:
+def _doc_type_label(dtype: str) -> str:
+    return "Factura electronica" if dtype == "elec" else "Factura"
+
+
+def _build_payment_step_buttons(pedido_id: int, dtype: str) -> list[list[InlineKeyboardButton]]:
+    """Paso 2: una vez elegido tipo de doc, pedir credito/pagada."""
+    return [
+        [InlineKeyboardButton(
+            "📅  Enviar como CRÉDITO",
+            callback_data=f"sendcr:{pedido_id}:{dtype}",
+        )],
+        [InlineKeyboardButton(
+            "💰  Enviar como PAGADA",
+            callback_data=f"sendpag:{pedido_id}:{dtype}",
+        )],
+        [InlineKeyboardButton(
+            "← Cambiar tipo de factura",
+            callback_data=f"back:{pedido_id}",
+        )],
+    ]
+
+
+def _build_payment_method_picker(pedido_id: int, dtype: str) -> list[list[InlineKeyboardButton]]:
     """Sub-menu cuando el usuario elige 'Enviar como PAGADA': elegir metodo de pago."""
     return [
-        [InlineKeyboardButton("💵  Efectivo", callback_data=f"pay:{pedido_id}:efectivo")],
-        [InlineKeyboardButton("📱  Nequi", callback_data=f"pay:{pedido_id}:nequi")],
-        [InlineKeyboardButton("📱  Daviplata", callback_data=f"pay:{pedido_id}:daviplata")],
-        [InlineKeyboardButton("🏦  Transferencia bancaria", callback_data=f"pay:{pedido_id}:banco_ahorros")],
-        [InlineKeyboardButton("💳  Tarjeta débito", callback_data=f"pay:{pedido_id}:tarjeta_debito")],
-        [InlineKeyboardButton("💳  Tarjeta crédito", callback_data=f"pay:{pedido_id}:tarjeta_credito")],
-        [InlineKeyboardButton("← Volver al pedido", callback_data=f"back:{pedido_id}")],
+        [InlineKeyboardButton("💵  Efectivo", callback_data=f"pay:{pedido_id}:{dtype}:efectivo")],
+        [InlineKeyboardButton("📱  Nequi", callback_data=f"pay:{pedido_id}:{dtype}:nequi")],
+        [InlineKeyboardButton("📱  Daviplata", callback_data=f"pay:{pedido_id}:{dtype}:daviplata")],
+        [InlineKeyboardButton("🏦  Transferencia bancaria", callback_data=f"pay:{pedido_id}:{dtype}:banco_ahorros")],
+        [InlineKeyboardButton("💳  Tarjeta débito", callback_data=f"pay:{pedido_id}:{dtype}:tarjeta_debito")],
+        [InlineKeyboardButton("💳  Tarjeta crédito", callback_data=f"pay:{pedido_id}:{dtype}:tarjeta_credito")],
+        [InlineKeyboardButton("← Volver", callback_data=f"dtyp:{pedido_id}:{dtype}")],
     ]
 
 
@@ -1833,32 +1857,65 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         await cb.edit_message_text(f"❌ *Pedido #{pedido_id} cancelado*", parse_mode="Markdown")
         return
 
-    # Enviar como CREDITO (default)
+    # Paso intermedio: elegir tipo de documento (electronica / tradicional)
+    if accion == "dtyp":
+        dtype = parts[2] if len(parts) > 2 else "trad"
+        if dtype not in ("elec", "trad"):
+            dtype = "trad"
+        rp = _rehydrate_resolved(pedido_row)
+        label = _doc_type_label(dtype)
+        await cb.edit_message_text(
+            f"*Pedido #{pedido_id}* — {label}\n\n"
+            f"{format_summary(rp)}\n\n"
+            f"¿Cómo se envía?",
+            reply_markup=InlineKeyboardMarkup(_build_payment_step_buttons(pedido_id, dtype)),
+            parse_mode="Markdown",
+        )
+        return
+
+    # Enviar como CREDITO
     if accion == "sendcr":
+        dtype = parts[2] if len(parts) > 2 else "trad"
+        from skiimo.config import DEFAULT_INVOICE_DOC_ID, INVOICE_DOC_ID_ELECTRONIC
+        doc_id_pick = INVOICE_DOC_ID_ELECTRONIC if dtype == "elec" else DEFAULT_INVOICE_DOC_ID
+        label = _doc_type_label(dtype)
         rp = _rehydrate_resolved(pedido_row)
         await cb.edit_message_text(
-            f"⏳ *Pedido #{pedido_id}*\n\nEnviando como CRÉDITO a Siigo...",
+            f"⏳ *Pedido #{pedido_id}*\n\nEnviando {label} como CRÉDITO a Siigo...",
             parse_mode="Markdown",
         )
         result = await asyncio.to_thread(
             crear_factura_venta, rp, f"chat:{pedido_row['telegram_chat_id']}",
-            payment_mode="credito", payment_method="efectivo",
+            payment_mode="credito", payment_method="efectivo", doc_id=doc_id_pick,
         )
-        await _post_send(cb, ctx, pedido_row, pedido_id, result, modo="CRÉDITO")
+        await _post_send(cb, ctx, pedido_row, pedido_id, result, modo=f"{label} · CRÉDITO")
         return
 
     # Pedir metodo de pago para envio PAGADA
     if accion == "sendpag":
+        dtype = parts[2] if len(parts) > 2 else "trad"
+        if dtype not in ("elec", "trad"):
+            dtype = "trad"
+        label = _doc_type_label(dtype)
         await cb.edit_message_text(
-            f"*Pedido #{pedido_id}*\n\n¿Cómo lo pagó el cliente?",
-            reply_markup=InlineKeyboardMarkup(_build_payment_method_picker(pedido_id)),
+            f"*Pedido #{pedido_id}* — {label}\n\n¿Cómo lo pagó el cliente?",
+            reply_markup=InlineKeyboardMarkup(_build_payment_method_picker(pedido_id, dtype)),
             parse_mode="Markdown",
         )
         return
 
     # Ejecutar envio PAGADA con metodo concreto
     if accion == "pay":
-        metodo = parts[2]
+        # Compat: formato nuevo "pay:<pid>:<dtype>:<metodo>" o legacy "pay:<pid>:<metodo>"
+        if len(parts) >= 4:
+            dtype = parts[2]
+            metodo = parts[3]
+        else:
+            dtype = "trad"
+            metodo = parts[2]
+        from skiimo.config import DEFAULT_INVOICE_DOC_ID, INVOICE_DOC_ID_ELECTRONIC
+        doc_id_pick = INVOICE_DOC_ID_ELECTRONIC if dtype == "elec" else DEFAULT_INVOICE_DOC_ID
+        label = _doc_type_label(dtype)
         rp = _rehydrate_resolved(pedido_row)
         nombre_metodo = {
             "efectivo": "Efectivo", "nequi": "Nequi", "daviplata": "Daviplata",
@@ -1866,14 +1923,14 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             "tarjeta_credito": "Tarjeta crédito",
         }.get(metodo, metodo)
         await cb.edit_message_text(
-            f"⏳ *Pedido #{pedido_id}*\n\nEnviando PAGADA ({nombre_metodo})...",
+            f"⏳ *Pedido #{pedido_id}*\n\nEnviando {label} PAGADA ({nombre_metodo})...",
             parse_mode="Markdown",
         )
         result = await asyncio.to_thread(
             crear_factura_venta, rp, f"chat:{pedido_row['telegram_chat_id']}",
-            payment_mode="contado", payment_method=metodo,
+            payment_mode="contado", payment_method=metodo, doc_id=doc_id_pick,
         )
-        await _post_send(cb, ctx, pedido_row, pedido_id, result, modo=f"PAGADA en {nombre_metodo}")
+        await _post_send(cb, ctx, pedido_row, pedido_id, result, modo=f"{label} · PAGADA en {nombre_metodo}")
         return
 
     # Sub-menu para elegir entre candidatos de un item

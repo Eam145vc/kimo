@@ -118,6 +118,7 @@ def crear_factura_venta(
     payment_mode: str = "credito",
     payment_method: str = "efectivo",
     due_days: int = 30,
+    doc_id: int | None = None,
 ) -> InvoiceResult:
     """Crea una factura de venta a partir de un ResolvedPedido.
 
@@ -128,6 +129,8 @@ def crear_factura_venta(
                       'efectivo', 'nequi', 'daviplata', 'banco_ahorros',
                       'tarjeta_debito', 'tarjeta_credito'.
       due_days: dias de plazo si es credito (default 30).
+      doc_id: id del tipo de documento Siigo. Si None usa DEFAULT_INVOICE_DOC_ID (FV-1 tradicional).
+              Pasar INVOICE_DOC_ID_ELECTRONIC (27703) para factura electronica DIAN.
     """
     # Validaciones de entrada
     if rp.cliente_elegido is None:
@@ -146,7 +149,8 @@ def crear_factura_venta(
         )
 
     # Construir payload Siigo
-    doc_id = DEFAULT_INVOICE_DOC_ID  # tradicional para modo test/dev
+    if doc_id is None:
+        doc_id = DEFAULT_INVOICE_DOC_ID
     fecha = rp.raw.fecha_entrega or date.today().isoformat()
     try:
         # validar fecha
