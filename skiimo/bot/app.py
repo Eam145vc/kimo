@@ -311,6 +311,23 @@ async def _job_resumen_diario(context: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("Error mandando resumen diario")
 
 
+async def cmd_factura(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Activa modo 'esperando factura'. La proxima foto/PDF se procesa como factura proveedor."""
+    assert update.message and update.effective_chat
+    chat_id = update.effective_chat.id
+    ok, _info = _is_authorized(chat_id)
+    if not ok:
+        await update.message.reply_text("No autorizado")
+        return
+    _activar_modo_factura(chat_id)
+    await update.message.reply_text(
+        "📸 *Modo factura activo (5 min)*\n\n"
+        "Mandame la *foto* o *PDF* de la factura del proveedor.\n\n"
+        "_También sirve para gastos administrativos o cuentas de cobro._",
+        parse_mode="Markdown",
+    )
+
+
 async def cmd_correos(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Lee correos no leidos via IMAP, procesa adjuntos y muestra facturas extraidas."""
     assert update.message and update.effective_chat
@@ -477,6 +494,24 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     comp_id_esperando = _ESPERANDO_CLIENTE_POR_CHAT.get(chat_id)
     if comp_id_esperando is not None:
         await _resolver_busqueda_cliente(update, comp_id_esperando, texto)
+        return
+
+    # Si hay un proveedor pendiente esperando nombre, este texto es el nombre nuevo
+    prv_pend = _PROVEEDOR_PENDIENTE_POR_CHAT.get(chat_id)
+    if prv_pend and prv_pend.get("esperando_nombre"):
+        prv_pend["nombre"] = texto[:200]
+        prv_pend.pop("esperando_nombre", None)
+        await update.message.reply_text(
+            f"📝 Nombre actualizado: *{texto[:80]}*\n\n"
+            f"NIT/Cedula: `{prv_pend['nit']}`\n\n"
+            f"¿Es empresa o persona natural?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏢 Empresa", callback_data=f"prvcrear:{prv_pend['factura_id']}:empresa")],
+                [InlineKeyboardButton("👤 Persona natural", callback_data=f"prvcrear:{prv_pend['factura_id']}:persona")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"fcno:{prv_pend['factura_id']}")],
+            ]),
+            parse_mode="Markdown",
+        )
         return
 
     role = info.get("rol", "vendedor") if info else "vendedor"
@@ -715,8 +750,11 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Recibe foto/documento que asumimos es un comprobante de pago.
-    Hace OCR con Gemini y muestra candidatos para aplicar el pago.
+    """Recibe foto o documento (imagen / PDF).
+
+    Routing:
+      - Si el chat esta en modo factura (via /factura): procesar como factura proveedor.
+      - En otro caso: tratar como comprobante de pago.
     """
     import hashlib
     assert update.message and update.effective_chat
@@ -728,9 +766,10 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_chat_action("typing")
 
-    # Obtener bytes de la imagen (mas alta resolucion si es photo, archivo crudo si es document)
+    # Obtener bytes (foto = imagen comprimida; document = archivo crudo, puede ser PDF)
     img_bytes: bytes
     mime = "image/jpeg"
+    filename = "imagen.jpg"
     if update.message.photo:
         biggest = update.message.photo[-1]
         f = await biggest.get_file()
@@ -738,15 +777,23 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     elif update.message.document:
         doc = update.message.document
         mime = doc.mime_type or "image/jpeg"
-        # Solo procesamos imagenes (PDF lo dejamos para otro flujo)
-        if not mime.startswith("image/"):
-            await update.message.reply_text(
-                f"Por ahora solo procesamos imagenes. Tipo recibido: {mime}"
-            )
-            return
+        filename = doc.file_name or "archivo"
         f = await doc.get_file()
         img_bytes = bytes(await f.download_as_bytearray())
     else:
+        return
+
+    # Si el chat esta en "modo factura" (comando /factura previo), rutear a factura proveedor
+    if _consumir_modo_factura(chat_id):
+        await _procesar_foto_como_factura(update, ctx, chat_id, img_bytes, mime, filename)
+        return
+
+    # Si es PDF y NO esta en modo factura, no es comprobante valido
+    if mime == "application/pdf":
+        await update.message.reply_text(
+            "📄 Recibí un PDF. Si es una factura de proveedor, mandá `/factura` antes y luego el PDF.",
+            parse_mode="Markdown",
+        )
         return
 
     # Detectar duplicado por hash del archivo
@@ -869,11 +916,153 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def _procesar_foto_como_factura(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    file_bytes: bytes,
+    mime: str,
+    filename: str,
+) -> None:
+    """OCR de factura de proveedor subida por chat. Si el proveedor no existe en
+    Siigo, abre un sub-flujo para crearlo antes de mostrar el resumen normal."""
+    assert update.message
+
+    from skiimo.gmail_imap import procesar_factura_subida_manual
+
+    await update.message.reply_text("📥 *Procesando factura...*", parse_mode="Markdown")
+    factura_id, error, dup = await asyncio.to_thread(
+        procesar_factura_subida_manual,
+        chat_id=chat_id,
+        file_bytes=file_bytes,
+        mime=mime,
+        filename=filename,
+    )
+
+    if error:
+        await update.message.reply_text(f"⚠️ {error}")
+        return
+
+    if dup:
+        motivo = dup.get("motivo", "?")
+        if motivo == "hash_duplicado":
+            await update.message.reply_text(
+                f"⚠️ *Esta factura ya fue procesada* (estado: {dup.get('estado')})\n"
+                f"NIT: `{dup.get('proveedor_nit') or '?'}`  ·  Numero: `{dup.get('numero_factura') or '?'}`",
+                parse_mode="Markdown",
+            )
+        else:
+            siigo_name = dup.get("siigo_name") or dup.get("siigo_purchase_name") or "?"
+            await update.message.reply_text(
+                f"⚠️ *Factura duplicada*\n\n"
+                f"Ya existe en {dup.get('fuente', 'Siigo')}: `{siigo_name}`",
+                parse_mode="Markdown",
+            )
+        return
+
+    if not factura_id:
+        await update.message.reply_text("⚠️ No pude procesar la factura.")
+        return
+
+    # Verificar si el proveedor existe en el espejo Siigo
+    from skiimo.gmail_imap import get_factura_correo
+    fc = get_factura_correo(factura_id)
+    if not fc:
+        await update.message.reply_text("⚠️ Factura guardada pero no la encuentro de vuelta.")
+        return
+
+    nit = (fc.get("proveedor_nit") or "").strip()
+    nombre = (fc.get("proveedor_nombre") or "").strip()
+
+    existe_proveedor = False
+    if nit:
+        nit_clean = "".join(c for c in nit if c.isdigit())
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT id, name FROM siigo_customers WHERE identification = ? LIMIT 1",
+                (nit_clean,),
+            ).fetchone()
+            existe_proveedor = row is not None
+        finally:
+            conn.close()
+
+    if not existe_proveedor and nit:
+        # Mostrar paso de creacion de proveedor
+        _PROVEEDOR_PENDIENTE_POR_CHAT[chat_id] = {
+            "factura_id": factura_id,
+            "nit": nit,
+            "nombre": nombre,
+        }
+        await update.message.reply_text(
+            f"🆕 *Proveedor desconocido*\n\n"
+            f"NIT/Cedula: `{nit}`\n"
+            f"Nombre detectado: _{nombre or '?'}_\n\n"
+            f"No existe en Siigo. ¿Lo creo?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🏢 Crear como empresa",
+                    callback_data=f"prvcrear:{factura_id}:empresa",
+                )],
+                [InlineKeyboardButton(
+                    "👤 Crear como persona natural",
+                    callback_data=f"prvcrear:{factura_id}:persona",
+                )],
+                [InlineKeyboardButton(
+                    "✏️ Cambiar nombre",
+                    callback_data=f"prvedit:{factura_id}",
+                )],
+                [InlineKeyboardButton(
+                    "❌ Cancelar",
+                    callback_data=f"fcno:{factura_id}",
+                )],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    if not nit:
+        await update.message.reply_text(
+            "⚠️ La factura no tiene NIT detectado. Mandala con más calidad o decímelo a mano."
+        )
+        return
+
+    # Flujo normal: mostrar resumen + categorias
+    await _mostrar_factura_correo(update, ctx, factura_id)
+
+
 _COMPROBANTE_CACHE: dict[int, dict] = {}
 _COMPROBANTE_COUNTER = [0]
 # chat_id -> comprobante_id (en cache) cuando se esta esperando que el usuario
 # escriba el nombre/NIT del cliente para aplicar un comprobante
 _ESPERANDO_CLIENTE_POR_CHAT: dict[int, int] = {}
+
+# chat_id -> timestamp expira_at (epoch). Si el chat esta en este dict y no expiro,
+# la proxima foto/PDF se trata como factura de proveedor (no comprobante de pago).
+_MODO_FACTURA_POR_CHAT: dict[int, float] = {}
+MODO_FACTURA_TTL = 5 * 60  # 5 minutos
+
+# chat_id -> dict con datos de proveedor pendiente de crear
+# {factura_id, nit, nombre_sugerido, mensaje_id}
+_PROVEEDOR_PENDIENTE_POR_CHAT: dict[int, dict] = {}
+
+
+def _activar_modo_factura(chat_id: int) -> None:
+    import time as _time
+    _MODO_FACTURA_POR_CHAT[chat_id] = _time.time() + MODO_FACTURA_TTL
+
+
+def _consumir_modo_factura(chat_id: int) -> bool:
+    """Devuelve True si el chat estaba en modo factura (y lo limpia)."""
+    import time as _time
+    exp = _MODO_FACTURA_POR_CHAT.get(chat_id)
+    if exp is None:
+        return False
+    if _time.time() > exp:
+        _MODO_FACTURA_POR_CHAT.pop(chat_id, None)
+        return False
+    _MODO_FACTURA_POR_CHAT.pop(chat_id, None)
+    return True
 
 
 def _save_comprobante(comp: dict) -> int:
@@ -1433,8 +1622,11 @@ def _get_cliente_ident_from_invoice(factura_id: str) -> str | None:
 async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]) -> None:
     """Maneja callbacks de facturas extraidas de correo.
 
-    fcok:<factura_id>:<categoria>  -> crear en Siigo
-    fcno:<factura_id>               -> descartar
+    fcok:<factura_id>:<categoria>             -> seleccion de categoria
+                                                 - DS: ejecuta directo
+                                                 - FC: muestra paso intermedio elec/trad
+    fcok:<factura_id>:<categoria>:<tipo>      -> ejecuta con tipo (elec|trad)
+    fcno:<factura_id>                          -> descartar
     """
     from skiimo.gmail_imap import get_factura_correo, marcar_factura_correo
     from skiimo.siigo_writer import crear_factura_compra
@@ -1461,6 +1653,7 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
 
     if accion == "fcok":
         categoria = parts[2] if len(parts) > 2 else "gasto_administrativo"
+        tipo_factura = parts[3] if len(parts) > 3 else None
 
         cat_labels = {
             "materias_primas": "MATERIAS PRIMAS",
@@ -1469,13 +1662,37 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
         }
         cat_label = cat_labels.get(categoria, categoria)
 
+        # Paso intermedio: si es FC (no DS) y no eligio tipo aun, preguntar elec/trad
+        if categoria != "documento_soporte" and tipo_factura is None:
+            await cb.edit_message_text(
+                f"📨 *Factura #{factura_id}* — {cat_label}\n\n"
+                f"*Proveedor:* {fc.get('proveedor_nombre') or '?'}\n"
+                f"*NIT:* `{fc.get('proveedor_nit') or '?'}`\n"
+                f"*Total:* `${float(fc.get('total') or 0):,.0f}`\n\n"
+                f"¿El proveedor te emitió factura electrónica DIAN o tradicional?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📧 Electrónica DIAN", callback_data=f"fcok:{factura_id}:{categoria}:elec")],
+                    [InlineKeyboardButton("🧾 Tradicional", callback_data=f"fcok:{factura_id}:{categoria}:trad")],
+                    [InlineKeyboardButton("← Cambiar categoría", callback_data=f"fcback:{factura_id}")],
+                    [InlineKeyboardButton("❌ Descartar", callback_data=f"fcno:{factura_id}")],
+                ]),
+                parse_mode="Markdown",
+            )
+            return
+
+        # tipo default si es DS
+        if tipo_factura is None:
+            tipo_factura = "elec"
+        tipo_label = "📧 Electrónica DIAN" if tipo_factura == "elec" else "🧾 Tradicional"
+
         await cb.edit_message_text(
-            f"⏳ Creando {cat_label} en Siigo (#{factura_id})...",
+            f"⏳ Creando {cat_label} ({tipo_label}) en Siigo (#{factura_id})...",
             parse_mode="Markdown",
         )
 
         payload = json.loads(fc["payload_extraido"] or "{}")
         payload["categoria"] = categoria
+        payload["origen_obs"] = "[CORREO]"
 
         # Routing al endpoint correcto segun categoria
         if categoria == "documento_soporte":
@@ -1487,7 +1704,7 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
             doc_id = PURCHASE_DOC_ID_MATERIAS if categoria == "materias_primas" else DEFAULT_PURCHASE_DOC_ID
             result = await asyncio.to_thread(
                 crear_factura_compra, payload, doc_id=doc_id,
-                actor=f"correo:{factura_id}",
+                actor=f"correo:{factura_id}", tipo_factura=tipo_factura,
             )
 
         if result.ok:
@@ -1510,6 +1727,90 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
                 f"⚠️ *Error al crear*\n\n`{(result.error or '')[:400]}`",
                 parse_mode="Markdown",
             )
+
+
+async def _handle_proveedor_callback(cb, ctx, accion: str, parts: list[str]) -> None:
+    """Maneja la creacion de un proveedor desconocido al subir factura.
+
+    prvcrear:<factura_id>:<tipo>  -> crear empresa/persona y seguir al flujo de aprobacion
+    prvedit:<factura_id>          -> pedir nombre por chat
+    """
+    from skiimo.gmail_imap import get_factura_correo
+    factura_id = int(parts[1])
+    chat_id = cb.message.chat.id if cb.message else None
+    pend = _PROVEEDOR_PENDIENTE_POR_CHAT.get(chat_id) if chat_id else None
+
+    if accion == "prvedit":
+        if pend is None:
+            await cb.edit_message_text("⚠️ Sesión expirada. Volvé a mandar la factura.")
+            return
+        pend["esperando_nombre"] = True
+        await cb.edit_message_text(
+            f"✏️ *Escribí el nombre correcto del proveedor*\n\n"
+            f"NIT/Cedula: `{pend['nit']}`\n"
+            f"_Mandalo como mensaje de texto._",
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion == "prvcrear":
+        tipo = parts[2] if len(parts) > 2 else "empresa"
+        if pend is None:
+            # Fallback: leer NIT/nombre de la factura
+            fc = get_factura_correo(factura_id)
+            if not fc:
+                await cb.edit_message_text("⚠️ Factura no encontrada.")
+                return
+            pend = {
+                "factura_id": factura_id,
+                "nit": fc.get("proveedor_nit") or "",
+                "nombre": fc.get("proveedor_nombre") or "",
+            }
+        nit = pend["nit"]
+        nombre = pend["nombre"]
+        if not nombre:
+            await cb.edit_message_text(
+                "⚠️ Falta el nombre. Tocá *Cambiar nombre* y mandámelo.",
+                parse_mode="Markdown",
+            )
+            return
+
+        tipo_label = "🏢 Empresa" if tipo == "empresa" else "👤 Persona"
+        await cb.edit_message_text(
+            f"⏳ Creando proveedor en Siigo ({tipo_label})...\n\n"
+            f"NIT: `{nit}`  ·  Nombre: _{nombre[:60]}_",
+            parse_mode="Markdown",
+        )
+
+        from skiimo.siigo_writer import crear_proveedor
+        result = await asyncio.to_thread(
+            crear_proveedor,
+            nit=nit, nombre=nombre, tipo=tipo,
+            actor=f"chat:{chat_id}",
+        )
+
+        if not result.ok:
+            await cb.edit_message_text(
+                f"⚠️ *No se pudo crear el proveedor*\n\n`{(result.error or '')[:400]}`",
+                parse_mode="Markdown",
+            )
+            return
+
+        # Limpiar pending
+        if chat_id:
+            _PROVEEDOR_PENDIENTE_POR_CHAT.pop(chat_id, None)
+
+        await cb.edit_message_text(
+            f"✅ *Proveedor creado en Siigo*\n\n"
+            f"NIT: `{nit}`\n"
+            f"Nombre: _{nombre[:80]}_\n"
+            f"Tipo: {tipo_label}\n\n"
+            f"_Continuando con la factura..._",
+            parse_mode="Markdown",
+        )
+        # Mostrar la factura para seguir el flujo normal
+        await _mostrar_factura_correo(cb, ctx, factura_id)
+        return
 
 
 async def _handle_comprobante_callback(cb, ctx, accion: str, parts: list[str]) -> None:
@@ -1845,6 +2146,13 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     if accion in ("fcok", "fcno"):
         await _handle_factura_correo_callback(cb, ctx, accion, parts)
         return
+    if accion == "fcback":
+        factura_id = int(parts[1])
+        await _mostrar_factura_correo(cb, ctx, factura_id)
+        return
+    if accion in ("prvcrear", "prvedit"):
+        await _handle_proveedor_callback(cb, ctx, accion, parts)
+        return
 
     pedido_id = int(parts[1])
     pedido_row = _load_pedido(pedido_id)
@@ -2098,6 +2406,8 @@ def main() -> None:
     app.add_handler(CommandHandler("nuevo", cmd_nuevo))
     app.add_handler(CommandHandler("cancelar", cmd_cancelar))
     app.add_handler(CommandHandler("correos", cmd_correos))
+    app.add_handler(CommandHandler("factura", cmd_factura))
+    app.add_handler(CommandHandler("gasto", cmd_factura))
     app.add_handler(CommandHandler("resumen", cmd_resumen))
     app.add_handler(CommandHandler("agregar", cmd_agregar))
 

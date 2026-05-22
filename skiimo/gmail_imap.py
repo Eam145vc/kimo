@@ -443,6 +443,90 @@ def marcar_factura_correo(factura_id: int, estado: str, **extras: Any) -> None:
         conn.close()
 
 
+def procesar_factura_subida_manual(
+    *,
+    chat_id: int,
+    file_bytes: bytes,
+    mime: str,
+    filename: str = "factura.pdf",
+) -> tuple[int | None, str | None, dict | None]:
+    """OCR de una factura subida por chat (foto o PDF).
+
+    Reutiliza la tabla facturas_correo creando un 'correo' sintetico.
+
+    Returns:
+      (factura_id, error_msg, dup_info)
+      - factura_id: id en facturas_correo si OCR fue bien.
+      - error_msg: mensaje de error legible si fallo.
+      - dup_info: info de la factura duplicada si ya existia.
+    """
+    from skiimo.llm.gemini import extract_factura_proveedor
+
+    adjunto_hash = hashlib.sha256(file_bytes).hexdigest()
+
+    # Verificar si ese mismo archivo ya fue procesado
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, estado, proveedor_nit, numero_factura FROM facturas_correo WHERE adjunto_hash = ?",
+            (adjunto_hash,),
+        ).fetchone()
+        if row:
+            d = dict(row)
+            return d["id"], None, {"motivo": "hash_duplicado", **d}
+    finally:
+        conn.close()
+
+    # OCR
+    try:
+        factura = extract_factura_proveedor(file_bytes, mime)
+    except Exception as e:
+        log.exception("OCR factura manual fallo")
+        return None, f"OCR fallo: {e}", None
+
+    factura_dict = factura.model_dump()
+
+    # Verificar duplicado por NIT + numero
+    dup = _factura_ya_existe(factura.proveedor_nit, factura.numero_factura)
+    if dup:
+        return None, None, {"motivo": "nit_numero", **dup}
+
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = get_conn()
+    try:
+        # Correo sintetico para satisfacer la FK
+        cur = conn.execute(
+            """INSERT INTO correos_procesados
+               (message_id, remitente, asunto, fecha_correo, adjuntos_count, estado, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 1, 'manual', ?, ?)""",
+            (
+                f"chat:{chat_id}:{adjunto_hash[:12]}",
+                f"chat:{chat_id}",
+                f"Subida manual {filename}",
+                now,
+                now, now,
+            ),
+        )
+        correo_id = cur.lastrowid
+
+        factura_id = _persistir_factura_correo(
+            conn=conn,
+            correo_id=correo_id,
+            adjunto_hash=adjunto_hash,
+            nombre_archivo=filename,
+            factura=factura_dict,
+            confidence=factura.confidence,
+        )
+        conn.commit()
+    except Exception as e:
+        log.exception("Persist factura manual fallo")
+        return None, f"DB error: {e}", None
+    finally:
+        conn.close()
+
+    return factura_id, None, None
+
+
 if __name__ == "__main__":
     import sys
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]

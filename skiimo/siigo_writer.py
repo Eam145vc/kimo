@@ -278,12 +278,18 @@ def crear_factura_compra(
     *,
     doc_id: int | None = None,
     actor: str = "bot",
+    tipo_factura: str = "trad",
 ) -> InvoiceResult:
     """Crea factura de compra en Siigo a partir de un dict FacturaProveedor.
 
     Si doc_id no se pasa, se elige segun la categoria detectada:
       materias_primas -> 13219 (MATERIAS PRIMAS)
       gasto_administrativo / otro -> 27394 (GASTO ADMINISTRATIVO)
+
+    Args:
+      tipo_factura: 'elec' (proveedor emite FE DIAN con CUFE) o 'trad' (sin CUFE).
+                    Solo afecta el tag en observations y la auditoria.
+                    Siigo no diferencia el doc_id por este motivo.
     """
     from skiimo.config import DEFAULT_PURCHASE_DOC_ID, PURCHASE_DOC_ID_MATERIAS
 
@@ -341,6 +347,9 @@ def crear_factura_compra(
         })
         total_calc = total
 
+    tipo_tag = "FE" if tipo_factura == "elec" else "TRAD"
+    obs_origen = factura.get("origen_obs") or "[CORREO]"
+    obs_extra = (factura.get('observaciones') or '')[:180]
     payload = {
         "document": {"id": doc_id},
         "date": fecha,
@@ -351,7 +360,7 @@ def crear_factura_compra(
         },
         "discount_type": "Value",
         "supplier_by_item": False,
-        "observations": f"[CORREO] {(factura.get('observaciones') or '')[:200]}",
+        "observations": f"{obs_origen} [{tipo_tag}] {obs_extra}".strip()[:300],
         "items": siigo_items,
         "payments": [{
             "id": 3049,  # Credito proveedores (por defecto, queda con saldo)
@@ -471,6 +480,119 @@ def crear_documento_soporte(
     return InvoiceResult(
         ok=True, siigo_id=r.get("id"), siigo_name=r.get("name"),
         total=r.get("total"), raw=r,
+    )
+
+
+@dataclass(slots=True)
+class CrearProveedorResult:
+    ok: bool
+    siigo_id: str | None = None
+    identification: str | None = None
+    name: str | None = None
+    error: str | None = None
+    raw: dict | None = None
+
+
+def crear_proveedor(
+    *,
+    nit: str,
+    nombre: str,
+    tipo: str = "empresa",
+    actor: str = "bot",
+) -> CrearProveedorResult:
+    """Crea un tercero proveedor en Siigo (POST /v1/customers).
+
+    Args:
+      nit: NIT/cedula sin guiones ni dv.
+      nombre: razon social o nombre completo.
+      tipo: 'empresa' -> Company + NIT (id_type 31).
+            'persona' -> Person + cedula (id_type 13).
+    """
+    nit_clean = "".join(c for c in (nit or "") if c.isdigit())
+    if not nit_clean:
+        return CrearProveedorResult(ok=False, error="NIT/cedula invalido")
+    nombre = (nombre or "").strip()
+    if not nombre:
+        return CrearProveedorResult(ok=False, error="Nombre requerido")
+
+    person_type = "Company" if tipo == "empresa" else "Person"
+    id_type_code = "31" if tipo == "empresa" else "13"
+
+    # Construir lista de nombres segun tipo (Siigo separa nombres y apellidos para Person)
+    if person_type == "Company":
+        name_list = [nombre[:200]]
+    else:
+        partes = nombre.split()
+        if len(partes) >= 2:
+            name_list = [" ".join(partes[:-1])[:100], partes[-1][:100]]
+        else:
+            name_list = [nombre[:100], "."]  # Siigo exige minimo 2 elementos para Person
+
+    payload = {
+        "type": "Supplier",
+        "person_type": person_type,
+        "id_type": {"code": id_type_code},
+        "identification": nit_clean,
+        "name": name_list,
+        "commercial_name": nombre[:200],
+        "active": True,
+        "vat_responsible": False,
+        "fiscal_responsibilities": [{"code": "R-99-PN"}],  # No responsable
+        "address": {
+            "address": "Sin direccion",
+            "city": {"country_code": "Co", "state_code": "11", "city_code": "11001"},
+        },
+        "contacts": [{
+            "first_name": name_list[0][:50],
+            "last_name": (name_list[1] if len(name_list) > 1 else nombre)[:50],
+        }],
+    }
+
+    _audit("supplier", None, "post_request", actor, payload)
+    try:
+        with SiigoClient() as s:
+            r = s.post("/v1/customers", payload)
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:500]
+        _audit("supplier", None, "post_error", actor,
+               {"status": e.response.status_code, "body": body, "payload": payload})
+        return CrearProveedorResult(ok=False, error=f"HTTP {e.response.status_code}: {body}")
+    except Exception as e:
+        _audit("supplier", None, "post_exception", actor, {"error": str(e)})
+        return CrearProveedorResult(ok=False, error=str(e))
+
+    _audit("supplier", r.get("id"), "post_success", actor, r)
+
+    # Cachear en espejo local
+    try:
+        conn = get_conn()
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO siigo_customers
+                   (id, type, identification, name, commercial_name, email, active, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+                (
+                    r.get("id"),
+                    "Supplier",
+                    nit_clean,
+                    nombre[:200],
+                    nombre[:200],
+                    "",
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass  # best-effort
+
+    return CrearProveedorResult(
+        ok=True,
+        siigo_id=r.get("id"),
+        identification=nit_clean,
+        name=nombre,
+        raw=r,
     )
 
 
