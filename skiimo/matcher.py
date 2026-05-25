@@ -123,11 +123,19 @@ class Matcher:
             if exact:
                 return [exact]
         q = _normalize(query)
-        results = process.extract(
-            q, self._customer_keys, scorer=fuzz.WRatio, limit=limit, score_cutoff=min_score
-        )
+        # Estrategia: combinar token_set_ratio (premia tokens compartidos) con WRatio (penaliza
+        # ruido). token_set_ratio resuelve casos como "Daniel Bernal" -> "DANIEL ALBERTO BERNAL ACOSTA"
+        # que WRatio dejaba fuera. Tomamos top de cada uno y nos quedamos con el max score por candidato.
+        candidates: dict[int, float] = {}
+        for scorer in (fuzz.token_set_ratio, fuzz.WRatio):
+            for _, score, idx in process.extract(
+                q, self._customer_keys, scorer=scorer, limit=limit * 3, score_cutoff=min_score
+            ):
+                candidates[idx] = max(candidates.get(idx, 0.0), float(score))
+        # Ordenar por score desc
+        sorted_idx = sorted(candidates.items(), key=lambda x: x[1], reverse=True)[:limit]
         hits: list[CustomerHit] = []
-        for _, score, idx in results:
+        for idx, score in sorted_idx:
             c = self._customers[idx]
             hits.append(
                 CustomerHit(
@@ -136,7 +144,7 @@ class Matcher:
                     name=c["name"],
                     commercial_name=c.get("commercial_name") or "",
                     email=c.get("email") or "",
-                    score=float(score),
+                    score=score,
                 )
             )
         return hits

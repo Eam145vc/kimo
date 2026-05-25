@@ -44,6 +44,9 @@ class AgentReply:
 
 def _system_instruction(user_role: str = "vendedor") -> str:
     today = date.today().isoformat()
+    # Importar lazy para evitar ciclos
+    from skiimo.llm.gemini import _catalogo_para_prompt
+    catalogo = _catalogo_para_prompt()
     return f"""Eres Kimo, el asistente de gestion de la fabrica de granizados Esskimo Cocktails.
 Hoy es {today}. Hablas en espanol colombiano informal.
 
@@ -55,6 +58,20 @@ TU MISION: en cada mensaje, decidir el camino:
    (ej: "10 bolsas chicle para Tienda La 35", "Doña Marta pidio 5 perlas mango",
    "necesito 1 P23 a $100 en efectivo").
    Para esto LLAMA a la funcion `registrar_pedido`.
+
+   REGLAS DE NEGOCIO PARA ASIGNAR EL CODIGO DE PRODUCTO (campo items[].codigo):
+   * POR DEFECTO ES BOLSA 6L CON LICOR. Solo cambia si dicen explicitamente:
+     - "sachet" / "sachets" -> SACHETS 08 OZ
+     - "perlas" -> PERLAS EXPLOSIVAS (si no dicen tamaño, dejar codigo=null)
+     - "gelatina" -> GELATINAS
+     - "sin licor" -> version sin licor del mismo sabor
+   * "bombon" solo significa bombon regular. NO asumir "bombon manzana verde" salvo que lo digan literal.
+   * "coco" sin contexto -> A1O (Bolsa 6L Coco Loco con licor). "coco sin licor" -> A2X. "sachet coco" -> A3M.
+   * Si el sabor mencionado NO existe en el catalogo, dejar codigo=null.
+   * Usar el CATALOGO de abajo para buscar el codigo exacto.
+
+   {catalogo}
+
    Si el vendedor menciona un descuento puntual (cumpleanos, atencion, promo)
    capturalo en descuento_pct y descuento_motivo. Ej: "5 bolsas para Hugo con 10%
    por cumpleanos" -> descuento_pct=10, descuento_motivo="cumpleanos".
@@ -125,6 +142,14 @@ _REGISTRAR_PEDIDO_DECL = {
                     "type": "object",
                     "properties": {
                         "descripcion": {"type": "string", "description": "Producto tal como lo dijo el vendedor"},
+                        "codigo": {
+                            "type": "string",
+                            "description": (
+                                "Codigo del producto del catalogo (ej: A1AO, A3U, P2). "
+                                "Aplicar reglas: default bolsa 6L con licor. "
+                                "Si el sabor no existe en el catalogo, omitir o null."
+                            ),
+                        },
                         "cantidad": {"type": "number", "description": "Cantidad. Default 1."},
                         "precio_unitario": {"type": "number", "description": "Precio sin IVA si se menciono."},
                     },
@@ -272,6 +297,7 @@ def _pedido_from_args(args: dict) -> Pedido | None:
         items = [
             PedidoItem(
                 descripcion=str(it.get("descripcion", "")),
+                codigo=(str(it["codigo"]).strip() or None) if it.get("codigo") else None,
                 cantidad=float(it.get("cantidad", 1)),
                 precio_unitario=(
                     float(it["precio_unitario"]) if it.get("precio_unitario") is not None else None

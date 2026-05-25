@@ -107,21 +107,23 @@ def resolve_pedido(pedido: Pedido, matcher: Matcher) -> ResolvedPedido:
         # con "HERNAN ." (que solo contiene "hernan").
         if candidatos:
             best = candidatos[0]
-            # Cobertura de tokens: si el vendedor escribio 2+ palabras (ej "Hernan Marin"),
-            # el cliente elegido debe contener TODAS esas palabras. Esto evita que
-            # "Hernan Marin" matchee con "HERNAN ." (solo tiene "hernan").
+            # Cobertura de tokens: cada palabra del vendedor debe coincidir con algun
+            # token del nombre del candidato (substring match). Asi "Hernan Marin"
+            # NO matchea "HERNAN ." (no hay token con "marin"), pero "arqui distribu"
+            # SI matchea "ARQUI DISTRIBUCIONES" (distribu es prefijo de distribuciones).
             import re as _re
-            def _norm(s: str) -> set[str]:
+            def _tokens(s: str) -> list[str]:
                 s_ = _re.sub(r"[^a-zA-Z\sñ]", " ", (s or "").lower())
-                return {t for t in s_.split() if len(t) >= 3}
-            q_tokens = _norm(pedido.cliente_nombre)
-            name_tokens = _norm(best.name)
-            cobertura_ok = (not q_tokens) or q_tokens.issubset(name_tokens)
-            # Threshold:
-            #   - 1 sola palabra (ej "Hugo"): exigir score >= 88 + cobertura
-            #   - 2+ palabras: exigir score >= 88 + cobertura (la cobertura es el filtro real)
-            #   - sin tokens validos: usar 92 (filtro estricto)
-            min_score = 88 if q_tokens else 92
+                return [t for t in s_.split() if len(t) >= 3]
+            q_tokens = _tokens(pedido.cliente_nombre)
+            name_tokens = _tokens(best.name)
+            def _cubre(qt: str, nts: list[str]) -> bool:
+                # qt cubre si es substring de algun nt o viceversa (prefijo).
+                return any(qt in nt or nt in qt for nt in nts)
+            cobertura_ok = (not q_tokens) or all(_cubre(qt, name_tokens) for qt in q_tokens)
+            # Threshold: con cobertura completa, basta score 80 (la cobertura es el filtro real).
+            # Sin tokens validos, exigir 92.
+            min_score = 80 if q_tokens else 92
             if best.score >= min_score and cobertura_ok:
                 cliente_real_para_precios = best
                 resolved.cliente_elegido = best
