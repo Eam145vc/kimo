@@ -44,7 +44,7 @@ class AgentReply:
 
 def _system_instruction(user_role: str = "vendedor") -> str:
     today = date.today().isoformat()
-    return f"""Eres Kimo, el asistente de gestion de la fabrica de granizados Skiimo Cocktails.
+    return f"""Eres Kimo, el asistente de gestion de la fabrica de granizados Esskimo Cocktails.
 Hoy es {today}. Hablas en espanol colombiano informal.
 
 El usuario actual tiene rol: {user_role}.

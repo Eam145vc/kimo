@@ -1,4 +1,4 @@
-"""Panel web FastAPI para Skiimo. Corre en el mismo VM que el bot."""
+"""Panel web FastAPI para Esskimo Cocktails. Corre en el mismo VM que el bot."""
 from __future__ import annotations
 
 import logging
@@ -23,7 +23,7 @@ log = logging.getLogger("skiimo.panel")
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-app = FastAPI(title="Skiimo Panel", docs_url=None, redoc_url=None)
+app = FastAPI(title="Esskimo Panel", docs_url=None, redoc_url=None)
 
 # Static (solo si existe el directorio - puede estar vacio en producciones nuevas)
 _static_dir = BASE_DIR / "static"
@@ -34,7 +34,7 @@ app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 @app.on_event("startup")
 async def _startup() -> None:
     ensure_db_ready()
-    log.info("Panel Skiimo arrancado")
+    log.info("Panel Esskimo arrancado")
 
 
 def _user_or_redirect(session_token: str | None):
@@ -191,7 +191,7 @@ async def api_chat(body: ChatBody, session_token: str | None = Cookie(default=No
     try:
         from skiimo.llm.agent import process_message
         import asyncio
-        reply = await asyncio.to_thread(
+        agent_reply = await asyncio.to_thread(
             process_message, panel_chat_id, msg, user_role="admin",
         )
     except Exception as e:
@@ -200,7 +200,21 @@ async def api_chat(body: ChatBody, session_token: str | None = Cookie(default=No
             {"reply": f"⚠ Error: {str(e)[:200]}"},
             status_code=200,
         )
-    return {"reply": reply or "(sin respuesta)"}
+
+    # AgentReply -> string visible
+    if agent_reply is None:
+        texto = "(sin respuesta)"
+    elif hasattr(agent_reply, "texto") and agent_reply.texto:
+        texto = agent_reply.texto
+    elif hasattr(agent_reply, "kind") and agent_reply.kind == "pedido":
+        # El usuario armo un pedido por chat del panel: por ahora avisamos
+        # que esa accion va por Telegram (no creamos pedidos desde el panel).
+        texto = ("📋 Detecté un pedido en tu mensaje. Los pedidos se "
+                 "confirman desde Telegram para evitar duplicados.")
+    else:
+        texto = str(agent_reply) or "(sin respuesta)"
+
+    return {"reply": texto}
 
 
 @app.get("/healthz")

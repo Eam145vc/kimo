@@ -1,4 +1,4 @@
-"""Panel web admin para Skiimo.
+"""Panel web admin para Esskimo Cocktails.
 
 FastAPI app que sirve:
   - /login                login (user + password)
