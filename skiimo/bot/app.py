@@ -286,17 +286,48 @@ async def cmd_resumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _job_sync_periodico(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sincroniza facturas recientes desde Siigo cada N minutos.
-    Mantiene el espejo local al dia con facturas creadas desde Siigo web o
-    cualquier otra fuente externa al bot.
+    """Sincroniza datos modificados de Siigo cada N minutos.
+
+    - Invoices/Purchases ultimos 2 dias (cobertura corta)
+    - Customers y Products incrementales (usa modified_start via state)
+    Mantiene el espejo local al dia con cambios hechos desde Siigo web.
     """
     try:
-        from skiimo.llm.tools import _sync_invoices_recientes
-        n = await asyncio.to_thread(_sync_invoices_recientes, 2)  # ultimos 2 dias
-        if n > 0:
-            log.info("Sync periodico: %d facturas actualizadas", n)
+        from skiimo.llm.tools import _sync_invoices_recientes, _sync_purchases_recientes
+        ni = await asyncio.to_thread(_sync_invoices_recientes, 2)
+        nf = await asyncio.to_thread(_sync_purchases_recientes, 2)
+        if ni > 0 or nf > 0:
+            log.info("Sync periodico: %d invoices, %d purchases", ni, nf)
     except Exception:
-        log.exception("Error en sync periodico")
+        log.exception("Error en sync periodico (invoices/purchases)")
+
+    # Sync incremental de customers + products (usa modified_start desde last_cursor)
+    try:
+        nc, np = await asyncio.to_thread(_sync_incremental_catalogos)
+        if nc > 0 or np > 0:
+            log.info("Sync periodico catalogos: %d customers, %d products", nc, np)
+    except Exception:
+        log.exception("Error en sync periodico catalogos")
+
+
+def _sync_incremental_catalogos() -> tuple[int, int]:
+    """Incrementa siigo_customers y siigo_products desde Siigo usando modified_start.
+    Devuelve (n_customers, n_products). No falla si Siigo no responde.
+    """
+    try:
+        from siigo_client import SiigoClient
+        from skiimo.sync.siigo_sync import sync_customers, sync_products
+        conn = get_conn()
+        try:
+            with SiigoClient() as siigo:
+                nc = sync_customers(siigo, conn, full=False)
+                np = sync_products(siigo, conn, full=False)
+            return nc, np
+        finally:
+            conn.close()
+    except Exception:
+        log.exception("Error sync_incremental_catalogos")
+        return 0, 0
 
 
 async def _job_resumen_diario(context: ContextTypes.DEFAULT_TYPE) -> None:

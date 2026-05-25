@@ -403,6 +403,8 @@ def buscar_producto(query: str, limit: int = 5) -> dict:
 
 def facturas_proveedor_pendientes(limit: int = 20) -> dict:
     """Facturas de COMPRA con saldo pendiente (lo que TU debes a proveedores)."""
+    # Pre-sync: si el contador pago en Siigo web o llego una FC nueva, verla
+    _sync_purchases_recientes(dias=14)
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -609,6 +611,9 @@ def estado_cuenta_cliente(cliente_query: str) -> dict:
     from datetime import date as _date
     from skiimo.matcher import Matcher
     from skiimo.pricing.engine import get_categoria_cliente, obtener_pronto_pago
+
+    # Pre-sync: traer facturas recientes (puede haber cambiado el saldo si el cliente pago en Siigo web)
+    _sync_invoices_recientes(dias=7)
 
     m = Matcher()
     hits = m.search_customer(cliente_query, limit=5)
@@ -1235,6 +1240,8 @@ def cambiar_categoria_cliente(
 
 def facturas_pendientes_cobro(limit: int = 10) -> dict:
     """Facturas con balance > 0 (sin cobrar)."""
+    # Pre-sync: si pagaron en Siigo web hace minutos, queremos ver saldo actualizado
+    _sync_invoices_recientes(dias=7)
     conn = get_conn()
     try:
         rows = conn.execute(
