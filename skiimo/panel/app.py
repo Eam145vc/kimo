@@ -125,6 +125,11 @@ async def page_productos(request: Request, session_token: str | None = Cookie(de
     return _render_page(request, "productos.html", "productos", session_token)
 
 
+@app.get("/equipo", response_class=HTMLResponse)
+async def page_equipo(request: Request, session_token: str | None = Cookie(default=None)):
+    return _render_page(request, "equipo.html", "equipo", session_token)
+
+
 # =============================================================================
 # API: KPIs (home)
 # =============================================================================
@@ -687,6 +692,98 @@ async def api_producto_detalle(product_id: str, session_token: str | None = Cook
     except Exception:
         d["precios_categoria"] = []
     return d
+
+
+# =============================================================================
+# API: EQUIPO (usuarios del bot Telegram)
+# =============================================================================
+
+@app.get("/api/equipo")
+async def api_equipo_list(session_token: str | None = Cookie(default=None)):
+    _require_user(session_token)
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT telegram_chat_id, nombre, siigo_seller_id, rol, activo, created_at
+               FROM bot_vendedores ORDER BY rol DESC, nombre"""
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"items": [dict(r) for r in rows]}
+
+
+class EquipoBody(BaseModel):
+    nombre: str
+    telegram_chat_id: int
+    rol: str = "vendedor"
+    siigo_seller_id: int = 341
+
+
+@app.post("/api/equipo")
+async def api_equipo_create(body: EquipoBody, session_token: str | None = Cookie(default=None)):
+    user = _require_user(session_token)
+    nombre = body.nombre.strip()
+    if not nombre or len(nombre) < 2:
+        return {"ok": False, "error": "Nombre requerido (al menos 2 caracteres)"}
+    if not body.telegram_chat_id:
+        return {"ok": False, "error": "Chat ID requerido"}
+    if body.rol not in ("vendedor", "admin"):
+        return {"ok": False, "error": "Rol invalido. Debe ser 'vendedor' o 'admin'"}
+
+    from datetime import datetime
+    conn = get_conn()
+    try:
+        # Verificar si ya existe
+        existing = conn.execute(
+            "SELECT telegram_chat_id, nombre FROM bot_vendedores WHERE telegram_chat_id = ?",
+            (body.telegram_chat_id,),
+        ).fetchone()
+        if existing:
+            return {"ok": False, "error": f"Ya existe un usuario con chat_id {body.telegram_chat_id}: {existing['nombre']}"}
+        conn.execute(
+            """INSERT INTO bot_vendedores (telegram_chat_id, nombre, siigo_seller_id, rol, activo, created_at)
+               VALUES (?, ?, ?, ?, 1, ?)""",
+            (
+                body.telegram_chat_id, nombre, body.siigo_seller_id, body.rol,
+                datetime.now().isoformat(timespec="seconds"),
+            ),
+        )
+        conn.commit()
+    except Exception as e:
+        log.exception("Error creando usuario bot")
+        return {"ok": False, "error": str(e)[:300]}
+    finally:
+        conn.close()
+    log.info("Panel %s creo usuario bot: %s (chat_id=%s, rol=%s)",
+             user["username"], nombre, body.telegram_chat_id, body.rol)
+    return {"ok": True}
+
+
+@app.post("/api/equipo/{chat_id}/toggle")
+async def api_equipo_toggle(chat_id: int, session_token: str | None = Cookie(default=None)):
+    user = _require_user(session_token)
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT nombre, activo FROM bot_vendedores WHERE telegram_chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "Usuario no encontrado"}
+        nuevo_estado = 0 if row["activo"] else 1
+        conn.execute(
+            "UPDATE bot_vendedores SET activo = ? WHERE telegram_chat_id = ?",
+            (nuevo_estado, chat_id),
+        )
+        conn.commit()
+    except Exception as e:
+        log.exception("Error toggle usuario bot")
+        return {"ok": False, "error": str(e)[:300]}
+    finally:
+        conn.close()
+    log.info("Panel %s cambio estado de usuario bot chat_id=%s: activo=%s",
+             user["username"], chat_id, nuevo_estado)
+    return {"ok": True, "activo": nuevo_estado}
 
 
 @app.get("/healthz")
