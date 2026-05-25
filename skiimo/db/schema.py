@@ -142,6 +142,27 @@ CREATE TABLE IF NOT EXISTS bot_pedidos (
 CREATE INDEX IF NOT EXISTS idx_pedidos_estado ON bot_pedidos(estado);
 CREATE INDEX IF NOT EXISTS idx_pedidos_chat ON bot_pedidos(telegram_chat_id);
 
+-- Usuarios del panel web (admin)
+CREATE TABLE IF NOT EXISTS panel_users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    username        TEXT UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,                   -- bcrypt
+    role            TEXT NOT NULL DEFAULT 'admin',
+    active          INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    last_login_at   TEXT
+);
+
+-- Sesiones activas del panel
+CREATE TABLE IF NOT EXISTS panel_sessions (
+    token           TEXT PRIMARY KEY,                -- secrets.token_urlsafe(32)
+    user_id         INTEGER NOT NULL REFERENCES panel_users(id),
+    created_at      TEXT NOT NULL,
+    expires_at      TEXT NOT NULL,
+    ip              TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_panel_sessions_user ON panel_sessions(user_id);
+
 -- Facturas de proveedor procesadas (chat foto o email)
 CREATE TABLE IF NOT EXISTS bot_facturas_proveedor (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
