@@ -25,8 +25,10 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(title="Skiimo Panel", docs_url=None, redoc_url=None)
 
-# Static
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+# Static (solo si existe el directorio - puede estar vacio en producciones nuevas)
+_static_dir = BASE_DIR / "static"
+_static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
 @app.on_event("startup")
