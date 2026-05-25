@@ -101,13 +101,38 @@ def resolve_pedido(pedido: Pedido, matcher: Matcher) -> ResolvedPedido:
     elif pedido.cliente_nombre:
         candidatos = matcher.search_customer(pedido.cliente_nombre, limit=5)
         resolved.cliente_candidatos = candidatos
-        if candidatos and candidatos[0].score >= 90:
-            cliente_real_para_precios = candidatos[0]
-            resolved.cliente_elegido = candidatos[0]
-        elif not candidatos:
-            problemas.append(f"Cliente '{pedido.cliente_nombre}' no encontrado")
+        # Auto-match estricto: score >= 92 + cobertura de tokens.
+        # Si el vendedor dijo "Hernan Marin" (2 palabras), el cliente debe contener AMBAS
+        # palabras para considerarlo match seguro. Esto evita que "Hernan Marin" matchee
+        # con "HERNAN ." (que solo contiene "hernan").
+        if candidatos:
+            best = candidatos[0]
+            # Cobertura de tokens: si el vendedor escribio 2+ palabras (ej "Hernan Marin"),
+            # el cliente elegido debe contener TODAS esas palabras. Esto evita que
+            # "Hernan Marin" matchee con "HERNAN ." (solo tiene "hernan").
+            import re as _re
+            def _norm(s: str) -> set[str]:
+                s_ = _re.sub(r"[^a-zA-Z\sñ]", " ", (s or "").lower())
+                return {t for t in s_.split() if len(t) >= 3}
+            q_tokens = _norm(pedido.cliente_nombre)
+            name_tokens = _norm(best.name)
+            cobertura_ok = (not q_tokens) or q_tokens.issubset(name_tokens)
+            # Threshold:
+            #   - 1 sola palabra (ej "Hugo"): exigir score >= 88 + cobertura
+            #   - 2+ palabras: exigir score >= 88 + cobertura (la cobertura es el filtro real)
+            #   - sin tokens validos: usar 92 (filtro estricto)
+            min_score = 88 if q_tokens else 92
+            if best.score >= min_score and cobertura_ok:
+                cliente_real_para_precios = best
+                resolved.cliente_elegido = best
+            else:
+                # No auto-match: vendedor elige entre los candidatos via boton
+                problemas.append(
+                    f"Cliente '{pedido.cliente_nombre}' no es exacto. "
+                    f"Elegí uno de los candidatos o crealo si es nuevo."
+                )
         else:
-            problemas.append(f"Cliente '{pedido.cliente_nombre}' tiene varios candidatos, elegir uno")
+            problemas.append(f"Cliente '{pedido.cliente_nombre}' no encontrado")
     else:
         problemas.append("No se especifico cliente")
 
