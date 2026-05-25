@@ -395,6 +395,66 @@ DS_DOC_ID = 25720
 DS_DEFAULT_ACCOUNT_CODE = "511040"  # Honorarios. Se puede sobreescribir por item.
 
 
+def crear_gasto_manual_ds(
+    *,
+    monto: float,
+    descripcion: str,
+    proveedor_nit: str,
+    proveedor_nombre: str,
+    fecha: str | None = None,
+    actor: str = "bot",
+) -> InvoiceResult:
+    """Crea un DS (Documento Soporte) para un gasto manual sin factura del proveedor.
+
+    Caso de uso: gastos chicos del dia a dia donde el proveedor no emitio factura
+    electronica DIAN (taxis, mensajeros, honorarios, propinas profesionales, etc.).
+
+    Si el proveedor no existe en Siigo, se intenta crearlo como Person.
+    """
+    if monto <= 0:
+        return InvoiceResult(ok=False, error="Monto debe ser > 0")
+    if not descripcion or not descripcion.strip():
+        return InvoiceResult(ok=False, error="Descripcion requerida")
+    if not proveedor_nit or not proveedor_nombre:
+        return InvoiceResult(ok=False, error="NIT/cedula y nombre del proveedor son obligatorios para DS")
+
+    # Verificar si el proveedor existe; si no, crearlo
+    nit_clean = "".join(c for c in proveedor_nit if c.isdigit())
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id FROM siigo_customers WHERE identification = ? LIMIT 1",
+            (nit_clean,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        prov_result = crear_proveedor(
+            nit=nit_clean, nombre=proveedor_nombre, tipo="persona", actor=actor,
+        )
+        if not prov_result.ok:
+            return InvoiceResult(ok=False, error=f"No se pudo crear proveedor: {prov_result.error}")
+
+    factura_dict = {
+        "proveedor_nit": nit_clean,
+        "proveedor_nombre": proveedor_nombre,
+        "fecha": fecha or date.today().isoformat(),
+        "prefijo_factura": "DS",
+        "numero_factura": datetime.now().strftime("%Y%m%d%H%M%S"),
+        "total": float(monto),
+        "subtotal": float(monto),
+        "items": [{
+            "descripcion": descripcion[:200],
+            "cantidad": 1,
+            "precio_unitario": float(monto),
+        }],
+        "observaciones": f"[GASTO_MANUAL] {descripcion[:120]}",
+        "origen_obs": "[CHAT]",
+    }
+
+    return crear_documento_soporte(factura_dict, actor=actor)
+
+
 def crear_documento_soporte(
     factura: dict,
     actor: str = "bot",

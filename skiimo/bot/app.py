@@ -318,6 +318,130 @@ async def _job_resumen_diario(context: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("Error mandando resumen diario")
 
 
+# FSM per-chat para gasto manual conversacional.
+# chat_id -> {"step": "monto"|"nit"|"nombre"|"desc"|"confirm", "monto":..., "nit":..., "nombre":..., "desc":...}
+_GASTO_MANUAL_POR_CHAT: dict[int, dict] = {}
+
+
+async def cmd_gastomanual(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inicia FSM conversacional para crear un DS sin foto/PDF."""
+    assert update.message and update.effective_chat
+    chat_id = update.effective_chat.id
+    ok, _info = _is_authorized(chat_id)
+    if not ok:
+        await update.message.reply_text("No autorizado")
+        return
+    _GASTO_MANUAL_POR_CHAT[chat_id] = {"step": "monto"}
+    await update.message.reply_text(
+        "💸 *Gasto manual sin factura (DS)*\n\n"
+        "¿Cuánto? Mandame solo el número en pesos.\n"
+        "_Ej: 30000_\n\n"
+        "Para cancelar mandá /cancelar",
+        parse_mode="Markdown",
+    )
+
+
+async def _continuar_gasto_manual(update: Update, ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, texto: str) -> None:
+    """Maneja respuestas del FSM de /gastomanual. Devuelve cuando termino el flujo."""
+    estado = _GASTO_MANUAL_POR_CHAT.get(chat_id)
+    if not estado:
+        return
+    step = estado.get("step")
+
+    if texto.lower() in ("/cancelar", "cancelar"):
+        _GASTO_MANUAL_POR_CHAT.pop(chat_id, None)
+        await update.message.reply_text("❌ Gasto manual cancelado.")
+        return
+
+    if step == "monto":
+        try:
+            limpio = "".join(c for c in texto if c.isdigit() or c == ".")
+            monto = float(limpio)
+            if monto <= 0:
+                raise ValueError("debe ser positivo")
+        except (ValueError, TypeError):
+            await update.message.reply_text(
+                "⚠️ Mandame solo el número. Ej: `30000`. /cancelar para salir.",
+                parse_mode="Markdown",
+            )
+            return
+        estado["monto"] = monto
+        estado["step"] = "nit"
+        await update.message.reply_text(
+            f"💰 Monto: `${monto:,.0f}`\n\n"
+            f"Ahora el *NIT o cédula* del proveedor (solo dígitos):",
+            parse_mode="Markdown",
+        )
+        return
+
+    if step == "nit":
+        nit_clean = "".join(c for c in texto if c.isdigit())
+        if not nit_clean:
+            await update.message.reply_text("⚠️ Necesito el NIT o cédula en números. /cancelar para salir.")
+            return
+        estado["nit"] = nit_clean
+        # Verificar si ya existe en Siigo
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT name FROM siigo_customers WHERE identification = ? LIMIT 1",
+                (nit_clean,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row:
+            estado["nombre"] = row["name"]
+            estado["step"] = "desc"
+            await update.message.reply_text(
+                f"✅ Proveedor existente: *{row['name']}*\n\n"
+                f"¿Qué fue el gasto? (descripción breve)",
+                parse_mode="Markdown",
+            )
+        else:
+            estado["step"] = "nombre"
+            await update.message.reply_text(
+                f"🆕 NIT `{nit_clean}` no está en Siigo.\n\n"
+                f"Mandame el *nombre del proveedor* (lo creo como persona natural):",
+                parse_mode="Markdown",
+            )
+        return
+
+    if step == "nombre":
+        nombre = texto.strip()[:200]
+        if len(nombre) < 2:
+            await update.message.reply_text("⚠️ Nombre muy corto. Mandame el nombre del proveedor:")
+            return
+        estado["nombre"] = nombre
+        estado["step"] = "desc"
+        await update.message.reply_text(
+            f"OK, proveedor: *{nombre}*\n\n"
+            f"¿Qué fue el gasto? (descripción breve)",
+            parse_mode="Markdown",
+        )
+        return
+
+    if step == "desc":
+        desc = texto.strip()[:200]
+        if len(desc) < 3:
+            await update.message.reply_text("⚠️ Descripción muy corta. Probá algo como 'taxi al aeropuerto':")
+            return
+        estado["desc"] = desc
+        estado["step"] = "confirm"
+        await update.message.reply_text(
+            f"📋 *Confirmar gasto manual (DS)*\n\n"
+            f"💰 Monto: `${estado['monto']:,.0f}`\n"
+            f"👤 Proveedor: *{estado['nombre']}*\n"
+            f"   NIT: `{estado['nit']}`\n"
+            f"📝 Descripción: _{desc}_\n",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Crear DS en Siigo", callback_data="gmok")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="gmcanc")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+
 async def cmd_factura(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Activa modo 'esperando factura'. La proxima foto/PDF se procesa como factura proveedor."""
     assert update.message and update.effective_chat
@@ -501,6 +625,11 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     comp_id_esperando = _ESPERANDO_CLIENTE_POR_CHAT.get(chat_id)
     if comp_id_esperando is not None:
         await _resolver_busqueda_cliente(update, comp_id_esperando, texto)
+        return
+
+    # Si hay un FSM de gasto manual activo, las respuestas van por ahi
+    if chat_id in _GASTO_MANUAL_POR_CHAT:
+        await _continuar_gasto_manual(update, ctx, chat_id, texto)
         return
 
     # Si hay un proveedor pendiente esperando nombre, este texto es el nombre nuevo
@@ -1736,6 +1865,50 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
             )
 
 
+async def _handle_gasto_manual_callback(cb, ctx, accion: str) -> None:
+    """Maneja los botones de confirmacion del FSM /gastomanual."""
+    chat_id = cb.message.chat.id if cb.message else None
+    estado = _GASTO_MANUAL_POR_CHAT.get(chat_id) if chat_id else None
+    if not estado:
+        await cb.edit_message_text("⚠️ Sesión expirada. Mandá /gastomanual de nuevo.")
+        return
+
+    if accion == "gmcanc":
+        _GASTO_MANUAL_POR_CHAT.pop(chat_id, None)
+        await cb.edit_message_text("❌ Gasto manual cancelado.")
+        return
+
+    if accion == "gmok":
+        await cb.edit_message_text(
+            f"⏳ Creando DS en Siigo por `${estado['monto']:,.0f}`...",
+            parse_mode="Markdown",
+        )
+        from skiimo.siigo_writer import crear_gasto_manual_ds
+        result = await asyncio.to_thread(
+            crear_gasto_manual_ds,
+            monto=estado["monto"],
+            descripcion=estado["desc"],
+            proveedor_nit=estado["nit"],
+            proveedor_nombre=estado["nombre"],
+            actor=f"chat:{chat_id}",
+        )
+        _GASTO_MANUAL_POR_CHAT.pop(chat_id, None)
+        if result.ok:
+            await cb.edit_message_text(
+                f"✅ *DS creado*\n\n"
+                f"Documento: `{result.siigo_name or '?'}`\n"
+                f"Proveedor: *{estado['nombre']}*\n"
+                f"Monto: `${(result.total or estado['monto']):,.0f}`\n"
+                f"Descripción: _{estado['desc']}_",
+                parse_mode="Markdown",
+            )
+        else:
+            await cb.edit_message_text(
+                f"⚠️ *Error al crear DS*\n\n`{(result.error or '')[:400]}`",
+                parse_mode="Markdown",
+            )
+
+
 async def _handle_proveedor_callback(cb, ctx, accion: str, parts: list[str]) -> None:
     """Maneja la creacion de un proveedor desconocido al subir factura.
 
@@ -2161,6 +2334,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         await _handle_proveedor_callback(cb, ctx, accion, parts)
         return
 
+    if accion in ("gmok", "gmcanc"):
+        await _handle_gasto_manual_callback(cb, ctx, accion)
+        return
+
     pedido_id = int(parts[1])
     pedido_row = _load_pedido(pedido_id)
     if not pedido_row:
@@ -2399,7 +2576,8 @@ def _rehydrate_resolved(pedido_row: dict) -> ResolvedPedido:
 # =============================================================================
 
 BOT_COMMANDS: list[BotCommand] = [
-    BotCommand("factura", "Cargar factura o gasto (foto/PDF)"),
+    BotCommand("factura", "Cargar factura proveedor (foto/PDF)"),
+    BotCommand("gastomanual", "Gasto sin factura (DS - conversacional)"),
     BotCommand("resumen", "Resumen del día"),
     BotCommand("correos", "Revisar facturas del correo"),
     BotCommand("agregar", "Agregar usuario / vendedor"),
@@ -2442,6 +2620,8 @@ def main() -> None:
     app.add_handler(CommandHandler("correos", cmd_correos))
     app.add_handler(CommandHandler("factura", cmd_factura))
     app.add_handler(CommandHandler("gasto", cmd_factura))
+    app.add_handler(CommandHandler("gastomanual", cmd_gastomanual))
+    app.add_handler(CommandHandler("gm", cmd_gastomanual))
     app.add_handler(CommandHandler("resumen", cmd_resumen))
     app.add_handler(CommandHandler("agregar", cmd_agregar))
 
