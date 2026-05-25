@@ -530,6 +530,15 @@ async def _mostrar_factura_correo(update_or_cb, ctx, factura_id: int) -> None:
     }
     cat_label = cat_labels.get(cat, cat)
 
+    # Total recalculado desde items (en caso de que se hayan editado)
+    items = payload.get("items") or []
+    total_recalc = sum(
+        float(it.get("cantidad") or 0) * float(it.get("precio_unitario") or 0)
+        for it in items
+    )
+    # Si el total recalculado difiere mucho del OCR, usamos el recalc (refleja ediciones)
+    total_show = total_recalc if total_recalc > 0 else float(fc.get('total') or 0)
+
     lines = [
         f"📨 *Factura de correo #{factura_id}*",
         f"",
@@ -539,11 +548,24 @@ async def _mostrar_factura_correo(update_or_cb, ctx, factura_id: int) -> None:
         f"*Proveedor:* {fc.get('proveedor_nombre') or '?'}",
         f"*NIT:* `{fc.get('proveedor_nit') or '?'}`",
         f"*Número factura:* `{fc.get('numero_factura') or '?'}`",
-        f"*Total:* `${float(fc.get('total') or 0):,.0f}`",
-        f"",
-        f"*Categoría detectada:* {cat_label}",
-        f"_Confianza IA: {float(fc.get('confidence') or 0):.0%}_",
+        f"*Total:* `${total_show:,.0f}`",
     ]
+    # Lista de items si los hay
+    if items:
+        lines.append("")
+        lines.append("*Items:*")
+        for i, it in enumerate(items, start=1):
+            qty = float(it.get("cantidad") or 0)
+            pre = float(it.get("precio_unitario") or 0)
+            sub = qty * pre
+            desc = (it.get("descripcion") or "?")[:40]
+            qty_str = f"{int(qty)}" if qty == int(qty) else f"{qty:g}"
+            lines.append(f"  {i}. {desc}")
+            lines.append(f"     `{qty_str} x ${pre:,.0f} = ${sub:,.0f}`")
+    lines.append("")
+    lines.append(f"*Categoría detectada:* {cat_label}")
+    lines.append(f"_Confianza IA: {float(fc.get('confidence') or 0):.0%}_")
+
     if fc.get("estado") == "duplicada":
         lines.append("")
         lines.append(f"⚠️ *DUPLICADA*: {fc.get('error')}")
@@ -567,6 +589,12 @@ async def _mostrar_factura_correo(update_or_cb, ctx, factura_id: int) -> None:
             buttons.append([InlineKeyboardButton(
                 f"🔄 Cambiar a {opt_label}",
                 callback_data=f"fcok:{factura_id}:{opt_cat}",
+            )])
+        # Botones de edicion por item (max 5 items mostrados)
+        for i, _it in enumerate(items[:5]):
+            buttons.append([InlineKeyboardButton(
+                f"✏️ Editar item {i+1}",
+                callback_data=f"iedi:{factura_id}:{i}",
             )])
         buttons.append([InlineKeyboardButton(
             "❌ Descartar",
@@ -631,6 +659,11 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Si hay un FSM de gasto manual activo, las respuestas van por ahi
     if chat_id in _GASTO_MANUAL_POR_CHAT:
         await _continuar_gasto_manual(update, ctx, chat_id, texto)
+        return
+
+    # Si hay edicion de item activa, este texto es el numero nuevo
+    if chat_id in _EDIT_ITEM_POR_CHAT:
+        await _continuar_edit_item(update, ctx, chat_id, texto)
         return
 
     # Si hay un proveedor pendiente esperando nombre, este texto es el nombre nuevo
@@ -1866,6 +1899,171 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
             )
 
 
+# FSM per-chat para edicion de item: {"factura_id":..., "idx":..., "campo": "qty"|"price"}
+_EDIT_ITEM_POR_CHAT: dict[int, dict] = {}
+
+
+def _factura_correo_actualizar_payload(factura_id: int, payload: dict) -> None:
+    """Persiste cambios al payload_extraido + total de una factura_correo."""
+    total = sum(
+        float(it.get("cantidad") or 0) * float(it.get("precio_unitario") or 0)
+        for it in payload.get("items") or []
+    )
+    payload["total"] = round(total, 2)
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE facturas_correo SET payload_extraido = ?, total = ?, updated_at = ? "
+            "WHERE id = ?",
+            (
+                json.dumps(payload, ensure_ascii=False, default=str),
+                payload["total"],
+                datetime.now().isoformat(timespec="seconds"),
+                factura_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def _handle_edit_item_callback(cb, ctx, accion: str, parts: list[str]) -> None:
+    """Maneja los botones de edicion de items de factura.
+
+    iedi:<factura_id>:<idx>    submenu del item N
+    ieqt:<factura_id>:<idx>    pedir nueva cantidad por texto
+    iepr:<factura_id>:<idx>    pedir nuevo precio por texto
+    iedl:<factura_id>:<idx>    eliminar item N
+    """
+    from skiimo.gmail_imap import get_factura_correo
+    factura_id = int(parts[1])
+    idx = int(parts[2])
+    chat_id = cb.message.chat.id if cb.message else None
+    fc = get_factura_correo(factura_id)
+    if not fc:
+        await cb.edit_message_text("⚠️ Factura no encontrada.")
+        return
+    payload = json.loads(fc["payload_extraido"] or "{}")
+    items = payload.get("items") or []
+    if idx < 0 or idx >= len(items):
+        await cb.edit_message_text("⚠️ Item ya no existe.")
+        return
+    item = items[idx]
+    qty = float(item.get("cantidad") or 0)
+    pre = float(item.get("precio_unitario") or 0)
+    sub = qty * pre
+    desc = (item.get("descripcion") or "?")[:60]
+    qty_str = f"{int(qty)}" if qty == int(qty) else f"{qty:g}"
+
+    if accion == "iedi":
+        await cb.edit_message_text(
+            f"✏️ *Editar item {idx+1}*\n\n"
+            f"_{desc}_\n"
+            f"`{qty_str} x ${pre:,.0f} = ${sub:,.0f}`\n\n"
+            f"¿Qué cambias?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔢 Cambiar cantidad", callback_data=f"ieqt:{factura_id}:{idx}")],
+                [InlineKeyboardButton("💵 Cambiar precio", callback_data=f"iepr:{factura_id}:{idx}")],
+                [InlineKeyboardButton("🗑 Eliminar item", callback_data=f"iedl:{factura_id}:{idx}")],
+                [InlineKeyboardButton("← Volver", callback_data=f"fcback:{factura_id}")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion == "ieqt":
+        _EDIT_ITEM_POR_CHAT[chat_id] = {"factura_id": factura_id, "idx": idx, "campo": "qty"}
+        await cb.edit_message_text(
+            f"🔢 *Nueva cantidad para item {idx+1}*\n\n"
+            f"_{desc}_\n"
+            f"Actual: `{qty_str}`\n\n"
+            f"Mandame el número nuevo. /cancelar para salir.",
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion == "iepr":
+        _EDIT_ITEM_POR_CHAT[chat_id] = {"factura_id": factura_id, "idx": idx, "campo": "price"}
+        await cb.edit_message_text(
+            f"💵 *Nuevo precio unitario para item {idx+1}*\n\n"
+            f"_{desc}_\n"
+            f"Actual: `${pre:,.0f}`\n\n"
+            f"Mandame el número nuevo (sin signo $). /cancelar para salir.",
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion == "iedl":
+        # Eliminar item del payload
+        items.pop(idx)
+        payload["items"] = items
+        _factura_correo_actualizar_payload(factura_id, payload)
+        await cb.edit_message_text(
+            f"🗑 Item eliminado.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("← Volver al resumen", callback_data=f"fcback:{factura_id}")],
+            ]),
+        )
+        return
+
+
+async def _continuar_edit_item(update: Update, ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, texto: str) -> None:
+    """Recibe el numero del usuario para actualizar cantidad/precio del item en edicion."""
+    estado = _EDIT_ITEM_POR_CHAT.get(chat_id)
+    if not estado:
+        return
+    if texto.lower() in ("/cancelar", "cancelar"):
+        _EDIT_ITEM_POR_CHAT.pop(chat_id, None)
+        await update.message.reply_text("❌ Edición cancelada.")
+        return
+
+    try:
+        limpio = "".join(c for c in texto if c.isdigit() or c in ".,").replace(",", ".")
+        valor = float(limpio)
+        if valor <= 0:
+            raise ValueError("debe ser > 0")
+    except (ValueError, TypeError):
+        await update.message.reply_text(
+            "⚠️ Mandame solo el número. /cancelar para salir.",
+            parse_mode="Markdown",
+        )
+        return
+
+    from skiimo.gmail_imap import get_factura_correo
+    factura_id = estado["factura_id"]
+    idx = estado["idx"]
+    campo = estado["campo"]
+    fc = get_factura_correo(factura_id)
+    if not fc:
+        _EDIT_ITEM_POR_CHAT.pop(chat_id, None)
+        await update.message.reply_text("⚠️ Factura ya no existe.")
+        return
+    payload = json.loads(fc["payload_extraido"] or "{}")
+    items = payload.get("items") or []
+    if idx >= len(items):
+        _EDIT_ITEM_POR_CHAT.pop(chat_id, None)
+        await update.message.reply_text("⚠️ Item ya no existe.")
+        return
+
+    if campo == "qty":
+        items[idx]["cantidad"] = valor
+    elif campo == "price":
+        items[idx]["precio_unitario"] = valor
+    payload["items"] = items
+    _factura_correo_actualizar_payload(factura_id, payload)
+    _EDIT_ITEM_POR_CHAT.pop(chat_id, None)
+
+    nuevo_total = payload["total"]
+    await update.message.reply_text(
+        f"✅ Item {idx+1} actualizado.\n"
+        f"Total nuevo: `${nuevo_total:,.0f}`",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("← Volver al resumen", callback_data=f"fcback:{factura_id}")],
+        ]),
+        parse_mode="Markdown",
+    )
+
+
 async def _handle_gasto_manual_callback(cb, ctx, accion: str, parts: list[str]) -> None:
     """Maneja los botones del FSM /gastomanual: seleccion de pago + confirmacion."""
     chat_id = cb.message.chat.id if cb.message else None
@@ -2393,6 +2591,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     if accion in ("gmok", "gmcanc", "gmpay", "gmback"):
         await _handle_gasto_manual_callback(cb, ctx, accion, parts)
+        return
+
+    if accion in ("iedi", "ieqt", "iepr", "iedl"):
+        await _handle_edit_item_callback(cb, ctx, accion, parts)
         return
 
     pedido_id = int(parts[1])
