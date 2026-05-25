@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Proveedores · Esskimo{% endblock %}
+
+{% block content %}
+<div x-data="proveedores()" x-init="init()">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Proveedores</h1>
+      <p class="text-xs text-text-muted mt-0.5" x-text="total + ' proveedores'"></p>
+    </div>
+    <button @click="refresh()" :disabled="loading" class="text-xs text-text-muted hover:text-accent transition-colors flex items-center gap-1.5 disabled:opacity-50 px-2 py-1.5 rounded-md hover:bg-surface-2">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" :class="loading ? 'animate-spin' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      <span x-text="loading ? 'Cargando…' : 'Actualizar'"></span>
+    </button>
+  </div>
+
+  <div class="rounded-xl bg-surface ring-1 ring-border p-4 mb-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div>
+        <label class="block text-xs text-text-muted mb-1.5">Buscar</label>
+        <input type="text" x-model="filtros.q" @input="loadDebounced()" placeholder="Nombre o NIT" class="w-full rounded-lg bg-surface-2 ring-1 ring-border px-3 py-2 text-sm text-text placeholder-muted focus:ring-accent focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-xs text-text-muted mb-1.5">Filtro</label>
+        <select x-model="filtros.tipo" @change="loadDebounced()" class="w-full rounded-lg bg-surface-2 ring-1 ring-border px-3 py-2 text-sm text-text focus:ring-accent focus:outline-none">
+          <option value="">Todos los proveedores</option>
+          <option value="con_saldo">Solo con saldo por pagar</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-surface-2 text-text-muted">
+          <tr>
+            <th class="text-left px-4 py-3 font-medium">Nombre</th>
+            <th class="text-left px-4 py-3 font-medium">NIT</th>
+            <th class="text-right px-4 py-3 font-medium">Saldo por pagar</th>
+            <th class="text-right px-4 py-3 font-medium">Última compra</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border/40">
+          <template x-if="loading"><tr><td colspan="4" class="text-center py-12 text-text-muted">Cargando…</td></tr></template>
+          <template x-if="!loading && items.length === 0"><tr><td colspan="4" class="text-center py-12 text-text-muted">Sin resultados</td></tr></template>
+          <template x-for="row in items" :key="row.id">
+            <tr @click="openDetail(row.id)" class="cursor-pointer hover:bg-surface-2/50 transition-colors">
+              <td class="px-4 py-3 text-text" x-text="row.name"></td>
+              <td class="px-4 py-3 text-text-muted tabular" x-text="row.identification"></td>
+              <td class="px-4 py-3 text-right tabular" :class="row.saldo > 0 ? 'text-warning' : 'text-text-muted'" x-text="row.saldo > 0 ? '$' + formatMoney(row.saldo) : '—'"></td>
+              <td class="px-4 py-3 text-right text-text-muted tabular" x-text="row.ultima_compra || '—'"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <div class="flex items-center justify-between px-4 py-3 border-t border-border bg-surface-2/30 text-xs">
+      <p class="text-text-muted"><span x-text="items.length"></span> / <span x-text="total"></span></p>
+      <div class="flex gap-1">
+        <button @click="prevPage()" :disabled="page === 1 || loading" class="px-3 py-1.5 rounded-md hover:bg-surface-2 text-text-muted disabled:opacity-40 transition-colors">← Anterior</button>
+        <button @click="nextPage()" :disabled="items.length < pageSize || loading" class="px-3 py-1.5 rounded-md hover:bg-surface-2 text-text-muted disabled:opacity-40 transition-colors">Siguiente →</button>
+      </div>
+    </div>
+  </div>
+
+  <div x-show="detail" @keydown.escape.window="detail = null" style="display:none" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div @click="detail = null" class="absolute inset-0 bg-bg/80 backdrop-blur-sm"></div>
+    <div class="relative w-full max-w-2xl bg-surface ring-1 ring-border rounded-t-2xl sm:rounded-2xl shadow-card-hover max-h-[90vh] overflow-hidden flex flex-col">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-border">
+        <div>
+          <h3 class="text-base font-semibold" x-text="detail?.name || 'Proveedor'"></h3>
+          <p class="text-xs text-text-muted tabular" x-text="'NIT ' + (detail?.identification || '—')"></p>
+        </div>
+        <button @click="detail = null" class="text-text-muted hover:text-text p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg></button>
+      </div>
+      <div class="overflow-y-auto p-5 space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <div class="rounded-lg bg-surface-2 p-3"><p class="text-xs text-text-muted">Saldo por pagar</p><p class="text-lg font-semibold tabular" :class="(detail?.saldo || 0) > 0 ? 'text-warning' : 'text-text'" x-text="'$' + formatMoney(detail?.saldo || 0)"></p></div>
+          <div class="rounded-lg bg-surface-2 p-3"><p class="text-xs text-text-muted">Total comprado (12m)</p><p class="text-lg font-semibold tabular text-text" x-text="'$' + formatMoney(detail?.total_12m || 0)"></p></div>
+        </div>
+        <div x-show="detail?.facturas_pendientes && detail.facturas_pendientes.length > 0">
+          <p class="text-xs uppercase tracking-wider text-text-muted mb-2">Facturas por pagar</p>
+          <ul class="space-y-1.5">
+            <template x-for="(f, idx) in (detail?.facturas_pendientes || [])" :key="idx">
+              <li class="flex justify-between text-sm py-1.5 border-b border-border/30 last:border-0">
+                <span class="font-mono text-accent text-xs" x-text="f.name"></span>
+                <span class="text-text-muted text-xs tabular" x-text="f.date"></span>
+                <span class="text-warning tabular" x-text="'$' + formatMoney(f.balance)"></span>
+              </li>
+            </template>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function proveedores() {
+  return {
+    items: [], total: 0, page: 1, pageSize: 50,
+    filtros: { q: '', tipo: '' },
+    loading: false, detail: null, _debounceTimer: null,
+
+    init() { this.load(); },
+    formatMoney(n) { if (n == null) return '—'; return Math.round(n).toLocaleString('es-CO'); },
+    loadDebounced() { clearTimeout(this._debounceTimer); this._debounceTimer = setTimeout(() => { this.page = 1; this.load(); }, 300); },
+    async load() {
+      this.loading = true;
+      const params = new URLSearchParams({ page: this.page, page_size: this.pageSize, q: this.filtros.q || '', tipo: this.filtros.tipo || '' });
+      try {
+        const r = await fetch('/api/proveedores?' + params.toString(), { credentials: 'same-origin' });
+        if (r.ok) { const data = await r.json(); this.items = data.items || []; this.total = data.total || 0; }
+      } catch(e) { console.error(e); } finally { this.loading = false; }
+    },
+    refresh() { this.load(); },
+    prevPage() { if (this.page > 1) { this.page--; this.load(); } },
+    nextPage() { if (this.items.length >= this.pageSize) { this.page++; this.load(); } },
+    async openDetail(id) {
+      this.detail = { name: '...', identification: '' };
+      try { const r = await fetch('/api/proveedores/' + id, { credentials: 'same-origin' }); if (r.ok) this.detail = await r.json(); }
+      catch(e) { console.error(e); }
+    },
+  }
+}
+</script>
+{% endblock %}
