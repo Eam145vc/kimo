@@ -30,6 +30,33 @@ def _normalize(s: str) -> str:
     return s
 
 
+def _prefix_token_score(query: str, name: str, **kwargs) -> float:
+    """Scorer custom para rapidfuzz: premia cuando los tokens del query son
+    prefijos de tokens del name. Resuelve casos como 'sebas gomez' -> 'SEBASTIAN GOMEZ MONTOYA'
+    que ni token_set_ratio ni partial_ratio captan.
+
+    Lógica:
+      - Tokens del query (>=3 chars) vs tokens del name.
+      - Cada token del query cuenta como match si:
+          * coincide exacto con algún token del name, O
+          * es prefijo de algún token del name (>=3 chars de overlap), O
+          * algún token del name es prefijo del query (>=3 chars)
+      - Score = (matched / total_query_tokens) * 100
+      - Si query no tiene tokens validos, retorna 0.
+    """
+    q_tokens = [t for t in query.split() if len(t) >= 3]
+    n_tokens = [t for t in name.split() if len(t) >= 3]
+    if not q_tokens or not n_tokens:
+        return 0.0
+    matched = 0
+    for qt in q_tokens:
+        for nt in n_tokens:
+            if qt == nt or nt.startswith(qt) or qt.startswith(nt):
+                matched += 1
+                break
+    return (matched / len(q_tokens)) * 100.0
+
+
 @dataclass(slots=True)
 class CustomerHit:
     id: str
@@ -144,7 +171,7 @@ class Matcher:
         # ruido). token_set_ratio resuelve casos como "Daniel Bernal" -> "DANIEL ALBERTO BERNAL ACOSTA"
         # que WRatio dejaba fuera. Tomamos top de cada uno y nos quedamos con el max score por candidato.
         candidates: dict[int, float] = {}
-        for scorer in (fuzz.token_set_ratio, fuzz.WRatio):
+        for scorer in (fuzz.token_set_ratio, fuzz.WRatio, _prefix_token_score):
             for _, score, idx in process.extract(
                 q, self._customer_keys, scorer=scorer, limit=limit * 3, score_cutoff=min_score
             ):
