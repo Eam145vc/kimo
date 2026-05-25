@@ -28,7 +28,14 @@ import json
 import logging
 from datetime import datetime
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    BotCommandScopeDefault,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    MenuButtonCommands,
+    Update,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -2391,6 +2398,28 @@ def _rehydrate_resolved(pedido_row: dict) -> ResolvedPedido:
 # MAIN
 # =============================================================================
 
+BOT_COMMANDS: list[BotCommand] = [
+    BotCommand("factura", "Cargar factura o gasto (foto/PDF)"),
+    BotCommand("resumen", "Resumen del día"),
+    BotCommand("correos", "Revisar facturas del correo"),
+    BotCommand("agregar", "Agregar usuario / vendedor"),
+    BotCommand("yo", "Ver mi info"),
+    BotCommand("nuevo", "Empezar conversación de cero"),
+    BotCommand("cancelar", "Cancelar pedido en curso"),
+    BotCommand("start", "Saludo / instrucciones"),
+]
+
+
+async def _post_init(app: "Application") -> None:
+    """Se ejecuta una vez al arrancar el bot. Registra comandos y boton Menu."""
+    try:
+        await app.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
+        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        log.info("Comandos y boton Menu registrados en Telegram.")
+    except Exception as e:
+        log.warning("No se pudo configurar comandos / boton Menu: %s", e)
+
+
 def main() -> None:
     # Bootstrap: crea schema + sync inicial si la DB esta vacia (primer arranque en Railway)
     from skiimo.bootstrap import ensure_db_ready
@@ -2400,7 +2429,12 @@ def main() -> None:
     m.reload()
     log.info("Stats matcher: %s", m.stats())
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .post_init(_post_init)
+        .build()
+    )
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("yo", cmd_yo))
     app.add_handler(CommandHandler("nuevo", cmd_nuevo))
