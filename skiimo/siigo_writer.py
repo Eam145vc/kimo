@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+
+log = logging.getLogger("skiimo.siigo_writer")
 
 import httpx
 
@@ -172,16 +175,22 @@ def crear_factura_venta(
         if it.precio_unitario <= 0:
             return InvoiceResult(ok=False, error=f"Item '{prod.code}' tiene precio cero")
         tax_id = prod.iva_tax_id or DEFAULT_IVA_TAX_ID
+        iva_pct = float(prod.iva_percentage) if prod.iva_percentage is not None else 19.0
         # Siigo solo acepta hasta 2 decimales en price
         precio_final = round(float(it.precio_unitario) * factor_descuento, 2)
+        qty = float(it.cantidad)
         siigo_items.append({
             "code": prod.code,
             "description": prod.name,
-            "quantity": float(it.cantidad),
+            "quantity": qty,
             "price": precio_final,
             "taxes": [{"id": tax_id}],
         })
-        total_value += (it.total_estimado or 0.0) * factor_descuento
+        # Calcular total CON LA MISMA FORMULA que Siigo: por item, redondeado a 2 dec,
+        # despues sumamos. Esto evita el error "invalid_total_payments" por 1 centavo
+        # de diferencia entre nuestro round y el de Siigo.
+        item_total = round(qty * precio_final * (1.0 + iva_pct / 100.0), 2)
+        total_value += item_total
 
     obs_partes = []
     if SIIGO_INVOICE_TEST_MODE:
@@ -223,9 +232,37 @@ def crear_factura_venta(
 
     _audit("invoice", None, "post_request", actor, payload)
 
+    def _post_with_retry_on_total_mismatch(siigo_payload: dict) -> dict:
+        """POST a Siigo. Si falla por invalid_total_payments con un total distinto al nuestro,
+        reintentar con el total que Siigo nos dice (diferencia de centavos por redondeo)."""
+        try:
+            with SiigoClient() as s:
+                return s.post("/v1/invoices", siigo_payload)
+        except httpx.HTTPStatusError as e:
+            body = e.response.text
+            if e.response.status_code == 400 and "invalid_total_payments" in body:
+                import re as _re
+                # 'The total invoice calculated is 358000.01'
+                m = _re.search(r"calculated is (\d+\.?\d*)", body)
+                if m:
+                    siigo_total = float(m.group(1))
+                    nuestro_total = siigo_payload["payments"][0]["value"]
+                    diff = abs(siigo_total - nuestro_total)
+                    if diff <= 5.0:  # reintentar si la diferencia es <= 5 pesos
+                        log.info("Retry invoice with Siigo's total: ours=%.2f, siigo=%.2f, diff=%.2f",
+                                 nuestro_total, siigo_total, diff)
+                        siigo_payload = dict(siigo_payload)
+                        siigo_payload["payments"] = [
+                            dict(p, value=siigo_total) for p in siigo_payload["payments"]
+                        ]
+                        # Si hay multiples payments, esto rompe la distribucion. Por ahora
+                        # solo manejamos el caso 1-payment (que es el comun para FV).
+                        with SiigoClient() as s2:
+                            return s2.post("/v1/invoices", siigo_payload)
+            raise
+
     try:
-        with SiigoClient() as s:
-            response = s.post("/v1/invoices", payload)
+        response = _post_with_retry_on_total_mismatch(payload)
     except httpx.HTTPStatusError as e:
         err_msg = e.response.text[:500]
         _audit("invoice", None, "post_error",
