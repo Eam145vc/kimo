@@ -1179,19 +1179,29 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Buscar clientes candidatos con saldo cercano al monto
     candidatos = _candidatos_para_pago(comp.monto)
 
+    # Escapar caracteres especiales de Markdown en los valores del OCR.
+    # El OCR de Gemini puede devolver texto con _ * ` [ ] que rompen el parser.
+    def _md_esc(s: str) -> str:
+        if not s:
+            return ""
+        out = str(s)
+        for ch in ("\\", "_", "*", "`", "[", "]"):
+            out = out.replace(ch, "\\" + ch)
+        return out
+
     # Armar mensaje
     msg_lines = [
         f"📥 *Comprobante de pago detectado*",
         f"",
         f"💰 Monto: `${comp.monto:,.0f}`",
-        f"💳 Método: _{comp.metodo_pago}_",
+        f"💳 Método: _{_md_esc(comp.metodo_pago)}_",
     ]
     if comp.fecha_pago:
-        msg_lines.append(f"📅 Fecha: {comp.fecha_pago}")
+        msg_lines.append(f"📅 Fecha: {_md_esc(comp.fecha_pago)}")
     if comp.numero_referencia:
-        msg_lines.append(f"🔢 Ref: `{comp.numero_referencia}`")
+        msg_lines.append(f"🔢 Ref: `{_md_esc(comp.numero_referencia)}`")
     if comp.titular_origen:
-        msg_lines.append(f"👤 De: {comp.titular_origen}")
+        msg_lines.append(f"👤 De: {_md_esc(comp.titular_origen)}")
     msg_lines.append(f"")
     msg_lines.append(f"_Confianza IA: {comp.confidence:.0%}_")
     msg_lines.append("")
@@ -1204,7 +1214,8 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             diff_label = ""
             if cand.get("diff_pct") is not None:
                 diff_label = f" ({cand['diff_pct']:+.0f}%)"
-            msg_lines.append(f"  • {cand['cliente']} — saldo `${cand['saldo']:,.0f}`{diff_label}")
+            cliente_safe = _md_esc(cand['cliente'])
+            msg_lines.append(f"  • {cliente_safe} — saldo `${cand['saldo']:,.0f}`{diff_label}")
             label = f"{cand['cliente'][:25]} ${cand['saldo']:,.0f}"
             buttons.append([InlineKeyboardButton(
                 label[:60],
