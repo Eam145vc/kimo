@@ -101,6 +101,9 @@ REGLAS:
 - Si dice "cambiar precio de X" / "X ahora cuesta Y" / "subir precio X a Y" -> cambiar_precio()
   (Solo admin. Si el rol no es admin, decir 'solo el admin puede cambiar precios').
 - Si dice "X es mayorista/distribuidor" / "X pasa a Y" -> cambiar_categoria_cliente() (solo admin).
+- Si dice "Hugo paga en 8 dias y le doy 10%" / "configura pronto pago de X" /
+  "a Zuniga descuento 10% si paga antes de 8 dias" -> configurar_pronto_pago() (solo admin).
+  Para quitar pronto pago: 'sacale el pronto pago a X' -> configurar_pronto_pago(X, 0, 0).
 - Si dice "que tengo por pagar" -> facturas_proveedor_pendientes()
 - Si dice "que esta vencido" -> vencimientos_proximos()
 - Si dice "repite pedido de X" / "lo de siempre a X" -> repetir_pedido_cliente()

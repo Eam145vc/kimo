@@ -1238,6 +1238,102 @@ def cambiar_categoria_cliente(
     }
 
 
+def configurar_pronto_pago(
+    cliente_query: str,
+    dias_max: int,
+    descuento_pct: float,
+    actor: str = "chat",
+) -> dict:
+    """Configura o actualiza el descuento por pronto pago de un cliente.
+
+    Ej: 'Hugo paga en 8 dias y le doy 10% de descuento'
+        -> configurar_pronto_pago(cliente_query='Hugo', dias_max=8, descuento_pct=10)
+
+    Para QUITAR el pronto pago: pasar descuento_pct=0 o dias_max=0.
+    """
+    from skiimo.matcher import Matcher
+    m = Matcher()
+    hits = m.search_customer(cliente_query, limit=1)
+    if not hits:
+        return {"ok": False, "error": f"Cliente '{cliente_query}' no encontrado"}
+    c = hits[0]
+    try:
+        dias_max = int(dias_max)
+        descuento_pct = float(descuento_pct)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "dias_max debe ser entero y descuento_pct numero"}
+    if dias_max < 0 or dias_max > 90:
+        return {"ok": False, "error": "dias_max debe estar entre 0 y 90"}
+    if descuento_pct < 0 or descuento_pct > 50:
+        return {"ok": False, "error": "descuento_pct debe estar entre 0 y 50"}
+
+    from datetime import datetime as _dt
+    now = _dt.now().isoformat(timespec="seconds")
+    quitar = (dias_max == 0 or descuento_pct == 0)
+    conn = get_conn()
+    try:
+        anterior = conn.execute(
+            "SELECT dias_max, descuento_pct FROM clientes_pronto_pago WHERE customer_id = ? AND activo = 1",
+            (c.id,),
+        ).fetchone()
+        ant_text = (
+            f"{anterior['descuento_pct']:.0f}% en {anterior['dias_max']} dias"
+            if anterior else "(sin pronto pago)"
+        )
+
+        if quitar:
+            # Desactivar pronto pago
+            conn.execute(
+                "UPDATE clientes_pronto_pago SET activo = 0 WHERE customer_id = ?",
+                (c.id,),
+            )
+            nuevo_text = "(quitado)"
+        else:
+            # Upsert manual
+            existing = conn.execute(
+                "SELECT id FROM clientes_pronto_pago WHERE customer_id = ?",
+                (c.id,),
+            ).fetchone()
+            notas = f"{descuento_pct:.0f}% si paga en {dias_max} dias"
+            if existing:
+                conn.execute(
+                    """UPDATE clientes_pronto_pago
+                       SET dias_max = ?, descuento_pct = ?, notas = ?, activo = 1
+                       WHERE customer_id = ?""",
+                    (dias_max, descuento_pct, notas, c.id),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO clientes_pronto_pago
+                       (customer_id, dias_max, descuento_pct, notas, activo, created_at)
+                       VALUES (?, ?, ?, ?, 1, ?)""",
+                    (c.id, dias_max, descuento_pct, notas, now),
+                )
+            nuevo_text = f"{descuento_pct:.0f}% en {dias_max} dias"
+
+        # Audit
+        try:
+            conn.execute(
+                """INSERT INTO audit_log (entity_type, entity_id, action, actor, payload, created_at)
+                   VALUES ('pronto_pago', ?, ?, ?, ?, ?)""",
+                (c.id, "quitar" if quitar else "configurar", actor,
+                 json.dumps({"anterior": ant_text, "nuevo": nuevo_text, "cliente": c.name}, ensure_ascii=False),
+                 now),
+            )
+        except Exception:
+            pass
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        "ok": True,
+        "cliente": c.name,
+        "nit": c.identification,
+        "anterior": ant_text,
+        "nuevo": nuevo_text,
+    }
+
+
 def facturas_pendientes_cobro(limit: int = 10) -> dict:
     """Facturas con balance > 0 (sin cobrar)."""
     # Pre-sync: si pagaron en Siigo web hace minutos, queremos ver saldo actualizado
@@ -1290,6 +1386,7 @@ TOOLS_MAP: dict[str, Any] = {
     "consultar_precio": consultar_precio,
     "cambiar_precio": cambiar_precio,
     "cambiar_categoria_cliente": cambiar_categoria_cliente,
+    "configurar_pronto_pago": configurar_pronto_pago,
     "analizar_pago_factura": analizar_pago_factura,
     "analizar_pago_a_proveedor": analizar_pago_a_proveedor,
     "proponer_anular_factura": proponer_anular_factura,
@@ -1669,6 +1766,26 @@ TOOL_DECLARATIONS: list[dict] = [
                 "nueva_categoria": {"type": "string", "description": "DETAL, MAYORISTA o DISTRIBUIDOR"},
             },
             "required": ["cliente_query", "nueva_categoria"],
+        },
+    },
+    {
+        "name": "configurar_pronto_pago",
+        "description": (
+            "Configura o actualiza el descuento por pronto pago de un cliente. "
+            "Usar cuando el usuario dice 'Hugo paga en 8 dias y le doy 10%', "
+            "'a Zuniga descuento 10% si paga antes de 8 dias', "
+            "'cambia el pronto pago de Pedro a 5% en 5 dias'. "
+            "Para QUITAR el pronto pago: pasar dias_max=0 o descuento_pct=0. "
+            "Solo admin puede usar esto."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cliente_query": {"type": "string", "description": "Nombre o NIT del cliente"},
+                "dias_max": {"type": "integer", "description": "Dias maximo para que aplique el descuento (0 para quitar). Ej: 8"},
+                "descuento_pct": {"type": "number", "description": "Porcentaje de descuento (0 para quitar). Ej: 10 para 10%"},
+            },
+            "required": ["cliente_query", "dias_max", "descuento_pct"],
         },
     },
 ]
