@@ -208,7 +208,18 @@ class Matcher:
                 return self._product_to_hit(p, 100.0)
         return None
 
-    def search_product(self, query: str, *, limit: int = 5, min_score: int = 55) -> list[ProductHit]:
+    # Grupos que NO se venden (son insumos/herramientas/servicios internos).
+    # Si el LLM no asigna codigo de un producto de venta, el fuzzy NO debe sugerir
+    # estos como alternativa. Mejor reportar 'no encontrado'.
+    _GRUPOS_NO_VENTA = {
+        "MATERIAS PRIMAS",
+        "MAQUINA",
+        "REPUESTOS MAQUINAS",
+        "SERVICIOS",
+    }
+
+    def search_product(self, query: str, *, limit: int = 5, min_score: int = 55,
+                       incluir_no_venta: bool = False) -> list[ProductHit]:
         if not query.strip():
             return []
         # match por codigo exacto
@@ -229,13 +240,17 @@ class Matcher:
         # token_set_ratio: ignora orden y duplicados
         all_results = process.extract(
             q, self._product_keys, scorer=fuzz.token_set_ratio,
-            limit=20, score_cutoff=min_score,  # tomar mas para filtrar despues
+            limit=30, score_cutoff=min_score,  # tomar mas para filtrar despues
         )
 
         # Re-rankear segun intencion
         scored: list[tuple[float, int]] = []
         for _, score, idx in all_results:
             p = self._products[idx]
+            grupo = (p.get("account_group_name") or "").upper().strip()
+            # Filtrar grupos no-venta para pedidos (a menos que incluir_no_venta=True)
+            if not incluir_no_venta and grupo in self._GRUPOS_NO_VENTA:
+                continue
             name = p["name"].upper()
             is_sin = "SIN LICOR" in name or "SIN LIC" in name
             is_sachet = "SACHET" in name
