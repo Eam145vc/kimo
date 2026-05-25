@@ -45,6 +45,41 @@ class InvoiceResult:
     raw: dict | None = None
 
 
+def _post_to_siigo_with_total_retry(endpoint: str, payload: dict) -> dict:
+    """POST a Siigo. Si falla con invalid_total_payments y la diferencia con el total que
+    Siigo calcula es <= 5 pesos (redondeo de centavos), reintenta con el total de Siigo.
+
+    Usar para todos los endpoints que tienen 'payments' (invoices, purchases, support docs).
+    Asume 1 sola entrada en payments (caso comun FV/FC/DS contado o credito).
+    """
+    try:
+        with SiigoClient() as s:
+            return s.post(endpoint, payload)
+    except httpx.HTTPStatusError as e:
+        body = e.response.text or ""
+        if e.response.status_code == 400 and "invalid_total_payments" in body:
+            import re as _re
+            m = _re.search(r"calculated is (\d+\.?\d*)", body)
+            if m:
+                siigo_total = float(m.group(1))
+                payments = payload.get("payments") or []
+                if payments:
+                    nuestro_total = float(payments[0].get("value") or 0)
+                    diff = abs(siigo_total - nuestro_total)
+                    if diff <= 5.0:
+                        log.info(
+                            "Retry %s con total de Siigo: ours=%.2f, siigo=%.2f, diff=%.2f",
+                            endpoint, nuestro_total, siigo_total, diff,
+                        )
+                        new_payload = dict(payload)
+                        new_payload["payments"] = [
+                            dict(p, value=siigo_total) for p in payments
+                        ]
+                        with SiigoClient() as s2:
+                            return s2.post(endpoint, new_payload)
+        raise
+
+
 def _cachear_factura_en_espejo(invoice_response: dict) -> None:
     """Inserta o actualiza una factura recien creada en siigo_invoices local.
     Esto evita el lag entre creacion y sync periodico — el bot ve sus propias
@@ -232,37 +267,8 @@ def crear_factura_venta(
 
     _audit("invoice", None, "post_request", actor, payload)
 
-    def _post_with_retry_on_total_mismatch(siigo_payload: dict) -> dict:
-        """POST a Siigo. Si falla por invalid_total_payments con un total distinto al nuestro,
-        reintentar con el total que Siigo nos dice (diferencia de centavos por redondeo)."""
-        try:
-            with SiigoClient() as s:
-                return s.post("/v1/invoices", siigo_payload)
-        except httpx.HTTPStatusError as e:
-            body = e.response.text
-            if e.response.status_code == 400 and "invalid_total_payments" in body:
-                import re as _re
-                # 'The total invoice calculated is 358000.01'
-                m = _re.search(r"calculated is (\d+\.?\d*)", body)
-                if m:
-                    siigo_total = float(m.group(1))
-                    nuestro_total = siigo_payload["payments"][0]["value"]
-                    diff = abs(siigo_total - nuestro_total)
-                    if diff <= 5.0:  # reintentar si la diferencia es <= 5 pesos
-                        log.info("Retry invoice with Siigo's total: ours=%.2f, siigo=%.2f, diff=%.2f",
-                                 nuestro_total, siigo_total, diff)
-                        siigo_payload = dict(siigo_payload)
-                        siigo_payload["payments"] = [
-                            dict(p, value=siigo_total) for p in siigo_payload["payments"]
-                        ]
-                        # Si hay multiples payments, esto rompe la distribucion. Por ahora
-                        # solo manejamos el caso 1-payment (que es el comun para FV).
-                        with SiigoClient() as s2:
-                            return s2.post("/v1/invoices", siigo_payload)
-            raise
-
     try:
-        response = _post_with_retry_on_total_mismatch(payload)
+        response = _post_to_siigo_with_total_retry("/v1/invoices", payload)
     except httpx.HTTPStatusError as e:
         err_msg = e.response.text[:500]
         _audit("invoice", None, "post_error",
@@ -356,16 +362,19 @@ def crear_factura_compra(
             precio = float(it.get("precio_unitario") or 0)
             if precio <= 0:
                 continue
+            iva_pct = float(it.get("iva_pct") or 19.0)
+            precio_red = round(precio, 2)
             siigo_items.append({
                 "type": "Product",
                 "code": "GENERIC",  # placeholder; ideal: matchear contra catalogo
                 "description": (it.get("descripcion") or "Item factura proveedor")[:200],
                 "quantity": qty,
-                "price": round(precio, 2),
+                "price": precio_red,
                 "discount": 0.0,
                 "taxes": [{"id": DEFAULT_IVA_TAX_ID}],
             })
-            total_calc += qty * precio * 1.19  # con IVA estimado
+            # Sumar item-por-item con el mismo redondeo que Siigo (evita off-by-one centavo)
+            total_calc += round(qty * precio_red * (1.0 + iva_pct / 100.0), 2)
     if not siigo_items:
         # Fallback: 1 item generico con el total
         total = float(factura.get("total") or 0)
@@ -408,8 +417,7 @@ def crear_factura_compra(
 
     _audit("purchase", None, "post_request", actor, payload)
     try:
-        with SiigoClient() as s:
-            r = s.post("/v1/purchases", payload)
+        r = _post_to_siigo_with_total_retry("/v1/purchases", payload)
     except httpx.HTTPStatusError as e:
         body = e.response.text[:500]
         _audit("purchase", None, "post_error", actor,
@@ -537,15 +545,17 @@ def crear_documento_soporte(
             precio = float(it.get("precio_unitario") or 0)
             if precio <= 0:
                 continue
+            precio_red = round(precio, 2)
             siigo_items.append({
                 "type": "Account",
                 "code": DS_DEFAULT_ACCOUNT_CODE,
                 "description": (it.get("descripcion") or "Servicio")[:200],
                 "quantity": qty,
-                "price": round(precio, 2),
+                "price": precio_red,
                 "discount": 0.0,
             })
-            total_calc += qty * precio
+            # Suma item-por-item con redondeo simetrico (DS no lleva IVA en items Account)
+            total_calc += round(qty * precio_red, 2)
     if not siigo_items:
         total = float(factura.get("total") or 0)
         if total <= 0:
@@ -590,8 +600,7 @@ def crear_documento_soporte(
 
     _audit("support_document", None, "post_request", actor, payload)
     try:
-        with SiigoClient() as s:
-            r = s.post("/v1/purchase-support-documents", payload)
+        r = _post_to_siigo_with_total_retry("/v1/purchase-support-documents", payload)
     except httpx.HTTPStatusError as e:
         body = e.response.text[:500]
         _audit("support_document", None, "post_error", actor,
