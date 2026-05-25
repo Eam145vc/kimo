@@ -124,9 +124,23 @@ def resolve_pedido(pedido: Pedido, matcher: Matcher) -> ResolvedPedido:
             # Threshold: con cobertura completa, basta score 80 (la cobertura es el filtro real).
             # Sin tokens validos, exigir 92.
             min_score = 80 if q_tokens else 92
-            if best.score >= min_score and cobertura_ok:
+
+            # Ambiguedad: si hay 2+ candidatos con score >= 95 y todos cubren los tokens,
+            # NO auto-match. El vendedor elige cual es el correcto (puede que sea el 2do
+            # aunque el 1ro tenga mas historial).
+            ambiguos = [c for c in candidatos
+                        if c.score >= 95 and
+                        all(_cubre(qt, _tokens(c.name)) for qt in q_tokens)]
+            hay_ambiguedad = len(ambiguos) >= 2
+
+            if best.score >= min_score and cobertura_ok and not hay_ambiguedad:
                 cliente_real_para_precios = best
                 resolved.cliente_elegido = best
+            elif hay_ambiguedad:
+                problemas.append(
+                    f"Hay varios clientes que coinciden con '{pedido.cliente_nombre}'. "
+                    f"Elegí el correcto:"
+                )
             else:
                 # No auto-match: vendedor elige entre los candidatos via boton
                 problemas.append(
