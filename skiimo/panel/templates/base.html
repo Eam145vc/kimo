@@ -3,7 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{% block title %}Skiimo Panel{% endblock %}</title>
+  <title>{% block title %}Esskimo Panel{% endblock %}</title>
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="/static/logo.png">
+  <link rel="apple-touch-icon" href="/static/logo.png">
 
   <!-- Tailwind CSS via CDN (browser runtime) -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -13,43 +17,69 @@
       theme: {
         extend: {
           colors: {
-            bg: '#020617',
-            surface: '#0f172a',
-            'surface-2': '#1e293b',
-            border: '#334155',
-            muted: '#64748b',
-            text: '#f8fafc',
-            'text-muted': '#94a3b8',
-            accent: '#22c55e',
-            'accent-hover': '#16a34a',
-            primary: '#3b82f6',
-            'primary-hover': '#2563eb',
+            // Esskimo brand palette
+            bg: '#080d1a',
+            surface: '#0f1729',
+            'surface-2': '#1a2440',
+            border: '#27365a',
+            muted: '#5b6b8f',
+            text: '#e8f1ff',
+            'text-muted': '#94a8c8',
+            accent: '#4FC4E8',
+            'accent-hover': '#2FA9D6',
+            'accent-soft': '#1a3a4d',
+            secondary: '#1B2C5A',
+            success: '#22c55e',
+            warning: '#f59e0b',
             danger: '#ef4444',
           },
           fontFamily: {
-            sans: ['Fira Sans', 'system-ui', 'sans-serif'],
-            mono: ['Fira Code', 'ui-monospace', 'monospace'],
+            sans: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
           },
           boxShadow: {
-            'card': '0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.3)',
-            'card-hover': '0 4px 6px -1px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.4)',
+            'card': '0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4)',
+            'card-hover': '0 4px 12px -2px rgb(0 0 0 / 0.5), 0 2px 6px -2px rgb(0 0 0 / 0.4)',
+            'glow-accent': '0 0 0 1px rgb(79 196 232 / 0.4), 0 0 20px -4px rgb(79 196 232 / 0.3)',
+          },
+          backgroundImage: {
+            'glow-radial': 'radial-gradient(circle at top, rgb(79 196 232 / 0.08), transparent 50%)',
           },
         }
       }
     }
   </script>
 
-  <!-- Fonts -->
+  <!-- Fonts: Plus Jakarta Sans (UI) + JetBrains Mono (tabular) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
   <!-- Alpine.js -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/cdn.min.js"></script>
 
   <style>
-    body { font-family: 'Fira Sans', system-ui, sans-serif; background-color: #020617; color: #f8fafc; }
-    .tabular { font-variant-numeric: tabular-nums; font-family: 'Fira Code', ui-monospace, monospace; }
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+      background-color: #080d1a;
+      color: #e8f1ff;
+      letter-spacing: -0.01em;
+    }
+    .tabular {
+      font-variant-numeric: tabular-nums;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      letter-spacing: -0.02em;
+    }
+    /* subtle background gradient on body */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at 50% -20%, rgb(79 196 232 / 0.06), transparent 50%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    body > * { position: relative; z-index: 1; }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
     }
