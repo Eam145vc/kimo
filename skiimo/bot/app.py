@@ -2807,34 +2807,76 @@ def _build_payment_method_picker(pedido_id: int, dtype: str) -> list[list[Inline
 
 
 async def _post_send(cb, ctx, pedido_row: dict, pedido_id: int, result, modo: str) -> None:
-    """Procesa el resultado del envio a Siigo: actualiza estado, manda PDF, muestra mensaje."""
-    if result.ok:
-        _update_pedido_estado(
-            pedido_id, "enviado",
-            siigo_invoice_id=result.siigo_id,
-            siigo_invoice_name=result.siigo_name,
-        )
-        msg = (
-            f"✅ *Factura {result.siigo_name} creada*\n"
-            f"_{modo}_\n\n"
-            f"💰 Total: `${result.total:,.0f}`"
-        )
-        if result.public_url:
-            msg += f"\n\n🔗 [Ver en Siigo]({result.public_url})"
-        await cb.edit_message_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
-        if result.siigo_id:
-            pdf_bytes = await asyncio.to_thread(get_invoice_pdf, result.siigo_id)
-            if pdf_bytes:
-                await ctx.bot.send_document(
-                    chat_id=pedido_row["telegram_chat_id"],
-                    document=pdf_bytes,
-                    filename=f"{result.siigo_name}.pdf",
-                )
-    else:
+    """Procesa el resultado del envio a Siigo: actualiza estado, muestra mensaje
+    informando del progreso (creacion -> descarga PDF -> entrega) y manda PDF."""
+    if not result.ok:
         _update_pedido_estado(pedido_id, "error", error=(result.error or "")[:500])
         await cb.edit_message_text(
             f"⚠️ *Error al crear factura*\n\n`{result.error}`",
             parse_mode="Markdown",
+        )
+        return
+
+    _update_pedido_estado(
+        pedido_id, "enviado",
+        siigo_invoice_id=result.siigo_id,
+        siigo_invoice_name=result.siigo_name,
+    )
+
+    base_msg = (
+        f"✅ *Factura {result.siigo_name} creada*\n"
+        f"_{modo}_\n\n"
+        f"💰 Total: `${result.total:,.0f}`"
+    )
+    if result.public_url:
+        base_msg += f"\n\n🔗 [Ver en Siigo]({result.public_url})"
+
+    # 1) Mostrar mensaje con loader "descargando PDF" para que el usuario sepa
+    #    que viene mas. Si no tiene siigo_id, terminamos aca.
+    if not result.siigo_id:
+        await cb.edit_message_text(base_msg, parse_mode="Markdown", disable_web_page_preview=True)
+        return
+
+    chat_id_dest = pedido_row["telegram_chat_id"]
+    msg_con_loader = base_msg + "\n\n⏳ _Descargando PDF…_"
+    await cb.edit_message_text(msg_con_loader, parse_mode="Markdown", disable_web_page_preview=True)
+
+    # 2) Mostrar chat action 'uploading document' mientras descargamos
+    try:
+        await ctx.bot.send_chat_action(chat_id=chat_id_dest, action="upload_document")
+    except Exception:
+        pass
+
+    # 3) Descargar PDF en thread (no bloquea el event loop)
+    try:
+        pdf_bytes = await asyncio.to_thread(get_invoice_pdf, result.siigo_id)
+    except Exception:
+        log.exception("Error descargando PDF")
+        pdf_bytes = None
+
+    # 4) Editar mensaje quitando el loader + mandar PDF si lo tenemos
+    if pdf_bytes:
+        await cb.edit_message_text(base_msg, parse_mode="Markdown", disable_web_page_preview=True)
+        try:
+            await ctx.bot.send_document(
+                chat_id=chat_id_dest,
+                document=pdf_bytes,
+                filename=f"{result.siigo_name}.pdf",
+                caption=f"📄 {result.siigo_name}",
+            )
+        except Exception:
+            log.exception("Error mandando PDF")
+            await ctx.bot.send_message(
+                chat_id=chat_id_dest,
+                text=f"⚠️ La factura se creó pero no pude mandar el PDF. Vela en Siigo.",
+                parse_mode="Markdown",
+            )
+    else:
+        # Sin PDF: editar para que el usuario sepa que la factura SI esta hecha
+        await cb.edit_message_text(
+            base_msg + "\n\n_📎 PDF no disponible en este momento. Podés verlo en Siigo web._",
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
         )
 
 
