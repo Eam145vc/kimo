@@ -27,20 +27,84 @@ def get_client() -> genai.Client:
     return _client
 
 
+def _catalogo_para_prompt() -> str:
+    """Devuelve el catalogo activo agrupado por categoria, compacto para system prompt.
+    Solo incluye los grupos relevantes para pedidos (bolsas, sachets, perlas, gelatinas, sales, siropes)."""
+    try:
+        from skiimo.db.schema import get_conn
+    except Exception:
+        return ""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT code, name, COALESCE(account_group_name, '(otro)') AS grupo
+               FROM siigo_products
+               WHERE (active = 1 OR active IS NULL)
+                 AND COALESCE(account_group_name, '') NOT IN ('Materias Primas', 'MAQUINA', 'REPUESTOS MAQUINAS', 'Servicios', 'Productos')
+               ORDER BY account_group_name, code"""
+        ).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    if not rows:
+        return ""
+    grupos: dict[str, list[str]] = {}
+    for r in rows:
+        g = r["grupo"]
+        nombre = r["name"]
+        # Quitar prefijos del grupo del nombre para compactar
+        for prefix in (
+            "BOLSA 6 LT ", "BOLSA 6L ",
+            "BOLSA SACHET 08 OZ ",
+            "PERLAS EXPLOSIVAS ",
+            "GELATINA ",
+            "SAL PARA MICHELAR ", "SAL MICHELAR ",
+            "SIROPE ",
+        ):
+            if nombre.upper().startswith(prefix):
+                nombre = nombre[len(prefix):]
+                break
+        grupos.setdefault(g, []).append(f"{r['code']} {nombre}")
+    lines = ["CATALOGO ACTIVO (codigo + sabor por grupo):"]
+    for grupo, items in grupos.items():
+        lines.append(f"\n[{grupo}]")
+        # Separador · para compactar
+        lines.append("  " + " · ".join(items))
+    return "\n".join(lines)
+
+
 def _system_pedido() -> str:
-    return f"""Eres un asistente que extrae pedidos de venta de una fabrica de granizados en Colombia.
-Los vendedores te envian pedidos en lenguaje informal por chat: pueden decir "30 bolsas chicle para Tienda La 35"
-o "Doña Marta me pidió 2 cajas de perlas explosivas mango y 5 sachets miami".
+    catalogo = _catalogo_para_prompt()
+    return f"""Eres un asistente que extrae pedidos de venta de Esskimo Cocktails (fabrica de granizados en Colombia).
+Los vendedores te envian pedidos en lenguaje informal por chat. Ejemplos:
+  - "3 coco 2 bombon para Hernan Marin"
+  - "5 sachets miami sin licor"
+  - "perlas mango grandes para la tienda La 35"
 
-HOY ES {date.today().isoformat()}. Cualquier fecha relativa ("hoy", "mañana", "el lunes") debe calcularse desde esa fecha.
+HOY ES {date.today().isoformat()}.
 
-Tu tarea: extraer en JSON estructurado el cliente y los items pedidos. Importante:
-- Si el vendedor dice "doña Marta" sin apellido, ponlo en cliente_nombre como "Marta" pero NO inventes NIT.
-- Cantidades sin unidad -> asumir unidad. "2 cajas de X" -> cantidad=2 (la unidad caja la maneja el sistema).
-- Si menciona variaciones de sabor ("perlas mango", "perlas fresa") cada una es un item aparte.
-- Si no menciona precio, dejar null (el sistema lo busca en el catalogo).
-- confidence alto (0.8+) solo si entendiste cliente y items claramente. Si dudas mucho, baja a 0.5.
-- Si NO es un pedido (es una pregunta, saludo, reporte), pon items=[] y confidence=0."""
+REGLAS DE NEGOCIO PARA ASIGNAR EL CODIGO DEL PRODUCTO (codigo del catalogo):
+1. POR DEFECTO ES BOLSA 6L CON LICOR. Solo cambia si dicen explicitamente:
+   - "sachet" / "sachets" -> SACHETS 08 OZ
+   - "perlas" -> PERLAS EXPLOSIVAS (pedir aclaracion de tamaño si dudoso)
+   - "gelatina" -> GELATINAS
+   - "sin licor" -> version sin licor del mismo sabor
+2. "bombon" SOLO significa bombon regular. NO asumir "bombon manzana verde" salvo que lo digan literal.
+3. "coco" sin mas contexto -> A1O (Bolsa 6L Coco Loco con licor) por regla 1.
+   "coco sin licor" -> A2X. "sachet coco" -> A3M.
+4. Si el sabor mencionado NO existe en el catalogo, deja codigo=null y pon descripcion con lo que dijo el vendedor.
+5. Cantidades sin unidad -> unidades. "2 cajas de X" -> cantidad=2 (caja la maneja el sistema).
+6. Cada sabor es un item aparte. "3 coco 2 bombon" -> 2 items: (A1O, 3) y (A2AO, 2).
+
+{catalogo}
+
+OTRAS REGLAS:
+- Si el vendedor dice "doña Marta" sin apellido, cliente_nombre="Marta", cliente_nit=null.
+- Si no menciona precio, precio_unitario=null (el sistema lo calcula segun categoria del cliente).
+- confidence 0.9+ si entendiste cliente y TODOS los items con codigo asignado.
+- confidence 0.6 si algun item quedo sin codigo (sabor desconocido o ambiguo).
+- Si NO es un pedido (saludo, pregunta, reporte): items=[], confidence=0."""
 
 SYSTEM_FACTURA = """Eres un asistente OCR especializado en facturas de proveedores en Colombia.
 Extrae los datos de la factura adjunta (PDF o imagen) en JSON estructurado.
@@ -50,6 +114,33 @@ Importante:
 - numero_factura: solo el numero, sin prefijo. prefijo_factura aparte (FE, EI, etc.).
 - fecha: YYYY-MM-DD.
 - items: lee cada linea de la factura. Si no son claras las cantidades/precios, baja confidence.
+- NORMALIZACION DE UNIDADES (OBLIGATORIA, estandar Siigo):
+  * Pesos/solidos -> SIEMPRE convertir a GRAMOS. unidad="g".
+      kg  -> g  (x1000)   |   t/ton -> g (x1.000.000)
+      mg  -> g  (/1000)   |   lb    -> g (x453.592)
+      oz  -> g  (x28.3495)|   arroba -> g (x12500)
+  * Volumenes/liquidos -> SIEMPRE convertir a MILILITROS. unidad="ml".
+      L/lt/litro -> ml (x1000)   |   cl -> ml (x10)
+      m3         -> ml (x1.000.000)
+      gal (US)   -> ml (x3785.41)|   oz fl -> ml (x29.5735)
+  * Presentaciones empaquetadas con peso/volumen explicito ("saco de 25 kg", "bolsa de 50 lb",
+    "garrafa de 20 L", "caneca de 5 gal", "frasco de 500 ml"): SIEMPRE expandir al contenido
+    total en g o ml. NO dejar en "und". El precio por presentacion se reparte sobre el contenido.
+      Ej: 3 sacos de 25 kg a $100.000/saco
+          -> cantidad = 3 * 25000 = 75000, unidad="g", precio_unitario = 100000 / 25000 = 4 ($/g)
+          (subtotal $300.000 intacto)
+      Ej: 2 garrafas de 20 L a $80.000/garrafa
+          -> cantidad = 2 * 20000 = 40000, unidad="ml", precio_unitario = 80000 / 20000 = 4 ($/ml)
+  * Solo dejar unidad="und" cuando NO hay peso ni volumen asociado: servicios, horas, cajas
+    de items contables sin gramaje (ej. "1 caja de 24 unidades de servilletas"), rollos, fletes,
+    arriendos, papeleria suelta, mantenimientos, asesorias.
+  * Guarda SIEMPRE cantidad_original y unidad_original con los valores originales de la factura
+    (ej: cantidad_original=3, unidad_original="saco 25 kg").
+  * RE-ESCALA precio_unitario para preservar el subtotal del item:
+      precio_unitario_normalizado = subtotal_item / cantidad_normalizada
+    Equivalente a: precio_unitario_original * (cantidad_original / cantidad_normalizada).
+    Ej: 5 kg a $10.000/kg -> cantidad=5000, unidad="g", precio_unitario=10 (subtotal $50.000 intacto).
+    Ej: 2 L a $8.000/L    -> cantidad=2000, unidad="ml", precio_unitario=4  (subtotal $16.000 intacto).
 - IVA en Colombia generalmente 19%. Si la factura indica otro, ponlo.
 - categoria:
   * "materias_primas" si son insumos para produccion (acidos, azucares, saborizantes, empaques, etc.).

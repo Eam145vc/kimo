@@ -8,6 +8,15 @@ from pydantic import BaseModel, Field
 
 class PedidoItem(BaseModel):
     descripcion: str = Field(description="Descripcion del producto tal como lo dijo el vendedor")
+    codigo: str | None = Field(
+        default=None,
+        description=(
+            "Codigo exacto del producto del catalogo (ej: A1O, A3U, P2). "
+            "Aplicar reglas: default bolsa 6L con licor, salvo que se diga 'sachet'/"
+            "'perlas'/'sin licor'. 'Bombon' solo = NO manzana verde. "
+            "Si el sabor no existe en el catalogo, dejar null."
+        ),
+    )
     cantidad: float = Field(description="Cantidad pedida; si no se menciona, asumir 1")
     precio_unitario: float | None = Field(
         default=None,
@@ -96,8 +105,37 @@ class ComprobantePago(BaseModel):
 
 class FacturaProveedorItem(BaseModel):
     descripcion: str
-    cantidad: float
-    precio_unitario: float
+    cantidad: float = Field(
+        description=(
+            "Cantidad SIEMPRE expresada en la unidad base que usa Siigo: "
+            "gramos para solidos/peso, mililitros para liquidos/volumen, "
+            "unidades para items contables (cajas, bolsas, rollos, servicios). "
+            "Si la factura dice 5 kg -> cantidad=5000. Si dice 2 L -> cantidad=2000. "
+            "Si dice 3 cajas -> cantidad=3."
+        ),
+    )
+    unidad: Literal["g", "ml", "und"] = Field(
+        default="und",
+        description=(
+            "Unidad base normalizada: 'g' (gramos) para peso, 'ml' (mililitros) para volumen, "
+            "'und' para items contables. Es la unidad en la que viene `cantidad`."
+        ),
+    )
+    cantidad_original: float | None = Field(
+        default=None,
+        description="Cantidad tal como aparece en la factura, antes de convertir a unidad base.",
+    )
+    unidad_original: str | None = Field(
+        default=None,
+        description="Unidad tal como aparece en la factura (kg, lb, L, oz, gal, caja, bolsa, etc.).",
+    )
+    precio_unitario: float = Field(
+        description=(
+            "Precio por UNIDAD BASE (por gramo, por mililitro, por unidad contable), "
+            "re-escalado para que cantidad * precio_unitario = subtotal del item original. "
+            "Ej: 5 kg a $10.000/kg -> cantidad=5000 g, precio_unitario=10 ($/g)."
+        ),
+    )
     iva_pct: float | None = Field(default=None, description="Porcentaje IVA: 0, 5, 19")
 
 

@@ -137,16 +137,29 @@ def resolve_pedido(pedido: Pedido, matcher: Matcher) -> ResolvedPedido:
                                 else (resolved.cliente_elegido.id if resolved.cliente_elegido else None))
     customer_id = customer_id_para_precio
     for raw_item in pedido.items:
-        candidatos = matcher.search_product(raw_item.descripcion, limit=5)
-        ri = ResolvedItem(raw=raw_item, candidatos=candidatos, cantidad=raw_item.cantidad)
+        # Si el LLM dio codigo, intentar match directo primero
+        hit_directo = None
+        codigo_llm = (getattr(raw_item, "codigo", None) or "").strip().upper()
+        if codigo_llm:
+            hit_directo = matcher.find_product_by_code(codigo_llm)
 
-        # Siempre elegimos el mejor candidato (default). El usuario puede cambiar via botones.
-        if candidatos:
-            ri.elegido = candidatos[0]
+        if hit_directo:
+            # Tambien traemos candidatos por descripcion para que el usuario pueda cambiar si el codigo del LLM fue erroneo
+            candidatos = matcher.search_product(raw_item.descripcion or hit_directo.name, limit=5)
+            # Asegurar que el hit_directo este en candidatos
+            if not any(c.id == hit_directo.id for c in candidatos):
+                candidatos = [hit_directo] + candidatos[:4]
+            ri = ResolvedItem(raw=raw_item, candidatos=candidatos, cantidad=raw_item.cantidad)
+            ri.elegido = hit_directo
         else:
-            problemas.append(f"Producto '{raw_item.descripcion}' no encontrado en el catalogo")
-            resolved.items.append(ri)
-            continue
+            candidatos = matcher.search_product(raw_item.descripcion, limit=5)
+            ri = ResolvedItem(raw=raw_item, candidatos=candidatos, cantidad=raw_item.cantidad)
+            if candidatos:
+                ri.elegido = candidatos[0]
+            else:
+                problemas.append(f"Producto '{raw_item.descripcion}' no encontrado en el catalogo")
+                resolved.items.append(ri)
+                continue
 
         # Precio: prioridad
         # 1. Lo que dijo el vendedor explicitamente
