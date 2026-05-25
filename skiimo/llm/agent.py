@@ -62,9 +62,13 @@ TU MISION: en cada mensaje, decidir el camino:
    REGLAS DE NEGOCIO PARA ASIGNAR EL CODIGO DE PRODUCTO (campo items[].codigo):
    * POR DEFECTO ES BOLSA 6L CON LICOR. Solo cambia si dicen explicitamente:
      - "sachet" / "sachets" -> SACHETS 08 OZ
-     - "perlas" -> PERLAS EXPLOSIVAS (si no dicen tamaño, dejar codigo=null)
+     - "perlas" -> PERLAS EXPLOSIVAS
      - "gelatina" -> GELATINAS
      - "sin licor" -> version sin licor del mismo sabor
+   * Para PERLAS sin tamaño explicito -> DEFAULT 1200 GR (el tamaño medio, el mas vendido).
+     - "perlas coco" -> P2 (Coco 1200 GR)
+     - "perlas cereza grandes" -> P12 (Cereza 3400 GR)
+     - "perlas chicle pequeñas" -> P? con 350 GR
    * "bombon" solo significa bombon regular. NO asumir "bombon manzana verde" salvo que lo digan literal.
    * "coco" sin contexto -> A1O (Bolsa 6L Coco Loco con licor). "coco sin licor" -> A2X. "sachet coco" -> A3M.
    * Si el sabor mencionado NO existe en el catalogo, dejar codigo=null.

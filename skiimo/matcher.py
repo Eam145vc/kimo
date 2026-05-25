@@ -65,6 +65,8 @@ class Matcher:
 
     def reload(self) -> None:
         from skiimo.config import SIIGO_INVOICE_TEST_MODE, SIIGO_TEST_CUSTOMER_ID
+        # Invalidar cache de invoice counts (lo refrescaremos lazy en search_customer)
+        self._invoice_count_cache = None
         conn = get_conn()
         try:
             # En modo test cargamos tambien el cliente de prueba aunque este inactivo
@@ -114,6 +116,21 @@ class Matcher:
                 )
         return None
 
+    def _get_customer_invoice_count(self, customer_id: str) -> int:
+        """Cuenta facturas historicas del cliente (cache best-effort)."""
+        if not hasattr(self, "_invoice_count_cache") or self._invoice_count_cache is None:
+            conn = get_conn()
+            try:
+                rows = conn.execute(
+                    "SELECT customer_id, COUNT(*) AS n FROM siigo_invoices GROUP BY customer_id"
+                ).fetchall()
+                self._invoice_count_cache = {r["customer_id"]: r["n"] for r in rows}
+            except Exception:
+                self._invoice_count_cache = {}
+            finally:
+                conn.close()
+        return self._invoice_count_cache.get(customer_id, 0)
+
     def search_customer(self, query: str, *, limit: int = 5, min_score: int = 60) -> list[CustomerHit]:
         if not query.strip():
             return []
@@ -132,10 +149,17 @@ class Matcher:
                 q, self._customer_keys, scorer=scorer, limit=limit * 3, score_cutoff=min_score
             ):
                 candidates[idx] = max(candidates.get(idx, 0.0), float(score))
-        # Ordenar por score desc
-        sorted_idx = sorted(candidates.items(), key=lambda x: x[1], reverse=True)[:limit]
+
+        # Tiebreaker: cuando 2+ candidatos tienen score similar, priorizar el que tiene mas
+        # facturas historicas. Esto evita elegir un cliente raro sobre uno con mucha actividad.
+        # Sort key: (-score, -invoice_count) para que mayor score primero, mayor count segundo.
+        def _sort_key(item):
+            idx, sc = item
+            cid = self._customers[idx]["id"]
+            return (-sc, -self._get_customer_invoice_count(cid))
+        sorted_items = sorted(candidates.items(), key=_sort_key)[:limit]
         hits: list[CustomerHit] = []
-        for idx, score in sorted_idx:
+        for idx, score in sorted_items:
             c = self._customers[idx]
             hits.append(
                 CustomerHit(
