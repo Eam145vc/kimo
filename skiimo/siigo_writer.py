@@ -403,6 +403,9 @@ def crear_gasto_manual_ds(
     proveedor_nombre: str,
     fecha: str | None = None,
     actor: str = "bot",
+    payment_mode: str = "contado",
+    payment_method: str = "efectivo",
+    due_days: int = 30,
 ) -> InvoiceResult:
     """Crea un DS (Documento Soporte) para un gasto manual sin factura del proveedor.
 
@@ -452,17 +455,31 @@ def crear_gasto_manual_ds(
         "origen_obs": "[CHAT]",
     }
 
-    return crear_documento_soporte(factura_dict, actor=actor)
+    return crear_documento_soporte(
+        factura_dict, actor=actor,
+        payment_mode=payment_mode, payment_method=payment_method, due_days=due_days,
+    )
 
 
 def crear_documento_soporte(
     factura: dict,
     actor: str = "bot",
+    *,
+    payment_mode: str = "credito",
+    payment_method: str = "efectivo",
+    due_days: int = 30,
 ) -> InvoiceResult:
     """Crea Documento Soporte (DS) en Siigo para gastos a personas naturales
     o proveedores sin factura electronica DIAN.
 
     Endpoint: POST /v1/purchase-support-documents
+
+    Args:
+      payment_mode: 'credito' -> queda con saldo (id 3049, due_date a 30 dias).
+                    'contado' -> registra pago al momento (efectivo/nequi/etc).
+      payment_method: solo si payment_mode='contado'. Mismas claves que ventas:
+                      efectivo, nequi, daviplata, banco_ahorros, tarjeta_debito, tarjeta_credito.
+      due_days: dias de plazo si payment_mode='credito'.
     """
     nit = factura.get("proveedor_nit")
     if not nit:
@@ -506,6 +523,20 @@ def crear_documento_soporte(
         })
         total_calc = total
 
+    # Bloque de pagos: contado vs credito
+    total_pago = round(total_calc, 2)
+    if payment_mode == "contado":
+        pay_id = PAYMENT_METHODS_CONTADO.get(payment_method, PAYMENT_METHODS_CONTADO["efectivo"])
+        payments_block = [{"id": pay_id, "value": total_pago}]
+    else:
+        payments_block = [{
+            "id": 3049,  # Credito proveedores
+            "value": total_pago,
+            "due_date": (date.fromisoformat(fecha) + timedelta(days=due_days)).isoformat(),
+        }]
+
+    obs_origen = factura.get("origen_obs") or "[CORREO]"
+    obs_extra = (factura.get('observaciones') or '')[:180]
     payload = {
         "document": {"id": DS_DOC_ID},
         "date": fecha,
@@ -515,13 +546,9 @@ def crear_documento_soporte(
             "number": str(factura.get("numero_factura") or "0"),
         },
         "discount_type": "Value",
-        "observations": f"[CORREO] {(factura.get('observaciones') or '')[:200]}",
+        "observations": f"{obs_origen} {obs_extra}".strip()[:300],
         "items": siigo_items,
-        "payments": [{
-            "id": 3049,  # Credito proveedores
-            "value": round(total_calc, 2),
-            "due_date": (date.fromisoformat(fecha) + timedelta(days=30)).isoformat(),
-        }],
+        "payments": payments_block,
     }
 
     _audit("support_document", None, "post_request", actor, payload)

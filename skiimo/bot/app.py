@@ -426,15 +426,16 @@ async def _continuar_gasto_manual(update: Update, ctx: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("⚠️ Descripción muy corta. Probá algo como 'taxi al aeropuerto':")
             return
         estado["desc"] = desc
-        estado["step"] = "confirm"
+        estado["step"] = "pago"
         await update.message.reply_text(
-            f"📋 *Confirmar gasto manual (DS)*\n\n"
-            f"💰 Monto: `${estado['monto']:,.0f}`\n"
-            f"👤 Proveedor: *{estado['nombre']}*\n"
-            f"   NIT: `{estado['nit']}`\n"
-            f"📝 Descripción: _{desc}_\n",
+            f"📝 _{desc}_\n\n"
+            f"¿De qué caja salió el dinero?",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Crear DS en Siigo", callback_data="gmok")],
+                [InlineKeyboardButton("💵 Efectivo", callback_data="gmpay:efectivo")],
+                [InlineKeyboardButton("📱 Nequi", callback_data="gmpay:nequi")],
+                [InlineKeyboardButton("📱 Daviplata", callback_data="gmpay:daviplata")],
+                [InlineKeyboardButton("🏦 Banco Ahorros", callback_data="gmpay:banco_ahorros")],
+                [InlineKeyboardButton("⏳ Quedó pendiente (crédito proveedores)", callback_data="gmpay:credito")],
                 [InlineKeyboardButton("❌ Cancelar", callback_data="gmcanc")],
             ]),
             parse_mode="Markdown",
@@ -1865,8 +1866,8 @@ async def _handle_factura_correo_callback(cb, ctx, accion: str, parts: list[str]
             )
 
 
-async def _handle_gasto_manual_callback(cb, ctx, accion: str) -> None:
-    """Maneja los botones de confirmacion del FSM /gastomanual."""
+async def _handle_gasto_manual_callback(cb, ctx, accion: str, parts: list[str]) -> None:
+    """Maneja los botones del FSM /gastomanual: seleccion de pago + confirmacion."""
     chat_id = cb.message.chat.id if cb.message else None
     estado = _GASTO_MANUAL_POR_CHAT.get(chat_id) if chat_id else None
     if not estado:
@@ -1876,6 +1877,58 @@ async def _handle_gasto_manual_callback(cb, ctx, accion: str) -> None:
     if accion == "gmcanc":
         _GASTO_MANUAL_POR_CHAT.pop(chat_id, None)
         await cb.edit_message_text("❌ Gasto manual cancelado.")
+        return
+
+    if accion == "gmback":
+        estado["step"] = "pago"
+        estado.pop("payment_mode", None)
+        estado.pop("payment_method", None)
+        estado.pop("metodo_label", None)
+        await cb.edit_message_text(
+            f"📝 _{estado['desc']}_\n\n¿De qué caja salió el dinero?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💵 Efectivo", callback_data="gmpay:efectivo")],
+                [InlineKeyboardButton("📱 Nequi", callback_data="gmpay:nequi")],
+                [InlineKeyboardButton("📱 Daviplata", callback_data="gmpay:daviplata")],
+                [InlineKeyboardButton("🏦 Banco Ahorros", callback_data="gmpay:banco_ahorros")],
+                [InlineKeyboardButton("⏳ Quedó pendiente (crédito proveedores)", callback_data="gmpay:credito")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="gmcanc")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion == "gmpay":
+        metodo = parts[1] if len(parts) > 1 else "efectivo"
+        if metodo == "credito":
+            estado["payment_mode"] = "credito"
+            estado["payment_method"] = "efectivo"  # placeholder
+            metodo_label = "⏳ Quedó pendiente (Crédito proveedores 30 días)"
+        else:
+            estado["payment_mode"] = "contado"
+            estado["payment_method"] = metodo
+            metodo_label = {
+                "efectivo": "💵 Efectivo",
+                "nequi": "📱 Nequi",
+                "daviplata": "📱 Daviplata",
+                "banco_ahorros": "🏦 Banco Ahorros",
+            }.get(metodo, metodo)
+        estado["step"] = "confirm"
+        estado["metodo_label"] = metodo_label
+        await cb.edit_message_text(
+            f"📋 *Confirmar gasto manual (DS)*\n\n"
+            f"💰 Monto: `${estado['monto']:,.0f}`\n"
+            f"👤 Proveedor: *{estado['nombre']}*\n"
+            f"   NIT: `{estado['nit']}`\n"
+            f"📝 Descripción: _{estado['desc']}_\n"
+            f"💳 Pago: {metodo_label}\n",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Crear DS en Siigo", callback_data="gmok")],
+                [InlineKeyboardButton("← Cambiar caja", callback_data="gmback")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="gmcanc")],
+            ]),
+            parse_mode="Markdown",
+        )
         return
 
     if accion == "gmok":
@@ -1890,8 +1943,11 @@ async def _handle_gasto_manual_callback(cb, ctx, accion: str) -> None:
             descripcion=estado["desc"],
             proveedor_nit=estado["nit"],
             proveedor_nombre=estado["nombre"],
+            payment_mode=estado.get("payment_mode", "contado"),
+            payment_method=estado.get("payment_method", "efectivo"),
             actor=f"chat:{chat_id}",
         )
+        metodo_label = estado.get("metodo_label", "Efectivo")
         _GASTO_MANUAL_POR_CHAT.pop(chat_id, None)
         if result.ok:
             await cb.edit_message_text(
@@ -1899,6 +1955,7 @@ async def _handle_gasto_manual_callback(cb, ctx, accion: str) -> None:
                 f"Documento: `{result.siigo_name or '?'}`\n"
                 f"Proveedor: *{estado['nombre']}*\n"
                 f"Monto: `${(result.total or estado['monto']):,.0f}`\n"
+                f"Pago: {metodo_label}\n"
                 f"Descripción: _{estado['desc']}_",
                 parse_mode="Markdown",
             )
@@ -2334,8 +2391,8 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         await _handle_proveedor_callback(cb, ctx, accion, parts)
         return
 
-    if accion in ("gmok", "gmcanc"):
-        await _handle_gasto_manual_callback(cb, ctx, accion)
+    if accion in ("gmok", "gmcanc", "gmpay", "gmback"):
+        await _handle_gasto_manual_callback(cb, ctx, accion, parts)
         return
 
     pedido_id = int(parts[1])
