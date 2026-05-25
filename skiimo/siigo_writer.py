@@ -683,6 +683,128 @@ def crear_proveedor(
     )
 
 
+@dataclass(slots=True)
+class CrearClienteResult:
+    ok: bool
+    siigo_id: str | None = None
+    identification: str | None = None
+    name: str | None = None
+    error: str | None = None
+    raw: dict | None = None
+
+
+def crear_cliente(
+    *,
+    nit: str,
+    nombre: str,
+    tipo: str = "empresa",
+    categoria: str = "DETAL",
+    email: str = "",
+    actor: str = "bot",
+) -> CrearClienteResult:
+    """Crea un cliente en Siigo (POST /v1/customers con type=Customer).
+
+    Args:
+      nit: NIT/cedula sin guiones ni dv.
+      nombre: razon social o nombre completo.
+      tipo: 'empresa' -> Company + NIT (id_type 31).
+            'persona' -> Person + cedula (id_type 13).
+      categoria: DETAL | MAYORISTA | DISTRIBUIDOR (afecta precios sugeridos).
+    """
+    nit_clean = "".join(c for c in (nit or "") if c.isdigit())
+    if not nit_clean:
+        return CrearClienteResult(ok=False, error="NIT/cedula invalido")
+    nombre = (nombre or "").strip()
+    if not nombre:
+        return CrearClienteResult(ok=False, error="Nombre requerido")
+    if categoria not in ("DETAL", "MAYORISTA", "DISTRIBUIDOR"):
+        categoria = "DETAL"
+
+    person_type = "Company" if tipo == "empresa" else "Person"
+    id_type_code = "31" if tipo == "empresa" else "13"
+
+    if person_type == "Company":
+        name_list = [nombre[:200]]
+    else:
+        partes = nombre.split()
+        if len(partes) >= 2:
+            name_list = [" ".join(partes[:-1])[:100], partes[-1][:100]]
+        else:
+            name_list = [nombre[:100], "."]
+
+    payload = {
+        "type": "Customer",
+        "person_type": person_type,
+        "id_type": {"code": id_type_code},
+        "identification": nit_clean,
+        "name": name_list,
+        "commercial_name": nombre[:200],
+        "active": True,
+        "vat_responsible": False,
+        "fiscal_responsibilities": [{"code": "R-99-PN"}],
+        "address": {
+            "address": "Sin direccion",
+            "city": {"country_code": "Co", "state_code": "11", "city_code": "11001"},
+        },
+        "contacts": [{
+            "first_name": name_list[0][:50],
+            "last_name": (name_list[1] if len(name_list) > 1 else nombre)[:50],
+            "email": email[:80] if email else None,
+        }],
+    }
+    if email:
+        payload["contacts"][0]["email"] = email[:80]
+
+    _audit("customer", None, "post_request", actor, payload)
+    try:
+        with SiigoClient() as s:
+            r = s.post("/v1/customers", payload)
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:500]
+        _audit("customer", None, "post_error", actor,
+               {"status": e.response.status_code, "body": body, "payload": payload})
+        return CrearClienteResult(ok=False, error=f"HTTP {e.response.status_code}: {body}")
+    except Exception as e:
+        _audit("customer", None, "post_exception", actor, {"error": str(e)})
+        return CrearClienteResult(ok=False, error=str(e))
+
+    _audit("customer", r.get("id"), "post_success", actor, r)
+
+    siigo_id = r.get("id")
+    # Cachear en espejo local + setear categoria comercial
+    try:
+        conn = get_conn()
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO siigo_customers
+                   (id, type, identification, name, commercial_name, email, active, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+                (
+                    siigo_id, "Customer", nit_clean,
+                    nombre[:200], nombre[:200], email[:80],
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO clientes_categoria (customer_id, categoria, updated_at)
+                   VALUES (?, ?, ?)""",
+                (siigo_id, categoria, datetime.now().isoformat(timespec="seconds")),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass  # best-effort
+
+    return CrearClienteResult(
+        ok=True,
+        siigo_id=siigo_id,
+        identification=nit_clean,
+        name=nombre,
+        raw=r,
+    )
+
+
 def get_invoice_pdf(invoice_id: str) -> bytes | None:
     """Devuelve el PDF de la factura como bytes."""
     try:

@@ -474,6 +474,79 @@ async def _continuar_gasto_manual(update: Update, ctx: ContextTypes.DEFAULT_TYPE
         return
 
 
+# =============================================================================
+# FSM: crear cliente nuevo desde pedido
+# =============================================================================
+
+async def _iniciar_cliente_nuevo(update_or_cb, ctx, chat_id: int, pedido_id: int, nombre_sugerido: str) -> None:
+    """Inicia el FSM de creacion de cliente desde un pedido."""
+    _CLIENTE_NUEVO_POR_CHAT[chat_id] = {
+        "pedido_id": pedido_id,
+        "nombre": nombre_sugerido,
+        "step": "nit",
+    }
+    msg = (
+        f"🆕 *Nuevo cliente: {nombre_sugerido}*\n\n"
+        f"Mandame el *NIT o cédula* (solo dígitos).\n\n"
+        f"/cancelar para abortar."
+    )
+    if hasattr(update_or_cb, "edit_message_text"):
+        await update_or_cb.edit_message_text(msg, parse_mode="Markdown")
+    else:
+        await update_or_cb.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def _continuar_cliente_nuevo(update: Update, ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, texto: str) -> None:
+    """Recibe respuestas del FSM de creacion de cliente."""
+    estado = _CLIENTE_NUEVO_POR_CHAT.get(chat_id)
+    if not estado:
+        return
+
+    if texto.lower() in ("/cancelar", "cancelar"):
+        _CLIENTE_NUEVO_POR_CHAT.pop(chat_id, None)
+        await update.message.reply_text("❌ Creación de cliente cancelada.")
+        return
+
+    step = estado.get("step")
+
+    if step == "nit":
+        nit_clean = "".join(c for c in texto if c.isdigit())
+        if not nit_clean or len(nit_clean) < 5:
+            await update.message.reply_text(
+                "⚠️ Necesito el NIT o cédula en dígitos (mínimo 5). /cancelar para abortar."
+            )
+            return
+        # Verificar si ya existe
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT id, name FROM siigo_customers WHERE identification = ?",
+                (nit_clean,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row:
+            await update.message.reply_text(
+                f"⚠️ Ese NIT ya existe como *{row['name']}*. ¿Querés cancelar y elegirlo del listado?\n\n"
+                f"Si querés agregar otro NIT, mandalo. /cancelar para abortar.",
+                parse_mode="Markdown",
+            )
+            return
+        estado["nit"] = nit_clean
+        estado["step"] = "tipo"
+        await update.message.reply_text(
+            f"📋 NIT: `{nit_clean}`\n*Nombre:* {estado['nombre']}\n\n"
+            f"¿Es empresa o persona natural?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏢 Empresa", callback_data="newclitipo:empresa")],
+                [InlineKeyboardButton("👤 Persona natural", callback_data="newclitipo:persona")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="newclicanc")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+
 async def cmd_factura(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Activa modo 'esperando factura'. La proxima foto/PDF se procesa como factura proveedor."""
     assert update.message and update.effective_chat
@@ -695,6 +768,11 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Si hay edicion de item activa, este texto es el numero nuevo
     if chat_id in _EDIT_ITEM_POR_CHAT:
         await _continuar_edit_item(update, ctx, chat_id, texto)
+        return
+
+    # Si hay flujo de creacion de cliente nuevo, este texto es la respuesta
+    if chat_id in _CLIENTE_NUEVO_POR_CHAT:
+        await _continuar_cliente_nuevo(update, ctx, chat_id, texto)
         return
 
     # Si hay un proveedor pendiente esperando nombre, este texto es el nombre nuevo
@@ -1246,6 +1324,10 @@ MODO_FACTURA_TTL = 5 * 60  # 5 minutos
 # chat_id -> dict con datos de proveedor pendiente de crear
 # {factura_id, nit, nombre_sugerido, mensaje_id}
 _PROVEEDOR_PENDIENTE_POR_CHAT: dict[int, dict] = {}
+
+# FSM creacion de cliente nuevo desde pedido: chat_id -> {pedido_id, nombre, step, nit, tipo, categoria}
+# steps: 'nit' -> 'tipo' -> 'categoria' -> 'confirm'
+_CLIENTE_NUEVO_POR_CHAT: dict[int, dict] = {}
 
 
 def _activar_modo_factura(chat_id: int) -> None:
@@ -2195,6 +2277,166 @@ async def _handle_gasto_manual_callback(cb, ctx, accion: str, parts: list[str]) 
             )
 
 
+async def _handle_newcli_iniciar(cb, ctx, parts: list[str]) -> None:
+    """Inicia el FSM de creacion de cliente desde el boton 'Crear cliente nuevo' del pedido."""
+    pedido_id = int(parts[1])
+    chat_id = cb.message.chat.id if cb.message else None
+    pedido_row = _load_pedido(pedido_id)
+    if not pedido_row:
+        await cb.edit_message_text("⚠️ Pedido no encontrado.")
+        return
+    payload = json.loads(pedido_row["payload_extraido"] or "{}")
+    nombre_sugerido = (payload.get("raw", {}) or {}).get("cliente_nombre") or ""
+    await _iniciar_cliente_nuevo(cb, ctx, chat_id, pedido_id, nombre_sugerido)
+
+
+async def _handle_newcli_flow(cb, ctx, accion: str, parts: list[str]) -> None:
+    """Maneja los pasos del FSM cliente nuevo:
+    newclitipo:<empresa|persona>  -> registra tipo, muestra categorias
+    newclicat:<DETAL|MAYORISTA|DISTRIBUIDOR> -> registra categoria, muestra confirm
+    newcliok                       -> ejecuta creacion en Siigo
+    newclicanc                     -> cancela
+    """
+    chat_id = cb.message.chat.id if cb.message else None
+    estado = _CLIENTE_NUEVO_POR_CHAT.get(chat_id) if chat_id else None
+    if not estado:
+        await cb.edit_message_text("⚠️ Sesión expirada. Volvé al pedido y mandá 'Crear cliente nuevo' de nuevo.")
+        return
+
+    if accion == "newclicanc":
+        _CLIENTE_NUEVO_POR_CHAT.pop(chat_id, None)
+        await cb.edit_message_text("❌ Creación de cliente cancelada.")
+        return
+
+    if accion == "newclitipo":
+        tipo = parts[1] if len(parts) > 1 else "empresa"
+        if tipo not in ("empresa", "persona"):
+            tipo = "empresa"
+        estado["tipo"] = tipo
+        estado["step"] = "categoria"
+        tipo_label = "🏢 Empresa" if tipo == "empresa" else "👤 Persona natural"
+        await cb.edit_message_text(
+            f"📋 *Nuevo cliente*\n\n"
+            f"Nombre: {estado['nombre']}\n"
+            f"NIT/Cédula: `{estado['nit']}`\n"
+            f"Tipo: {tipo_label}\n\n"
+            f"¿Qué categoría comercial le asigno? (afecta los precios)",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛒 DETAL (precio lista)", callback_data="newclicat:DETAL")],
+                [InlineKeyboardButton("📦 MAYORISTA (~10% off)", callback_data="newclicat:MAYORISTA")],
+                [InlineKeyboardButton("🏭 DISTRIBUIDOR (~15-20% off)", callback_data="newclicat:DISTRIBUIDOR")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="newclicanc")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion == "newclicat":
+        cat = parts[1] if len(parts) > 1 else "DETAL"
+        if cat not in ("DETAL", "MAYORISTA", "DISTRIBUIDOR"):
+            cat = "DETAL"
+        estado["categoria"] = cat
+        estado["step"] = "confirm"
+        tipo_label = "🏢 Empresa" if estado.get("tipo") == "empresa" else "👤 Persona natural"
+        await cb.edit_message_text(
+            f"📋 *Confirmar nuevo cliente*\n\n"
+            f"Nombre: *{estado['nombre']}*\n"
+            f"NIT/Cédula: `{estado['nit']}`\n"
+            f"Tipo: {tipo_label}\n"
+            f"Categoría: *{cat}*\n",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Crear en Siigo", callback_data="newcliok")],
+                [InlineKeyboardButton("← Cambiar categoría", callback_data=f"newclitipo:{estado.get('tipo', 'empresa')}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="newclicanc")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion == "newcliok":
+        pedido_id = estado["pedido_id"]
+        await cb.edit_message_text(
+            f"⏳ Creando *{estado['nombre']}* en Siigo...",
+            parse_mode="Markdown",
+        )
+        from skiimo.siigo_writer import crear_cliente
+        result = await asyncio.to_thread(
+            crear_cliente,
+            nit=estado["nit"], nombre=estado["nombre"],
+            tipo=estado.get("tipo", "empresa"),
+            categoria=estado.get("categoria", "DETAL"),
+            actor=f"chat:{chat_id}",
+        )
+        if not result.ok:
+            await cb.edit_message_text(
+                f"⚠️ *Error al crear cliente*\n\n`{(result.error or '')[:400]}`",
+                parse_mode="Markdown",
+            )
+            _CLIENTE_NUEVO_POR_CHAT.pop(chat_id, None)
+            return
+
+        # Recargar el matcher para que tenga el cliente nuevo
+        try:
+            _get_matcher().reload()
+        except Exception:
+            pass
+
+        # Asignar el nuevo cliente al pedido (update payload_extraido)
+        pedido_row = _load_pedido(pedido_id)
+        if pedido_row:
+            payload = json.loads(pedido_row["payload_extraido"] or "{}")
+            payload["cliente"] = {
+                "id": result.siigo_id,
+                "identification": result.identification,
+                "name": result.name,
+                "commercial_name": result.name,
+                "email": "",
+                "score": 100.0,
+            }
+            payload["cliente_candidatos"] = []
+            # Quitar problemas de cliente
+            pend = [p for p in payload.get("necesita_input_humano", [])
+                    if "cliente" not in p.lower() and "NIT" not in p]
+            payload["necesita_input_humano"] = pend
+            conn = get_conn()
+            try:
+                conn.execute(
+                    "UPDATE bot_pedidos SET payload_extraido = ?, customer_id = ?, updated_at = ? WHERE id = ?",
+                    (
+                        json.dumps(payload, ensure_ascii=False, default=str),
+                        result.siigo_id,
+                        datetime.now().isoformat(timespec="seconds"),
+                        pedido_id,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        _CLIENTE_NUEVO_POR_CHAT.pop(chat_id, None)
+
+        await cb.edit_message_text(
+            f"✅ *Cliente creado*: {result.name}\n"
+            f"NIT: `{result.identification}` · Categoría: *{estado.get('categoria', 'DETAL')}*\n\n"
+            f"_Continuando con el pedido..._",
+            parse_mode="Markdown",
+        )
+
+        # Re-mostrar el pedido con el cliente nuevo asignado
+        try:
+            pedido_row_nuevo = _load_pedido(pedido_id)
+            rp = _rehydrate_resolved(pedido_row_nuevo)
+            await ctx.bot.send_message(
+                chat_id=chat_id,
+                text=f"*Pedido #{pedido_id}*\n\n{format_summary(rp)}",
+                reply_markup=InlineKeyboardMarkup(_build_pedido_buttons(pedido_id, rp)),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            log.exception("Error re-mostrando pedido despues de crear cliente")
+        return
+
+
 async def _handle_proveedor_callback(cb, ctx, accion: str, parts: list[str]) -> None:
     """Maneja la creacion de un proveedor desconocido al subir factura.
 
@@ -2482,6 +2724,11 @@ def _build_pedido_buttons(pedido_id: int, rp) -> list[list[InlineKeyboardButton]
                 f"👤  {c.name[:35]}",
                 callback_data=f"pickc:{pedido_id}:{c.id}",
             )])
+        # Si el cliente real no aparece en candidatos, ofrecer crear nuevo
+        buttons.append([InlineKeyboardButton(
+            "🆕  Crear cliente nuevo",
+            callback_data=f"newcli:{pedido_id}",
+        )])
 
     # Cancelar siempre al final
     buttons.append([InlineKeyboardButton(
@@ -2626,6 +2873,14 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     if accion in ("iedi", "ieqt", "iepr", "iedl"):
         await _handle_edit_item_callback(cb, ctx, accion, parts)
+        return
+
+    # Crear cliente nuevo desde un pedido
+    if accion == "newcli":
+        await _handle_newcli_iniciar(cb, ctx, parts)
+        return
+    if accion in ("newclitipo", "newclicat", "newcliok", "newclicanc"):
+        await _handle_newcli_flow(cb, ctx, accion, parts)
         return
 
     pedido_id = int(parts[1])
