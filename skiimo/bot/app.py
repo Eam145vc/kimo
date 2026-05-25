@@ -118,6 +118,38 @@ def _save_pedido(chat_id: int, msg_id: int, rp: ResolvedPedido) -> int:
     }
     conn = get_conn()
     try:
+        # Si ya existe un pedido con misma idempotency_key:
+        # - estado 'enviado' -> idempotente real, devolver el id existente
+        # - estado 'borrador' -> actualizar payload y devolver el mismo id (no duplicar)
+        # - estado 'cancelado'/'error' -> liberar la key para permitir un nuevo pedido
+        existente = conn.execute(
+            "SELECT id, estado FROM bot_pedidos WHERE idempotency_key = ?",
+            (rp.idempotency_key,),
+        ).fetchone()
+        if existente:
+            if existente["estado"] == "enviado":
+                return existente["id"]
+            if existente["estado"] == "borrador":
+                conn.execute(
+                    "UPDATE bot_pedidos SET payload_extraido = ?, customer_id = ?, "
+                    "telegram_msg_id = ?, updated_at = ? WHERE id = ?",
+                    (
+                        json.dumps(payload, ensure_ascii=False, default=str),
+                        rp.cliente_elegido.id if rp.cliente_elegido else None,
+                        msg_id,
+                        datetime.now().isoformat(timespec="seconds"),
+                        existente["id"],
+                    ),
+                )
+                conn.commit()
+                return existente["id"]
+            # Cancelado o error: liberar la key (set NULL) para permitir nueva fila
+            conn.execute(
+                "UPDATE bot_pedidos SET idempotency_key = NULL WHERE id = ?",
+                (existente["id"],),
+            )
+            conn.commit()
+
         cur = conn.execute(
             """INSERT INTO bot_pedidos (
                 telegram_chat_id, telegram_msg_id, estado, payload_extraido,
@@ -3193,6 +3225,26 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.Document.IMAGE | filters.Document.PDF, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(handle_callback))
+
+    # Error handler global: si algun handler falla, avisar al usuario en vez de quedar mudo
+    async def _error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        err = ctx.error
+        log.exception("Excepcion no manejada en handler", exc_info=err)
+        try:
+            chat = getattr(update, "effective_chat", None) if isinstance(update, Update) else None
+            if chat:
+                await ctx.bot.send_message(
+                    chat_id=chat.id,
+                    text=(
+                        f"⚠️ Algo salió mal procesando tu mensaje.\n\n"
+                        f"`{type(err).__name__}: {str(err)[:200]}`\n\n"
+                        f"Probá de nuevo o avisame qué hiciste para que lo arregle."
+                    ),
+                    parse_mode="Markdown",
+                )
+        except Exception:
+            log.exception("Error mandando mensaje al usuario sobre el error")
+    app.add_error_handler(_error_handler)
 
     log.info("Bot arrancado en modo polling. Ctrl+C para detener.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
