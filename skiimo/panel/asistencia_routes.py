@@ -183,14 +183,14 @@ async def api_resumen_diario(
         where.append("m.fecha <= ?")
         params.append(hasta)
 
-    # Obtener todos los marcajes del rango con todos sus timestamps,
-    # para poder inferir entrada/almuerzo/salida cuando hay 3 o 4 marcajes en el dia.
+    # Traemos timestamps + tipo para poder mostrar entrada/almuerzo/salida
     sql = f"""
         SELECT
             m.empleado_id,
             e.nombre AS empleado_nombre,
             m.fecha,
-            m.ts
+            m.ts,
+            m.tipo
         FROM marcajes m
         JOIN empleados e ON e.id = m.empleado_id
         WHERE {' AND '.join(where)}
@@ -212,9 +212,9 @@ async def api_resumen_diario(
                 "empleado_id": r["empleado_id"],
                 "empleado_nombre": r["empleado_nombre"],
                 "fecha": r["fecha"],
-                "ts_list": [],
+                "marcajes": [],
             }
-        grupos[key]["ts_list"].append(r["ts"])
+        grupos[key]["marcajes"].append({"ts": r["ts"], "tipo": r["tipo"]})
 
     def _fmt(ts_iso: str) -> str | None:
         try:
@@ -224,41 +224,94 @@ async def api_resumen_diario(
 
     items = []
     for (eid, fecha), g in grupos.items():
-        ts_list = g["ts_list"]
-        n = len(ts_list)
-        # Etiquetar segun cantidad
-        primera_entrada = _fmt(ts_list[0]) if n >= 1 else None
-        ultima_salida = _fmt(ts_list[-1]) if n >= 2 else None
+        marcajes = g["marcajes"]
+        n = len(marcajes)
+        ts_list = [m["ts"] for m in marcajes]
+
+        # ¿Cuantos marcajes tienen tipo clasificado por el equipo?
+        # (no 'desconocido' y no NULL)
+        tipos_claros = [
+            m for m in marcajes
+            if m["tipo"] in ("entrada", "salida", "almuerzo_out", "almuerzo_in",
+                              "extra_in", "extra_out")
+        ]
+        usar_tipos = len(tipos_claros) > 0
+
+        primera_entrada = None
+        ultima_salida = None
         almuerzo_out = None
         almuerzo_in = None
-        if n == 3:
-            # Entrada, salida-almuerzo, regreso-almuerzo (falta salida final)
-            almuerzo_out = _fmt(ts_list[1])
-            almuerzo_in = _fmt(ts_list[2])
-            ultima_salida = None
-        elif n == 4:
-            almuerzo_out = _fmt(ts_list[1])
-            almuerzo_in = _fmt(ts_list[2])
-            ultima_salida = _fmt(ts_list[3])
-        elif n >= 5:
-            # Caso raro: marcajes adicionales. Tomamos primer/ultimo como entrada/salida.
-            almuerzo_out = _fmt(ts_list[1])
-            almuerzo_in = _fmt(ts_list[2])
-            ultima_salida = _fmt(ts_list[-1])
 
-        # Calculo de horas
+        if usar_tipos:
+            # Tomamos el primero/ultimo de cada tipo
+            entradas = [m["ts"] for m in marcajes if m["tipo"] == "entrada"]
+            salidas = [m["ts"] for m in marcajes if m["tipo"] == "salida"]
+            outs = [m["ts"] for m in marcajes if m["tipo"] == "almuerzo_out"]
+            ins = [m["ts"] for m in marcajes if m["tipo"] == "almuerzo_in"]
+            if entradas:
+                primera_entrada = _fmt(min(entradas))
+            if salidas:
+                ultima_salida = _fmt(max(salidas))
+            if outs:
+                almuerzo_out = _fmt(min(outs))
+            if ins:
+                almuerzo_in = _fmt(max(ins))
+            # Si NO hay entrada/salida explicita pero hay marcajes, usar primer/ultimo
+            if primera_entrada is None and ts_list:
+                primera_entrada = _fmt(ts_list[0])
+            if ultima_salida is None and n >= 2:
+                # Solo si no era la misma que primera
+                if ts_list[-1] != ts_list[0]:
+                    ultima_salida = _fmt(ts_list[-1])
+        else:
+            # Sin clasificacion del equipo: inferir por orden cronologico
+            primera_entrada = _fmt(ts_list[0]) if n >= 1 else None
+            ultima_salida = _fmt(ts_list[-1]) if n >= 2 else None
+            if n == 3:
+                almuerzo_out = _fmt(ts_list[1])
+                almuerzo_in = _fmt(ts_list[2])
+                ultima_salida = None
+            elif n == 4:
+                almuerzo_out = _fmt(ts_list[1])
+                almuerzo_in = _fmt(ts_list[2])
+                ultima_salida = _fmt(ts_list[3])
+            elif n >= 5:
+                almuerzo_out = _fmt(ts_list[1])
+                almuerzo_in = _fmt(ts_list[2])
+                ultima_salida = _fmt(ts_list[-1])
+
+        # Calculo de horas: usa primera_entrada / ultima_salida y descuenta almuerzo
         horas = None
         horas_almuerzo = None
         try:
-            if n >= 2:
+            t_in = None
+            t_out = None
+            for m in marcajes:
+                if m["tipo"] == "entrada" and t_in is None:
+                    t_in = datetime.fromisoformat(m["ts"])
+                if m["tipo"] == "salida":
+                    t_out = datetime.fromisoformat(m["ts"])
+            # Fallback a primer/ultimo si no hay tipos
+            if t_in is None and ts_list:
                 t_in = datetime.fromisoformat(ts_list[0])
+            if t_out is None and n >= 2 and ts_list[-1] != ts_list[0]:
                 t_out = datetime.fromisoformat(ts_list[-1])
+
+            if t_in and t_out and t_out > t_in:
                 bruto = (t_out - t_in).total_seconds() / 3600.0
                 horas = round(bruto, 2)
-                # Si hubo almuerzo registrado, descontarlo
-                if n >= 4:
+                # Descontar pausa de almuerzo si existe
+                t_alm_out = None
+                t_alm_in = None
+                for m in marcajes:
+                    if m["tipo"] == "almuerzo_out" and t_alm_out is None:
+                        t_alm_out = datetime.fromisoformat(m["ts"])
+                    if m["tipo"] == "almuerzo_in":
+                        t_alm_in = datetime.fromisoformat(m["ts"])
+                if t_alm_out is None and n >= 4 and not usar_tipos:
                     t_alm_out = datetime.fromisoformat(ts_list[1])
                     t_alm_in = datetime.fromisoformat(ts_list[2])
+                if t_alm_out and t_alm_in and t_alm_in > t_alm_out:
                     pausa = (t_alm_in - t_alm_out).total_seconds() / 3600.0
                     horas_almuerzo = round(pausa, 2)
                     horas = round(bruto - pausa, 2)
@@ -1194,6 +1247,59 @@ _LAST_HIK_PAYLOAD: dict = {"count": 0, "samples": []}
 async def api_hik_event_last():
     """Devuelve el ultimo evento crudo recibido. DEBUG."""
     return _LAST_HIK_PAYLOAD
+
+
+@router.post("/api/asistencia/reclasificar")
+async def api_reclasificar_marcajes(session_token: str | None = Cookie(default=None)):
+    """Re-clasifica todos los marcajes existentes usando la logica de hora del dia.
+
+    Util cuando se cambia la jornada o se agregan empleados nuevos.
+    Sobreescribe el campo `tipo` de marcajes con tipo='desconocido' o
+    cuando el tipo no coincide con la franja horaria.
+    No toca marcajes editados manualmente (editado=1).
+    """
+    _require_user(session_token)
+    from skiimo.asistencia.sync import _clasificar_por_hora
+
+    conn = get_conn()
+    actualizados = 0
+    try:
+        rows = conn.execute(
+            """SELECT id, empleado_id, fecha, ts, tipo
+               FROM marcajes
+               WHERE empleado_id IS NOT NULL
+                 AND COALESCE(editado, 0) = 0
+               ORDER BY empleado_id, fecha, ts"""
+        ).fetchall()
+
+        # Track tipos ya asignados por (empleado, fecha) para detectar duplicados
+        usados: dict[tuple[int, str], set] = {}
+
+        for r in rows:
+            try:
+                ts = datetime.fromisoformat(r["ts"])
+            except Exception:
+                continue
+            tipo_correcto = _clasificar_por_hora(ts)
+            if tipo_correcto == "desconocido":
+                continue
+            key = (r["empleado_id"], r["fecha"])
+            ya_usados = usados.setdefault(key, set())
+            if tipo_correcto in ya_usados:
+                tipo_correcto = "extra"
+            else:
+                ya_usados.add(tipo_correcto)
+
+            if r["tipo"] != tipo_correcto:
+                conn.execute(
+                    "UPDATE marcajes SET tipo = ? WHERE id = ?",
+                    (tipo_correcto, r["id"]),
+                )
+                actualizados += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "actualizados": actualizados}
 
 
 @router.post("/api/asistencia/limpiar-secundarios")

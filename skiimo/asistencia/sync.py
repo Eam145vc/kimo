@@ -126,10 +126,92 @@ def _auto_create_empleado(hik_employee_no: str, nombre_hik: str | None) -> int |
         conn.close()
 
 
-def _infer_tipo(empleado_id: int | None, fecha: str, ts: datetime) -> str:
-    """Heuristica simple para clasificar el marcaje. Mejorable con `attendanceStatus`."""
+_ATTENDANCE_STATUS_MAP = {
+    # Valores que manda el Hikvision cuando esta en modo "Manual + Auto":
+    "checkIn": "entrada",
+    "checkOut": "salida",
+    "breakOut": "almuerzo_out",
+    "breakIn": "almuerzo_in",
+    "overTimeIn": "extra_in",
+    "overTimeOut": "extra_out",
+    "checkin": "entrada",
+    "checkout": "salida",
+    "breakout": "almuerzo_out",
+    "breakin": "almuerzo_in",
+}
+
+
+# Jornada estandar de Esskimo (configurable a futuro via plantillas):
+#   07:00 entrada / 12:00 salida almuerzo / 13:00 regreso / 17:00 salida
+# Ventanas horarias para clasificar marcajes automaticamente. Generosas
+# para tolerar llegadas tarde / temprano sin confundirse.
+_VENTANAS_JORNADA = [
+    # (hora_inicio_min, hora_fin_min, tipo)
+    # Cada tupla: rango de minutos desde 00:00.
+    (5 * 60 + 30, 10 * 60 + 30, "entrada"),         # 05:30 - 10:30
+    (10 * 60 + 30, 12 * 60 + 45, "almuerzo_out"),   # 10:30 - 12:45
+    (12 * 60 + 45, 14 * 60 + 30, "almuerzo_in"),    # 12:45 - 14:30
+    (14 * 60 + 30, 23 * 60 + 30, "salida"),         # 14:30 - 23:30
+]
+
+
+def _clasificar_por_hora(ts: datetime) -> str:
+    """Devuelve el tipo segun la franja horaria del marcaje.
+
+    Usa la jornada estandar de Esskimo: 7-12 / 13-17. Cada marcaje cae
+    en una de 4 ventanas: entrada / almuerzo_out / almuerzo_in / salida.
+    """
+    mins = ts.hour * 60 + ts.minute
+    for ini, fin, tipo in _VENTANAS_JORNADA:
+        if ini <= mins < fin:
+            return tipo
+    return "desconocido"
+
+
+def _infer_tipo(
+    empleado_id: int | None,
+    fecha: str,
+    ts: datetime,
+    attendance_status: str | None = None,
+) -> str:
+    """Clasifica el marcaje. Prioridad:
+      1. attendanceStatus del equipo si lo manda (modo Manual)
+      2. Franja horaria (jornada estandar 7-12 / 13-17)
+      3. Si dos marcajes caen en la misma franja, el segundo es 'extra'
+    """
     if empleado_id is None:
         return "desconocido"
+
+    # Caso 1: el equipo lo clasifico explicitamente
+    if attendance_status:
+        mapped = _ATTENDANCE_STATUS_MAP.get(attendance_status)
+        if mapped:
+            return mapped
+
+    # Caso 2: clasificar por hora del dia
+    tipo_por_hora = _clasificar_por_hora(ts)
+    if tipo_por_hora == "desconocido":
+        return tipo_por_hora
+
+    # Verificar si ya existe otro marcaje del mismo tipo el mismo dia.
+    # Si es asi, este es un duplicado/extra.
+    conn = get_conn()
+    try:
+        existe = conn.execute(
+            "SELECT id FROM marcajes WHERE empleado_id = ? AND fecha = ? AND tipo = ? LIMIT 1",
+            (empleado_id, fecha, tipo_por_hora),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if existe:
+        # Ya hay un marcaje del mismo tipo ese dia -> este es extra
+        return "extra"
+    return tipo_por_hora
+
+
+def _legacy_infer_por_posicion(empleado_id: int, fecha: str) -> str:
+    """Fallback antiguo (mantenido por compatibilidad)."""
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -138,15 +220,10 @@ def _infer_tipo(empleado_id: int | None, fecha: str, ts: datetime) -> str:
         ).fetchall()
     finally:
         conn.close()
-    n = len(rows)  # marcajes existentes ANTES de insertar este
-    # n=0 -> primera entrada
-    # n=1 -> salida (o almuerzo_out si trabajan jornada larga)
-    # n=2 -> almuerzo_in
-    # n=3 -> salida
+    n = len(rows)
     secuencia = ["entrada", "almuerzo_out", "almuerzo_in", "salida"]
     if n < len(secuencia):
         return secuencia[n]
-    # Mas de 4 marcajes en un dia: marcaje extra
     return "extra"
 
 
@@ -159,7 +236,7 @@ def _insert_marcaje(ev: HikAcsEvent) -> bool:
     if empleado_id is None and ev.employee_no and ev.name:
         empleado_id = _auto_create_empleado(ev.employee_no, ev.name)
     fecha = ev.timestamp.date().isoformat()
-    tipo = _infer_tipo(empleado_id, fecha, ev.timestamp)
+    tipo = _infer_tipo(empleado_id, fecha, ev.timestamp, ev.attendance_status)
 
     conn = get_conn()
     try:
