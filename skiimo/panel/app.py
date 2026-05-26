@@ -32,6 +32,12 @@ _static_dir = BASE_DIR / "static"
 _static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
+# Fotos de marcajes del Hikvision: guardadas en /data/photos (mismo volume que la DB)
+from skiimo.config import DB_PATH as _DB_PATH
+_fotos_dir = _DB_PATH.parent / "photos"
+_fotos_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/photos", StaticFiles(directory=str(_fotos_dir)), name="photos")
+
 
 @app.on_event("startup")
 async def _startup() -> None:

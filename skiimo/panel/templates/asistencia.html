@@ -121,8 +121,8 @@
   <!-- Modal detalle de marcajes del día -->
   <div x-show="detalleOpen" x-transition.opacity
        class="fixed inset-0 bg-bg/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-       @keydown.escape.window="detalleOpen = false" style="display:none">
-    <div class="bg-surface ring-1 ring-border rounded-xl p-6 max-w-md w-full">
+       @keydown.escape.window="detalleOpen = false; fotoZoom = null" style="display:none">
+    <div class="bg-surface ring-1 ring-border rounded-xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
       <h3 class="text-base font-semibold mb-1" x-text="detalle.empleado_nombre"></h3>
       <p class="text-xs text-text-muted mb-4" x-text="detalle.fecha + ' · ' + diaSemana(detalle.fecha)"></p>
 
@@ -134,14 +134,41 @@
                     :class="etiquetaColor(m.etiqueta)" x-text="m.etiqueta"></span>
               <span class="tabular text-sm" x-text="formatTime(m.ts)"></span>
             </div>
-            <span class="text-[11px] text-text-muted truncate" x-text="m.metodo"></span>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-text-muted" x-text="metodoLabel(m)"></span>
+              <button x-show="fotoUrl(m)" @click="fotoZoom = fotoUrl(m)"
+                      class="text-xs text-accent hover:text-accent-hover"
+                      title="Ver foto del momento">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+              </button>
+            </div>
           </li>
         </template>
       </ul>
 
+
       <div class="flex justify-end mt-5">
         <button @click="detalleOpen = false" class="text-sm px-4 py-2 text-text-muted hover:text-text">Cerrar</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Lightbox foto -->
+  <div x-show="fotoZoom" x-transition.opacity
+       class="fixed inset-0 bg-bg/90 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
+       @click="fotoZoom = null" style="display:none">
+    <div class="relative max-w-2xl max-h-[90vh]">
+      <img :src="fotoZoom" class="max-w-full max-h-[85vh] rounded-xl shadow-2xl" alt="Foto del marcaje"
+           @error="fotoError = true" @load="fotoError = false">
+      <button @click="fotoZoom = null"
+              class="absolute -top-3 -right-3 bg-surface ring-1 ring-border rounded-full h-8 w-8 flex items-center justify-center hover:bg-surface-2">
+        ✕
+      </button>
+      <p x-show="fotoError" class="text-center text-xs text-warning mt-2">
+        No se pudo cargar la foto. Asegurate de estar en la red local del equipo.
+      </p>
     </div>
   </div>
 
@@ -158,6 +185,8 @@ function marcajesPage() {
     resumen: [],
     detalleOpen: false,
     detalle: {},
+    fotoZoom: null,
+    fotoError: false,
     filtro: {
       empleado_id: '',
       desde: '',
@@ -305,6 +334,40 @@ function marcajesPage() {
         'Salida intermedia': 'bg-accent/15 text-accent',
         'Regreso': 'bg-accent/15 text-accent',
       }[et] || 'bg-text-muted/15 text-text-muted';
+    },
+
+    metodoLabel(m) {
+      // Mapeo por minor (el subEventType del Hikvision indica exacto que se uso)
+      // 75 = face, 76 = fingerprint, 38 = card, 77 = PIN
+      const byMinor = {
+        75: '😊 Cara',
+        76: '👆 Huella',
+        77: '🔢 PIN',
+        38: '💳 Tarjeta',
+      };
+      if (m.minor && byMinor[m.minor]) return byMinor[m.minor];
+
+      // Fallback por el campo metodo si no tenemos minor
+      const v = (m.metodo || '').toLowerCase();
+      if (v.includes('face')) return '😊 Cara';
+      if (v.includes('fingerprint') || v.includes('fp')) return '👆 Huella';
+      if (v.includes('card')) return '💳 Tarjeta';
+      if (v.includes('pin') || v.includes('pw')) return '🔢 PIN';
+      if (v === 'manual') return '✏️ Manual';
+      if (v === 'invalid') return '— —';
+      return m.metodo || '—';
+    },
+
+    fotoUrl(m) {
+      if (!m.foto_url) return null;
+      // /photos/* = foto guardada en la VM (servida por el panel mismo)
+      if (m.foto_url.startsWith('/photos/')) return m.foto_url;
+      // URL absoluta
+      if (m.foto_url.startsWith('http')) return m.foto_url;
+      // Path relativo del equipo Hikvision (legacy)
+      const ip = localStorage.getItem('hik_local_ip') || '192.168.128.32';
+      const path = m.foto_url.startsWith('/') ? m.foto_url : '/' + m.foto_url;
+      return `http://${ip}${path}`;
     },
 
     exportarCSV() {

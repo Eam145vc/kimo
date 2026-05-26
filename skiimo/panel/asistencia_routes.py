@@ -1223,15 +1223,24 @@ async def api_limpiar_secundarios(session_token: str | None = Cookie(default=Non
 async def api_hik_event_receiver(request: Request):
     """Recibe eventos push del Hikvision configurado como ISUP Listening.
 
-    El equipo manda multipart/form-data con un campo JSON o XML
-    describiendo el evento. Si tiene foto, vienen partes binarias adicionales.
+    El equipo manda multipart/form-data con un campo JSON describiendo
+    el evento + 1 o mas partes binarias con las fotos del momento.
     """
     import json
+    import os
+    import uuid
+    from pathlib import Path
     from skiimo.hikvision import _event_from_raw
+    from skiimo.config import DB_PATH
 
     raw_payload: dict | None = None
+    foto_relativa: str | None = None  # path relativo desde /static
     content_type = (request.headers.get("content-type") or "").lower()
     _LAST_HIK_PAYLOAD["count"] += 1
+
+    # Directorio donde guardamos fotos. /data/photos al lado de la DB.
+    fotos_dir = Path(DB_PATH).parent / "photos"
+    fotos_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         if "json" in content_type:
@@ -1249,22 +1258,31 @@ async def api_hik_event_receiver(request: Request):
                 raw_payload = {"_raw_xml": text[:1000]}
         elif "multipart" in content_type:
             form = await request.form()
-            # Buscar el campo JSON principal (suele llamarse "event_log" o similar)
+            # Buscar el campo JSON principal + fotos en el mismo form
             for k, v in form.items():
-                if hasattr(v, "read"):  # es archivo
+                # Si es archivo (foto), guardarla
+                if hasattr(v, "read") and hasattr(v, "filename"):
+                    try:
+                        contenido = await v.read()
+                        if contenido and len(contenido) > 500:  # ignorar thumbnails vacios
+                            ext = ".jpg"
+                            if v.filename and "." in v.filename:
+                                ext = "." + v.filename.rsplit(".", 1)[-1].lower()
+                            fname = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{ext}"
+                            (fotos_dir / fname).write_bytes(contenido)
+                            foto_relativa = f"/photos/{fname}"
+                    except Exception:
+                        log.exception("Error guardando foto del push")
                     continue
                 s = str(v)
                 if s.startswith("{"):
                     try:
                         raw_payload = json.loads(s)
-                        break
                     except Exception:
                         pass
             if raw_payload is None:
-                # fallback: tomar todos los campos como dict
                 raw_payload = {k: str(v) for k, v in form.items() if not hasattr(v, "read")}
         else:
-            # Plain body, probemos JSON crudo
             body = (await request.body()).decode("utf-8", errors="ignore")
             try:
                 raw_payload = json.loads(body)
@@ -1319,6 +1337,8 @@ async def api_hik_event_receiver(request: Request):
 
     # Adaptar nombres de campos al formato esperado por _event_from_raw
     ts = raw_payload.get("dateTime") or acs.get("dateTime") or acs.get("time")
+    # Preferir foto del multipart (la que guardamos localmente). Si no, la URL del equipo.
+    pic = foto_relativa or acs.get("pictureURL")
     adapted = {
         "time": ts,
         "employeeNoString": acs.get("employeeNoString") or acs.get("employeeNo"),
@@ -1329,7 +1349,7 @@ async def api_hik_event_receiver(request: Request):
         "minor": acs.get("subEventType") or acs.get("minor") or 0,
         "currentVerifyMode": acs.get("currentVerifyMode"),
         "attendanceStatus": acs.get("attendanceStatus"),
-        "pictureURL": acs.get("pictureURL"),
+        "pictureURL": pic,
         "serialNo": acs.get("serialNo") or raw_payload.get("macAddress"),
     }
 
