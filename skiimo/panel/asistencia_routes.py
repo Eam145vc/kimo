@@ -142,6 +142,105 @@ def register_pages(app, templates) -> None:
 # =============================================================================
 
 
+@router.get("/api/asistencia/resumen-diario")
+async def api_resumen_diario(
+    session_token: str | None = Cookie(default=None),
+    empleado_id: int | None = None,
+    desde: str = "",
+    hasta: str = "",
+):
+    """Fase 1: Resumen simple por dia y empleado.
+
+    Devuelve para cada (empleado, fecha) en el rango:
+      - primera entrada (HH:MM)
+      - ultima salida (HH:MM)
+      - cantidad de marcajes
+      - horas trabajadas (ultima - primera, sin descontar almuerzo)
+
+    Filtros opcionales:
+      - empleado_id: solo ese empleado
+      - desde/hasta: rango de fechas (YYYY-MM-DD)
+
+    No hace calculo de horas extra ni recargos. Para eso ver fase 2.
+    """
+    _require_user(session_token)
+
+    # Sync oportunista al abrir la pagina
+    try:
+        sync_once()
+    except Exception:
+        log.exception("Sync oportunista fallo")
+
+    where = ["m.empleado_id IS NOT NULL"]
+    params: list[Any] = []
+    if empleado_id:
+        where.append("m.empleado_id = ?")
+        params.append(empleado_id)
+    if desde:
+        where.append("m.fecha >= ?")
+        params.append(desde)
+    if hasta:
+        where.append("m.fecha <= ?")
+        params.append(hasta)
+
+    sql = f"""
+        SELECT
+            m.empleado_id,
+            e.nombre AS empleado_nombre,
+            m.fecha,
+            MIN(m.ts) AS primera_ts,
+            MAX(m.ts) AS ultima_ts,
+            COUNT(*) AS cantidad_marcajes
+        FROM marcajes m
+        JOIN empleados e ON e.id = m.empleado_id
+        WHERE {' AND '.join(where)}
+        GROUP BY m.empleado_id, m.fecha
+        ORDER BY m.fecha DESC, e.nombre
+    """
+
+    conn = get_conn()
+    try:
+        rows = conn.execute(sql, tuple(params)).fetchall()
+    finally:
+        conn.close()
+
+    items = []
+    for r in rows:
+        primera_ts = r["primera_ts"]
+        ultima_ts = r["ultima_ts"]
+        primera_entrada = None
+        ultima_salida = None
+        horas = None
+        if primera_ts and ultima_ts and primera_ts != ultima_ts:
+            try:
+                t1 = datetime.fromisoformat(primera_ts)
+                t2 = datetime.fromisoformat(ultima_ts)
+                primera_entrada = t1.strftime("%H:%M:%S")
+                ultima_salida = t2.strftime("%H:%M:%S")
+                horas = round((t2 - t1).total_seconds() / 3600.0, 2)
+            except Exception:
+                pass
+        elif primera_ts:
+            # Solo 1 marcaje: lo mostramos como entrada
+            try:
+                t1 = datetime.fromisoformat(primera_ts)
+                primera_entrada = t1.strftime("%H:%M:%S")
+            except Exception:
+                pass
+
+        items.append({
+            "empleado_id": r["empleado_id"],
+            "empleado_nombre": r["empleado_nombre"],
+            "fecha": r["fecha"],
+            "primera_entrada": primera_entrada,
+            "ultima_salida": ultima_salida,
+            "horas": horas,
+            "cantidad_marcajes": r["cantidad_marcajes"],
+        })
+
+    return {"items": items}
+
+
 @router.get("/api/asistencia/hoy")
 async def api_asistencia_hoy(session_token: str | None = Cookie(default=None)):
     _require_user(session_token)

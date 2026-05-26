@@ -1,126 +1,114 @@
 {% extends "base.html" %}
-{% block title %}Asistencia hoy · Esskimo{% endblock %}
+{% block title %}Marcajes · Esskimo{% endblock %}
 
 {% block content %}
-<div x-data="asistenciaHoy()" x-init="init()">
+<div x-data="marcajesPage()" x-init="init()">
 
   <!-- Header -->
-  <div class="flex items-center justify-between mb-6">
+  <div class="flex items-center justify-between mb-4">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight">Asistencia hoy</h1>
-      <p class="text-xs text-text-muted mt-0.5" x-text="fechaPretty"></p>
+      <h1 class="text-xl font-semibold tracking-tight">Marcajes</h1>
+      <p class="text-xs text-text-muted mt-0.5">
+        Entradas y salidas registradas. Filtrá por empleado o rango de fechas.
+      </p>
     </div>
     <div class="flex items-center gap-2">
-      <span class="text-xs" x-show="equipoLoaded" :class="equipoColor()">
-        <span x-text="equipoLabel()"></span>
+      <span class="text-xs" x-show="equipoLoaded">
+        <span x-show="equipo.online" class="text-success">● Recibiendo</span>
+        <span x-show="!equipo.online" class="text-text-muted">○ Esperando</span>
       </span>
       <button @click="syncManual()" :disabled="syncing"
         class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-3 py-1.5 rounded-lg transition-all disabled:opacity-50">
-        <span x-show="!syncing">Sincronizar</span>
-        <span x-show="syncing">Sincronizando…</span>
+        <span x-show="!syncing">Actualizar</span>
+        <span x-show="syncing">...</span>
       </button>
     </div>
   </div>
 
-  <!-- KPIs -->
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
-      <p class="text-xs text-text-muted">Empleados activos</p>
-      <p class="text-2xl font-semibold mt-1 tabular" x-text="data.total_empleados"></p>
-    </div>
-    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
-      <p class="text-xs text-text-muted">Dentro ahora</p>
-      <p class="text-2xl font-semibold mt-1 tabular text-success" x-text="data.dentro?.length || 0"></p>
-    </div>
-    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
-      <p class="text-xs text-text-muted">Salieron</p>
-      <p class="text-2xl font-semibold mt-1 tabular text-text-muted" x-text="data.afuera?.length || 0"></p>
-    </div>
-    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
-      <p class="text-xs text-text-muted">No marcaron</p>
-      <p class="text-2xl font-semibold mt-1 tabular text-warning" x-text="data.no_marcaron?.length || 0"></p>
-    </div>
-  </div>
-
-  <!-- Listas -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
-      <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
-        <span class="h-2 w-2 rounded-full bg-success"></span> Dentro
-      </h3>
-      <template x-if="!data.dentro?.length">
-        <p class="text-xs text-text-muted">Nadie marcado adentro</p>
-      </template>
-      <ul class="space-y-1">
-        <template x-for="e in data.dentro" :key="e.id">
-          <li class="text-sm py-1 flex justify-between">
-            <span x-text="e.nombre"></span>
-            <span class="text-xs text-text-muted" x-text="e.cargo || ''"></span>
-          </li>
-        </template>
-      </ul>
-    </div>
-    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
-      <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
-        <span class="h-2 w-2 rounded-full bg-text-muted"></span> Ya salieron
-      </h3>
-      <template x-if="!data.afuera?.length">
-        <p class="text-xs text-text-muted">Aun nadie ha salido</p>
-      </template>
-      <ul class="space-y-1">
-        <template x-for="e in data.afuera" :key="e.id">
-          <li class="text-sm py-1" x-text="e.nombre"></li>
-        </template>
-      </ul>
-    </div>
-    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
-      <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
-        <span class="h-2 w-2 rounded-full bg-warning"></span> No marcaron
-      </h3>
-      <template x-if="!data.no_marcaron?.length">
-        <p class="text-xs text-text-muted">Todos marcaron</p>
-      </template>
-      <ul class="space-y-1">
-        <template x-for="e in data.no_marcaron" :key="e.id">
-          <li class="text-sm py-1" x-text="e.nombre"></li>
-        </template>
-      </ul>
+  <!-- Filtros -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-4 mb-4">
+    <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <div>
+        <label class="block text-[11px] text-text-muted mb-1">Empleado</label>
+        <select x-model="filtro.empleado_id" @change="cargar()" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm">
+          <option value="">Todos</option>
+          <template x-for="e in empleados" :key="e.id">
+            <option :value="e.id" x-text="e.nombre"></option>
+          </template>
+        </select>
+      </div>
+      <div>
+        <label class="block text-[11px] text-text-muted mb-1">Desde</label>
+        <input type="date" x-model="filtro.desde" @change="cargar()" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm tabular">
+      </div>
+      <div>
+        <label class="block text-[11px] text-text-muted mb-1">Hasta</label>
+        <input type="date" x-model="filtro.hasta" @change="cargar()" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm tabular">
+      </div>
+      <div class="flex items-end gap-2">
+        <button @click="setRango('hoy')" class="text-xs bg-surface-2 hover:bg-border px-2 py-1.5 rounded">Hoy</button>
+        <button @click="setRango('semana')" class="text-xs bg-surface-2 hover:bg-border px-2 py-1.5 rounded">Semana</button>
+        <button @click="setRango('mes')" class="text-xs bg-surface-2 hover:bg-border px-2 py-1.5 rounded">Mes</button>
+        <button @click="exportarCSV()" class="text-xs bg-accent hover:bg-accent-hover text-bg px-2 py-1.5 rounded ml-auto">CSV</button>
+      </div>
     </div>
   </div>
 
-  <!-- Marcajes -->
+  <!-- KPIs rapidos -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+    <div class="rounded-xl bg-surface ring-1 ring-border p-3">
+      <p class="text-[11px] text-text-muted">Empleados activos</p>
+      <p class="text-xl font-semibold mt-0.5 tabular" x-text="empleados.length"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-3">
+      <p class="text-[11px] text-text-muted">Días con marcajes</p>
+      <p class="text-xl font-semibold mt-0.5 tabular" x-text="resumen.length"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-3">
+      <p class="text-[11px] text-text-muted">Total marcajes</p>
+      <p class="text-xl font-semibold mt-0.5 tabular" x-text="totalMarcajes"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-3">
+      <p class="text-[11px] text-text-muted">Horas totales</p>
+      <p class="text-xl font-semibold mt-0.5 tabular" x-text="totalHoras.toFixed(1) + ' h'"></p>
+    </div>
+  </div>
+
+  <!-- Tabla principal: una fila por (empleado, dia) -->
   <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
-    <div class="px-4 py-3 border-b border-border/40 flex justify-between items-center">
-      <h3 class="text-sm font-semibold">Marcajes de hoy</h3>
-      <span class="text-xs text-text-muted" x-text="(data.marcajes?.length || 0) + ' eventos'"></span>
-    </div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-surface-2 text-text-muted">
           <tr>
-            <th class="text-left px-4 py-2 font-medium">Hora</th>
-            <th class="text-left px-4 py-2 font-medium">Empleado</th>
-            <th class="text-left px-4 py-2 font-medium">Tipo</th>
-            <th class="text-left px-4 py-2 font-medium">Metodo</th>
+            <th class="text-left px-4 py-3 font-medium">Fecha</th>
+            <th class="text-left px-3 py-3 font-medium">Día</th>
+            <th class="text-left px-3 py-3 font-medium">Empleado</th>
+            <th class="text-left px-3 py-3 font-medium">Entrada</th>
+            <th class="text-left px-3 py-3 font-medium">Salida</th>
+            <th class="text-right px-3 py-3 font-medium">Horas</th>
+            <th class="text-right px-3 py-3 font-medium">Marcajes</th>
+            <th class="text-left px-4 py-3 font-medium">Detalle</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-border/40">
           <template x-if="loading">
-            <tr><td colspan="4" class="text-center py-8 text-text-muted">Cargando…</td></tr>
+            <tr><td colspan="8" class="text-center py-10 text-text-muted">Cargando…</td></tr>
           </template>
-          <template x-if="!loading && !data.marcajes?.length">
-            <tr><td colspan="4" class="text-center py-8 text-text-muted">Sin marcajes hoy</td></tr>
+          <template x-if="!loading && !resumen.length">
+            <tr><td colspan="8" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
           </template>
-          <template x-for="m in data.marcajes" :key="m.id">
+          <template x-for="r in resumen" :key="r.fecha + '_' + r.empleado_id">
             <tr class="hover:bg-surface-2/30">
-              <td class="px-4 py-2 tabular text-text-muted" x-text="formatTime(m.ts)"></td>
-              <td class="px-4 py-2" x-text="m.empleado_nombre || ('Sin mapear (#' + m.hik_employee_no + ')')"></td>
-              <td class="px-4 py-2">
-                <span class="text-xs px-2 py-0.5 rounded-full"
-                      :class="tipoColor(m.tipo)"
-                      x-text="m.tipo"></span>
+              <td class="px-4 py-3 tabular" x-text="r.fecha"></td>
+              <td class="px-3 py-3 text-xs text-text-muted" x-text="diaSemana(r.fecha)"></td>
+              <td class="px-3 py-3" x-text="r.empleado_nombre"></td>
+              <td class="px-3 py-3 tabular text-success" x-text="r.primera_entrada || '—'"></td>
+              <td class="px-3 py-3 tabular text-warning" x-text="r.ultima_salida || '—'"></td>
+              <td class="px-3 py-3 text-right tabular" x-text="r.horas != null ? r.horas.toFixed(2) : '—'"></td>
+              <td class="px-3 py-3 text-right tabular text-text-muted" x-text="r.cantidad_marcajes"></td>
+              <td class="px-4 py-3">
+                <button @click="verDetalle(r)" class="text-xs text-accent hover:text-accent-hover">Ver marcajes</button>
               </td>
-              <td class="px-4 py-2 text-xs text-text-muted" x-text="m.metodo"></td>
             </tr>
           </template>
         </tbody>
@@ -128,94 +116,177 @@
     </div>
   </div>
 
+  <!-- Modal detalle de marcajes del día -->
+  <div x-show="detalleOpen" x-transition.opacity
+       class="fixed inset-0 bg-bg/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+       @keydown.escape.window="detalleOpen = false" style="display:none">
+    <div class="bg-surface ring-1 ring-border rounded-xl p-6 max-w-md w-full">
+      <h3 class="text-base font-semibold mb-1" x-text="detalle.empleado_nombre"></h3>
+      <p class="text-xs text-text-muted mb-4" x-text="detalle.fecha + ' · ' + diaSemana(detalle.fecha)"></p>
+
+      <ul class="space-y-2">
+        <template x-for="m in detalle.marcajes || []" :key="m.id">
+          <li class="flex items-center justify-between bg-surface-2 rounded px-3 py-2">
+            <span class="tabular text-sm" x-text="formatTime(m.ts)"></span>
+            <span class="text-xs text-text-muted" x-text="m.metodo"></span>
+          </li>
+        </template>
+      </ul>
+
+      <div class="flex justify-end mt-5">
+        <button @click="detalleOpen = false" class="text-sm px-4 py-2 text-text-muted hover:text-text">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
-function asistenciaHoy() {
+function marcajesPage() {
   return {
     loading: true,
     syncing: false,
     equipoLoaded: false,
     equipo: { online: false },
-    data: { dentro: [], afuera: [], no_marcaron: [], marcajes: [] },
-    fechaPretty: '',
+    empleados: [],
+    resumen: [],
+    detalleOpen: false,
+    detalle: {},
+    filtro: {
+      empleado_id: '',
+      desde: '',
+      hasta: ''
+    },
 
     async init() {
-      this.fechaPretty = new Date().toLocaleDateString('es-CO', {
-        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
-      });
-      await Promise.all([this.cargar(), this.cargarEquipo()]);
-      setInterval(() => this.cargar(), 60_000);
+      this.setRango('semana');
+      await Promise.all([
+        this.cargarEmpleados(),
+        this.cargarEquipoStatus()
+      ]);
+      // cargar() se llama desde setRango()
+    },
+
+    async cargarEmpleados() {
+      const r = await fetch('/api/empleados');
+      const j = await r.json();
+      this.empleados = (j.items || []).filter(e => e.activo);
+    },
+
+    async cargarEquipoStatus() {
+      try {
+        const r = await fetch('/api/asistencia/equipo/status');
+        this.equipo = await r.json();
+      } catch (e) {}
+      this.equipoLoaded = true;
     },
 
     async cargar() {
       this.loading = true;
       try {
-        const r = await fetch('/api/asistencia/hoy');
-        this.data = await r.json();
+        const params = new URLSearchParams();
+        if (this.filtro.empleado_id) params.set('empleado_id', this.filtro.empleado_id);
+        if (this.filtro.desde) params.set('desde', this.filtro.desde);
+        if (this.filtro.hasta) params.set('hasta', this.filtro.hasta);
+        const r = await fetch('/api/asistencia/resumen-diario?' + params);
+        const j = await r.json();
+        this.resumen = j.items || [];
       } catch (e) { console.error(e); }
       this.loading = false;
-    },
-
-    async cargarEquipo() {
-      try {
-        const r = await fetch('/api/asistencia/equipo/status');
-        this.equipo = await r.json();
-      } catch (e) { console.error(e); }
-      this.equipoLoaded = true;
     },
 
     async syncManual() {
       this.syncing = true;
       try {
-        await fetch('/api/asistencia/sync', { method: 'POST' });
         await this.cargar();
-      } catch (e) { console.error(e); }
+        await this.cargarEquipoStatus();
+      } catch (e) {}
       this.syncing = false;
     },
 
-    formatTime(ts) {
-      if (!ts) return '';
-      try {
-        const d = new Date(ts);
-        return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      } catch { return ts; }
-    },
-
-    tipoColor(tipo) {
-      return {
-        'entrada': 'bg-success/15 text-success',
-        'salida': 'bg-text-muted/15 text-text-muted',
-        'almuerzo_out': 'bg-warning/15 text-warning',
-        'almuerzo_in': 'bg-accent/15 text-accent',
-        'extra': 'bg-warning/15 text-warning',
-        'desconocido': 'bg-danger/15 text-danger'
-      }[tipo] || 'bg-text-muted/15 text-text-muted';
-    },
-
-    equipoColor() {
-      if (!this.equipoLoaded) return 'text-text-muted';
-      if (this.equipo.online && this.equipo.modo === 'direct') return 'text-success';
-      if (this.equipo.online && this.equipo.modo === 'push') return 'text-success';
-      if (this.equipo.modo === 'esperando') return 'text-text-muted';
-      return 'text-warning';
-    },
-
-    equipoLabel() {
-      if (!this.equipoLoaded) return '';
-      const m = this.equipo;
-      if (m.online && m.modo === 'direct') return `Equipo ● ${m.model || 'conectado'}`;
-      if (m.online && m.modo === 'push') return `Equipo ● recibiendo (push)`;
-      if (m.modo === 'esperando') return `Esperando primer marcaje`;
-      if (!m.online) {
-        if (m.ultimo_marcaje) {
-          const t = new Date(m.ultimo_marcaje);
-          const min = Math.round((Date.now() - t.getTime()) / 60000);
-          return `Sin actividad hace ${min} min`;
-        }
-        return 'Sin actividad';
+    setRango(tipo) {
+      const hoy = new Date();
+      const fmt = d => d.toISOString().slice(0, 10);
+      if (tipo === 'hoy') {
+        this.filtro.desde = fmt(hoy);
+        this.filtro.hasta = fmt(hoy);
+      } else if (tipo === 'semana') {
+        const ini = new Date(hoy);
+        ini.setDate(hoy.getDate() - 7);
+        this.filtro.desde = fmt(ini);
+        this.filtro.hasta = fmt(hoy);
+      } else if (tipo === 'mes') {
+        const ini = new Date(hoy);
+        ini.setDate(1);
+        this.filtro.desde = fmt(ini);
+        this.filtro.hasta = fmt(hoy);
       }
-      return 'Equipo';
+      this.cargar();
+    },
+
+    get totalMarcajes() {
+      return this.resumen.reduce((s, r) => s + (r.cantidad_marcajes || 0), 0);
+    },
+
+    get totalHoras() {
+      return this.resumen.reduce((s, r) => s + (r.horas || 0), 0);
+    },
+
+    diaSemana(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso + 'T12:00:00');
+        return d.toLocaleDateString('es-CO', { weekday: 'short' });
+      } catch { return ''; }
+    },
+
+    formatTime(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleTimeString('es-CO', {
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+      } catch { return iso; }
+    },
+
+    async verDetalle(r) {
+      this.detalle = { ...r, marcajes: [] };
+      const params = new URLSearchParams();
+      params.set('empleado_id', r.empleado_id);
+      params.set('desde', r.fecha);
+      params.set('hasta', r.fecha);
+      params.set('page_size', '50');
+      try {
+        const resp = await fetch('/api/asistencia/marcajes?' + params);
+        const j = await resp.json();
+        this.detalle.marcajes = (j.items || []).sort((a, b) => a.ts.localeCompare(b.ts));
+      } catch (e) {}
+      this.detalleOpen = true;
+    },
+
+    exportarCSV() {
+      if (!this.resumen.length) return;
+      const headers = ['Fecha', 'Dia', 'Empleado', 'Entrada', 'Salida', 'Horas', 'Marcajes'];
+      const rows = [headers.join(',')];
+      for (const r of this.resumen) {
+        rows.push([
+          r.fecha,
+          this.diaSemana(r.fecha),
+          '"' + (r.empleado_nombre || '').replace(/"/g, '""') + '"',
+          r.primera_entrada || '',
+          r.ultima_salida || '',
+          r.horas != null ? r.horas.toFixed(2) : '',
+          r.cantidad_marcajes
+        ].join(','));
+      }
+      const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `marcajes_${this.filtro.desde}_${this.filtro.hasta}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
     }
   };
 }
