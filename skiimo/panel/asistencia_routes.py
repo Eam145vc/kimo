@@ -246,7 +246,12 @@ async def api_empleados_list(session_token: str | None = Cookie(default=None)):
 
 @router.get("/api/empleados/hik")
 async def api_empleados_hik(session_token: str | None = Cookie(default=None)):
-    """Lista las personas registradas en el equipo Hikvision (para mapear)."""
+    """Lista las personas registradas en el equipo Hikvision (para mapear).
+
+    Solo funciona si la VM tiene HIK_HOST configurado y alcanza al equipo
+    directamente (LAN). En despliegue normal (equipo detras de NAT) la VM
+    NO puede llegar, hay que usar POST /api/empleados/sync-hik desde el navegador.
+    """
     _require_user(session_token)
     try:
         with HikClient() as hik:
@@ -263,6 +268,134 @@ async def api_empleados_hik(session_token: str | None = Cookie(default=None)):
             }
             for p in persons
         ]
+    }
+
+
+class HikPersonImport(BaseModel):
+    employeeNo: str
+    name: str | None = None
+    department: str | None = None
+    gender: str | None = None
+    cardNo: str | None = None
+    has_face: bool = False
+    has_fingerprint: bool = False
+
+
+class SyncHikPayload(BaseModel):
+    persons: list[HikPersonImport]
+
+
+class SyncHikFromDevice(BaseModel):
+    """El admin manda credenciales para que el PANEL (no el navegador) jale del equipo.
+
+    Solo funciona cuando el admin esta en la misma red que el equipo y la VM
+    NO. Pero entonces como funciona? El usuario apreta en su navegador, el
+    request llega al PANEL en la VM, y el panel intenta llegar al equipo.
+    Solo funciona si la VM esta en la misma LAN.
+
+    Alternativa real: hacer fetch DIRECTO desde el navegador al equipo,
+    y mandar el resultado al panel. Por eso este endpoint NO se usa: ver
+    /api/empleados/sync-hik que recibe el payload ya extraido.
+    """
+    ip: str
+    port: int = 80
+    user: str = "admin"
+    password: str
+
+
+@router.post("/api/empleados/sync-hik")
+async def api_empleados_sync_hik(
+    payload: SyncHikPayload,
+    session_token: str | None = Cookie(default=None),
+):
+    """Recibe la lista de personas desde el navegador del usuario.
+
+    El navegador (que SI esta en la red del equipo Hikvision) llamo antes a
+    `http://<ip-equipo>/ISAPI/AccessControl/UserInfo/Search` y nos pasa el
+    JSON ya parseado aca para que lo guardemos.
+
+    Comportamiento:
+      - Si existe empleado con ese hik_employee_no -> actualiza nombre/cargo si vinieron.
+      - Si NO existe -> crea con defaults.
+      - Mapea marcajes huerfanos que tengan ese hik_employee_no.
+    """
+    _require_user(session_token)
+    from skiimo.asistencia.config import DEFAULTS
+
+    now = datetime.utcnow().isoformat()
+    sal_default = DEFAULTS["salario_minimo_2026"]
+    valor_hora_default = round(sal_default / DEFAULTS["horas_legales_mes"])
+
+    creados = 0
+    actualizados = 0
+    marcajes_mapeados = 0
+
+    conn = get_conn()
+    try:
+        for p in payload.persons:
+            if not p.employeeNo:
+                continue
+            nombre = (p.name or f"Empleado #{p.employeeNo}").strip()
+            if nombre.islower():
+                nombre = " ".join(w.capitalize() for w in nombre.split())
+
+            row = conn.execute(
+                "SELECT id FROM empleados WHERE hik_employee_no = ?", (p.employeeNo,)
+            ).fetchone()
+
+            if row:
+                # Actualizar nombre solo si esta vacio o decia 'Pendiente revision'
+                conn.execute(
+                    """UPDATE empleados SET
+                         nombre = CASE
+                            WHEN nombre IS NULL OR nombre = '' OR nombre LIKE 'Empleado #%' THEN ?
+                            ELSE nombre
+                         END,
+                         cargo = COALESCE(NULLIF(cargo, 'Pendiente revision'), ?),
+                         updated_at = ?
+                       WHERE id = ?""",
+                    (nombre, p.department or "Pendiente revision", now, row["id"]),
+                )
+                actualizados += 1
+                emp_id = row["id"]
+            else:
+                cur = conn.execute(
+                    """INSERT INTO empleados (hik_employee_no, nombre, cargo,
+                                               salario_mensual, valor_hora_ord,
+                                               activo, observaciones, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+                    (
+                        p.employeeNo,
+                        nombre,
+                        p.department or "Pendiente",
+                        sal_default,
+                        valor_hora_default,
+                        "sincronizado desde equipo Hikvision",
+                        now,
+                        now,
+                    ),
+                )
+                creados += 1
+                emp_id = cur.lastrowid
+
+            # Mapear marcajes huerfanos
+            cur = conn.execute(
+                """UPDATE marcajes SET empleado_id = ?
+                   WHERE empleado_id IS NULL AND hik_employee_no = ?""",
+                (emp_id, p.employeeNo),
+            )
+            marcajes_mapeados += cur.rowcount
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "ok": True,
+        "creados": creados,
+        "actualizados": actualizados,
+        "marcajes_mapeados": marcajes_mapeados,
+        "total_procesados": len(payload.persons),
     }
 
 

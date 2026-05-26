@@ -79,6 +79,60 @@ def _resolve_empleado_id(hik_employee_no: str | None) -> int | None:
         conn.close()
 
 
+def _auto_create_empleado(hik_employee_no: str, nombre_hik: str | None) -> int | None:
+    """Crea un empleado automaticamente cuando llega un marcaje de un ID nuevo.
+
+    Usa el nombre que vino del equipo (puede estar en minusculas). El usuario
+    luego puede editarlo desde /empleados. Cargo queda 'Pendiente revision'.
+    """
+    if not hik_employee_no:
+        return None
+
+    from skiimo.asistencia.config import DEFAULTS
+
+    nombre = (nombre_hik or f"Empleado #{hik_employee_no}").strip()
+    # Capitalizar nombre si vino todo en minusculas
+    if nombre.islower():
+        nombre = " ".join(w.capitalize() for w in nombre.split())
+
+    sal = DEFAULTS["salario_minimo_2026"]
+    valor_hora = round(sal / DEFAULTS["horas_legales_mes"])
+
+    now = datetime.now(TZ_BOGOTA).isoformat()
+    conn = get_conn()
+    try:
+        try:
+            cur = conn.execute(
+                """INSERT INTO empleados (hik_employee_no, nombre, cargo, salario_mensual,
+                                           valor_hora_ord, activo, observaciones,
+                                           created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+                (
+                    hik_employee_no,
+                    nombre,
+                    "Pendiente revision",
+                    sal,
+                    valor_hora,
+                    "auto-creado desde push del equipo",
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+        except Exception as e:
+            # Race condition: alguien lo creo entre el SELECT y el INSERT
+            if "UNIQUE" in str(e):
+                row = conn.execute(
+                    "SELECT id FROM empleados WHERE hik_employee_no = ?",
+                    (hik_employee_no,),
+                ).fetchone()
+                return row["id"] if row else None
+            raise
+    finally:
+        conn.close()
+
+
 def _infer_tipo(empleado_id: int | None, fecha: str, ts: datetime) -> str:
     """Heuristica simple para clasificar el marcaje. Mejorable con `attendanceStatus`."""
     if empleado_id is None:
@@ -106,6 +160,11 @@ def _infer_tipo(empleado_id: int | None, fecha: str, ts: datetime) -> str:
 def _insert_marcaje(ev: HikAcsEvent) -> bool:
     """Devuelve True si se inserto, False si era duplicado."""
     empleado_id = _resolve_empleado_id(ev.employee_no)
+    # Auto-crear empleado si vino employeeNo pero no estaba en la DB todavia.
+    # Solo crear si vino con nombre (para no crear empleados fantasma por eventos
+    # secundarios como 'puerta abierta' que llegan con employeeNo en blanco).
+    if empleado_id is None and ev.employee_no and ev.name:
+        empleado_id = _auto_create_empleado(ev.employee_no, ev.name)
     fecha = ev.timestamp.date().isoformat()
     tipo = _infer_tipo(empleado_id, fecha, ev.timestamp)
 

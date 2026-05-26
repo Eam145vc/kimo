@@ -42,6 +42,14 @@ DEFAULTS: dict[str, Any] = {
     # Sync
     "sync_interval_minutes": 3,                    # cada cuanto jala marcajes
     "sync_backfill_horas": 24,                     # ventana inicial de backfill
+
+    # Equipo Hikvision (IP local en la red de la fabrica)
+    # Esta IP la usa el NAVEGADOR del admin (no la VM) cuando sincroniza empleados.
+    # En la VM solo sirve si HIK_HOST esta en el .env. En el browser, se usa esta config.
+    "hik_local_ip": "",                            # ej: 192.168.128.32
+    "hik_local_port": 80,
+    "hik_local_user": "admin",
+    # password NO se guarda en DB. El usuario la pone cada vez que sincroniza.
 }
 
 

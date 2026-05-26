@@ -11,8 +11,9 @@
       <p class="text-xs text-text-muted mt-0.5">Operarios registrados para asistencia</p>
     </div>
     <div class="flex gap-2">
-      <button @click="cargarHik()" class="text-sm bg-surface-2 hover:bg-border text-text px-3 py-1.5 rounded-lg">
-        Ver personas en equipo
+      <button @click="openSyncModal()" class="text-sm bg-surface-2 hover:bg-border text-text px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Sincronizar del equipo
       </button>
       <button @click="openCreate()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg">
         + Nuevo empleado
@@ -22,11 +23,11 @@
 
   <!-- Info -->
   <div class="rounded-xl bg-accent/5 ring-1 ring-accent/20 p-4 mb-4 text-sm text-text-muted">
-    <p class="font-medium text-text mb-1">Como mapear empleados</p>
+    <p class="font-medium text-text mb-1">Como funciona</p>
     <ol class="list-decimal list-inside space-y-0.5 text-xs">
-      <li>Registra al empleado en el equipo Hikvision (cara/huella). Obtiene un <strong>ID</strong> ahi.</li>
-      <li>Aca creas el empleado con su <strong>nombre real</strong> y pones ese mismo ID en <strong>Hik Employee No</strong>.</li>
-      <li>A partir de ese momento sus marcajes apareceran asociados a su nombre.</li>
+      <li>Registra empleados en el equipo Hikvision (cara/huella). Cada uno obtiene un <strong>ID</strong>.</li>
+      <li>Apreta <strong>Sincronizar del equipo</strong> (desde la red local del equipo) y trae todos automaticamente.</li>
+      <li>Alternativamente: cuando alguien marca por primera vez, se crea solo con su nombre.</li>
     </ol>
   </div>
 
@@ -124,24 +125,51 @@
     </div>
   </div>
 
-  <!-- Modal Hik -->
-  <div x-show="hikModalOpen" x-transition.opacity
+  <!-- Modal Sincronizar -->
+  <div x-show="syncModalOpen" x-transition.opacity
        class="fixed inset-0 bg-bg/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-       @keydown.escape.window="hikModalOpen = false" style="display:none">
+       @keydown.escape.window="syncModalOpen = false" style="display:none">
     <div class="bg-surface ring-1 ring-border rounded-xl p-6 max-w-md w-full">
-      <h3 class="text-lg font-semibold mb-3">Personas en el equipo Hikvision</h3>
-      <p class="text-xs text-text-muted mb-3">Estos son los IDs que ves al registrar caras/huellas en el equipo.</p>
-      <ul class="space-y-1 max-h-96 overflow-y-auto">
-        <template x-for="p in hikPersons" :key="p.employeeNo">
-          <li class="text-sm py-2 px-3 bg-surface-2 rounded flex justify-between">
-            <span class="tabular">#<span x-text="p.employeeNo"></span></span>
-            <span class="text-text-muted" x-text="p.name || '(sin nombre)'"></span>
-          </li>
-        </template>
-      </ul>
-      <div class="flex justify-end mt-4">
-        <button @click="hikModalOpen = false" class="text-sm px-4 py-2 text-text-muted hover:text-text">Cerrar</button>
+      <h3 class="text-lg font-semibold mb-2">Sincronizar empleados del equipo</h3>
+      <p class="text-xs text-text-muted mb-4">
+        Tu navegador va a conectarse al equipo en la red local y traer todos los empleados.
+        <strong>Importante:</strong> tu PC debe estar en la misma red WiFi que el equipo Hikvision.
+      </p>
+
+      <div class="space-y-3 text-sm">
+        <div>
+          <label class="block text-xs text-text-muted mb-1">IP del equipo en la red local</label>
+          <input x-model="sync.ip" placeholder="192.168.128.32" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Usuario</label>
+            <input x-model="sync.user" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Password</label>
+            <input x-model="sync.password" type="password" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
+          </div>
+        </div>
       </div>
+
+      <div x-show="sync.estado" class="mt-3 text-xs p-3 rounded"
+           :class="sync.error ? 'bg-danger/10 text-danger' : 'bg-success/10 text-success'">
+        <span x-text="sync.estado"></span>
+      </div>
+
+      <div class="flex justify-between mt-5">
+        <button @click="syncModalOpen = false" class="text-sm px-4 py-2 text-text-muted hover:text-text">Cerrar</button>
+        <button @click="ejecutarSync()" :disabled="sync.running"
+                class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+          <span x-show="!sync.running">Sincronizar ahora</span>
+          <span x-show="sync.running">Sincronizando…</span>
+        </button>
+      </div>
+
+      <p class="text-[10px] text-text-muted mt-3">
+        Las credenciales NO se guardan. Solo se usan para esta sincronizacion desde tu navegador.
+      </p>
     </div>
   </div>
 </div>
@@ -151,9 +179,16 @@ function empleadosPage() {
   return {
     items: [],
     modalOpen: false,
-    hikModalOpen: false,
-    hikPersons: [],
+    syncModalOpen: false,
     form: { id: null, nombre: '', cedula: '', cargo: '', hik_employee_no: '', salario_mensual: null, fecha_ingreso: '', telegram_chat_id: '' },
+    sync: {
+      ip: localStorage.getItem('hik_local_ip') || '192.168.128.32',
+      user: localStorage.getItem('hik_local_user') || 'admin',
+      password: '',
+      running: false,
+      estado: '',
+      error: false,
+    },
 
     async init() { await this.cargar(); },
 
@@ -197,14 +232,107 @@ function empleadosPage() {
       await this.cargar();
     },
 
-    async cargarHik() {
+    openSyncModal() {
+      this.sync.estado = '';
+      this.sync.error = false;
+      this.syncModalOpen = true;
+    },
+
+    async ejecutarSync() {
+      if (!this.sync.ip || !this.sync.password) {
+        this.sync.estado = 'IP y password obligatorios';
+        this.sync.error = true;
+        return;
+      }
+      // Guardar IP y user para proxima vez (NO password)
+      localStorage.setItem('hik_local_ip', this.sync.ip);
+      localStorage.setItem('hik_local_user', this.sync.user);
+
+      this.sync.running = true;
+      this.sync.estado = 'Conectando al equipo...';
+      this.sync.error = false;
+
       try {
-        const r = await fetch('/api/empleados/hik');
-        if (!r.ok) { alert('No se pudo conectar al equipo Hikvision'); return; }
-        const j = await r.json();
-        this.hikPersons = j.items || [];
-        this.hikModalOpen = true;
-      } catch (e) { alert('Error: ' + e); }
+        // Llamar directo al equipo desde el navegador (digest auth lo maneja browser)
+        const url = `http://${this.sync.ip}/ISAPI/AccessControl/UserInfo/Search?format=json`;
+        const body = JSON.stringify({
+          UserInfoSearchCond: {
+            searchID: 'panel-sync-' + Date.now(),
+            searchResultPosition: 0,
+            maxResults: 500
+          }
+        });
+
+        // El browser maneja digest auth automaticamente si pasamos credentials
+        // El truco: ponerlos en la URL no es seguro y no funciona en fetch moderno.
+        // En su lugar: usar fetch con Authorization Basic primero (la mayoria de Hik acepta basic si esta habilitado).
+        // Si no, el browser muestra el dialogo de auth y el usuario re-ingresa.
+        const auth = btoa(`${this.sync.user}:${this.sync.password}`);
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Basic ' + auth,
+          },
+          body,
+        });
+
+        if (!resp.ok) {
+          if (resp.status === 401) {
+            this.sync.estado = 'Credenciales invalidas (o el equipo requiere Digest Auth, que el navegador no puede usar via fetch). Probá habilitar Basic Auth en el equipo: Configuration → System → Security → Authentication → Web Authentication: digest/basic.';
+          } else {
+            this.sync.estado = `Error HTTP ${resp.status}. ¿Estas en la misma red que el equipo?`;
+          }
+          this.sync.error = true;
+          return;
+        }
+
+        const data = await resp.json();
+        const search = data.UserInfoSearch || {};
+        const users = search.UserInfo || [];
+        const personsArray = Array.isArray(users) ? users : [users];
+
+        if (!personsArray.length) {
+          this.sync.estado = 'El equipo respondio sin personas registradas.';
+          this.sync.error = true;
+          return;
+        }
+
+        // Adaptar al formato esperado por el endpoint del panel
+        const persons = personsArray.map(u => ({
+          employeeNo: String(u.employeeNo || u.employeeNoString || ''),
+          name: u.name || null,
+          department: u.belongGroup || u.userGroup || null,
+          gender: u.gender || null,
+        })).filter(p => p.employeeNo);
+
+        this.sync.estado = `${persons.length} personas detectadas, guardando en el panel...`;
+
+        // Mandar a la VM
+        const saveResp = await fetch('/api/empleados/sync-hik', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ persons })
+        });
+
+        if (!saveResp.ok) {
+          this.sync.estado = 'Error guardando en el panel';
+          this.sync.error = true;
+          return;
+        }
+
+        const result = await saveResp.json();
+        this.sync.estado = `✓ ${result.creados} creados, ${result.actualizados} actualizados, ${result.marcajes_mapeados} marcajes mapeados`;
+        await this.cargar();
+        // No cerrar modal inmediatamente para que el usuario vea el resultado
+        setTimeout(() => { this.syncModalOpen = false; this.sync.password = ''; }, 3000);
+
+      } catch (e) {
+        this.sync.estado = 'Error: ' + e.message + '. Posibles causas: navegador no esta en la misma red que el equipo, o el equipo no permite CORS desde otro origen. Intenta usando el sistema desde la red local de la fabrica.';
+        this.sync.error = true;
+      } finally {
+        this.sync.running = false;
+      }
     },
 
     fmtMoney(v) {
