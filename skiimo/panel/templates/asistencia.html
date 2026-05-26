@@ -314,14 +314,13 @@ function marcajesPage() {
       if (n <= 4 && etiquetas[n]) {
         return marcajes.map((m, i) => ({ ...m, etiqueta: etiquetas[n][i] }));
       }
-      // Si hay mas de 4: primero entrada, ultimo salida, intermedios son
-      // pares de salida/entrada (almuerzos o pausas)
+      // Si hay mas de 4 marcajes: probable que esten haciendo pruebas o
+      // marcaron de mas. Solo el 1ro y el ultimo tienen significado claro.
+      // El resto va como 'Marca extra'.
       return marcajes.map((m, i) => {
         if (i === 0) return { ...m, etiqueta: 'Entrada' };
         if (i === n - 1) return { ...m, etiqueta: 'Salida' };
-        // Intermedio: alternar salida/entrada
-        const esSalida = (i % 2 === 1);
-        return { ...m, etiqueta: esSalida ? 'Salida intermedia' : 'Regreso' };
+        return { ...m, etiqueta: 'Marca extra' };
       });
     },
 
@@ -331,8 +330,7 @@ function marcajesPage() {
         'Salida': 'bg-warning/15 text-warning',
         'Salida almuerzo': 'bg-accent/15 text-accent',
         'Regreso almuerzo': 'bg-accent/15 text-accent',
-        'Salida intermedia': 'bg-accent/15 text-accent',
-        'Regreso': 'bg-accent/15 text-accent',
+        'Marca extra': 'bg-text-muted/15 text-text-muted',
       }[et] || 'bg-text-muted/15 text-text-muted';
     },
 
