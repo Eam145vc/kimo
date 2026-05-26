@@ -100,6 +100,14 @@ REGLAS:
 - Si dice "cuanto cuesta X" / "precio de X" -> consultar_precio()
 - Si dice "cambiar precio de X" / "X ahora cuesta Y" / "subir precio X a Y" -> cambiar_precio()
   (Solo admin. Si el rol no es admin, decir 'solo el admin puede cambiar precios').
+- Si habla de UN GRUPO entero (no producto individual): 'todos los sachets a 3 mil mayorista',
+  'todas las bolsas 6L con licor: detal 26 mayor 24 distrib 20',
+  'sube 5% mayorista de los sachets',
+  'baja 10% distribuidor de perlas 1200gr'
+  -> cambiar_precios_grupo(). Precio interpretado SIEMPRE con IVA, '3 mil' = 3000.
+  Grupos validos: bolsas 6L (con/sin licor), cremosos, sachets (con/sin licor),
+  perlas (350/1200/3400)gr, gelatinas (330/1200/2300)gr, siropes (360/1000)ml,
+  sales (250/500)gr. Solo admin.
 - Si dice "X es mayorista/distribuidor" / "X pasa a Y" -> cambiar_categoria_cliente() (solo admin).
 - Si el ULTIMO turno del bot mostro un resumen de pedido y el usuario pide cambios
   sobre un item (ej "el chicle a 25", "que sean 5 cremosos", "cambia el precio del

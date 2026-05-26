@@ -1179,6 +1179,261 @@ def cambiar_precio(
     }
 
 
+def cambiar_precios_grupo(
+    grupo: str,
+    detal: float | None = None,
+    mayorista: float | None = None,
+    distribuidor: float | None = None,
+    aumento_pct: float | None = None,
+    actor: str = "chat",
+) -> dict:
+    """Cambia precios oficiales de TODO un grupo de productos al mismo precio.
+
+    Usar cuando el usuario dice cosas como:
+      - 'pon todos los sachets con licor mayorista a 2000'
+      - 'todas las bolsas 6L con licor detal 26 mayor 24 distrib 20'
+      - 'sube 5% mayorista de todos los sachets' (aumento_pct=5)
+      - 'baja 10% distribuidor de las perlas 1200gr' (aumento_pct=-10)
+
+    Args:
+      grupo: filtro del grupo. Ejemplos validos:
+        'bolsas 6L con licor', 'bolsas 6L sin licor',
+        'cremosos',
+        'sachets con licor', 'sachets sin licor', 'sachets' (todos),
+        'perlas 350gr', 'perlas 1200gr', 'perlas 3400gr', 'perlas' (todas),
+        'gelatinas 330gr', 'gelatinas 1200gr', 'gelatinas 2300gr', 'gelatinas',
+        'siropes 360ml', 'siropes 1000ml', 'siropes',
+        'sales 250gr', 'sales 500gr', 'sales'.
+      detal / mayorista / distribuidor: precio CON IVA para cada lista.
+        Solo se actualizan las listas que se especifiquen (no-None).
+      aumento_pct: alternativa a precios absolutos. Aplica un % al precio actual.
+        Positivo sube, negativo baja. Si se usa, ignora detal/mayorista/distribuidor.
+
+    Devuelve: {ok, grupo, productos_afectados, listas_cambiadas, detalle}
+    """
+    # Mapeo grupo -> filtro SQL
+    g = (grupo or "").lower().strip()
+
+    def match_filtro() -> tuple[str, str, list]:
+        """Devuelve (where_clause, descripcion, params)."""
+        # Bolsas 6L
+        if "bolsa" in g and ("con licor" in g or ("sin licor" not in g and ("6l" in g or "6 l" in g))):
+            if "sin licor" in g:
+                return (
+                    "account_group_name = 'BOLSAS PARA GRANIZADORAS SIN LICOR'", "Bolsas 6L sin licor", []
+                )
+            return (
+                "account_group_name = 'BOLSAS PARA GRANIZADORAS CON LICOR'", "Bolsas 6L con licor", []
+            )
+        if "bolsa" in g and "sin licor" in g:
+            return (
+                "account_group_name = 'BOLSAS PARA GRANIZADORAS SIN LICOR'", "Bolsas 6L sin licor", []
+            )
+        if "cremoso" in g:
+            return ("account_group_name = 'CREMOSOS'", "Cremosos", [])
+        if "sachet" in g:
+            if "sin licor" in g:
+                return (
+                    "account_group_name = 'SACHETS 08 OZ' AND (UPPER(name) LIKE '%SIN LICOR%' OR UPPER(name) LIKE '%SIN LIC%')",
+                    "Sachets 8 oz sin licor", [],
+                )
+            if "con licor" in g:
+                return (
+                    "account_group_name = 'SACHETS 08 OZ' AND UPPER(name) NOT LIKE '%SIN LICOR%' AND UPPER(name) NOT LIKE '%SIN LIC%'",
+                    "Sachets 8 oz con licor", [],
+                )
+            return ("account_group_name = 'SACHETS 08 OZ'", "Sachets 8 oz (todos)", [])
+        if "perla" in g:
+            if "350" in g:
+                return (
+                    "account_group_name = 'PERLAS EXPLOSIVAS' AND name LIKE '%350%'",
+                    "Perlas 350 gr", [],
+                )
+            if "1200" in g:
+                return (
+                    "account_group_name = 'PERLAS EXPLOSIVAS' AND name LIKE '%1200%'",
+                    "Perlas 1200 gr", [],
+                )
+            if "3400" in g:
+                return (
+                    "account_group_name = 'PERLAS EXPLOSIVAS' AND name LIKE '%3400%'",
+                    "Perlas 3400 gr", [],
+                )
+            return ("account_group_name = 'PERLAS EXPLOSIVAS'", "Perlas (todas)", [])
+        if "gelatina" in g:
+            if "330" in g:
+                return ("account_group_name = 'GELATINAS' AND name LIKE '%330%'", "Gelatinas 330 gr", [])
+            if "1200" in g:
+                return ("account_group_name = 'GELATINAS' AND name LIKE '%1200%'", "Gelatinas 1200 gr", [])
+            if "2300" in g:
+                return ("account_group_name = 'GELATINAS' AND name LIKE '%2300%'", "Gelatinas 2300 gr", [])
+            return ("account_group_name = 'GELATINAS'", "Gelatinas (todas)", [])
+        if "sirope" in g or "sirup" in g:
+            if "360" in g:
+                return (
+                    "account_group_name = 'SIROPES' AND name LIKE '%360%'",
+                    "Siropes 360 ml", [],
+                )
+            if "1000" in g:
+                return (
+                    "account_group_name = 'SIROPES' AND name LIKE '%1000%'",
+                    "Siropes 1000 ml", [],
+                )
+            return ("account_group_name = 'SIROPES'", "Siropes (todos)", [])
+        if "sal" in g or "azucar" in g or "michelar" in g:
+            if "250" in g:
+                return (
+                    "account_group_name = 'SALES PARA MICHELAR' AND name LIKE '%250%'",
+                    "Sales/Azucares 250 gr", [],
+                )
+            if "500" in g:
+                return (
+                    "account_group_name = 'SALES PARA MICHELAR' AND name LIKE '%500%'",
+                    "Sales/Azucares 500 gr", [],
+                )
+            return ("account_group_name = 'SALES PARA MICHELAR'", "Sales para michelar (todas)", [])
+        return ("", "", [])
+
+    where_clause, descripcion, params = match_filtro()
+    if not where_clause:
+        return {
+            "ok": False,
+            "error": (
+                f"No reconozco el grupo '{grupo}'. Grupos validos: "
+                "'bolsas 6L con/sin licor', 'cremosos', 'sachets con/sin licor', "
+                "'perlas (350/1200/3400)gr', 'gelatinas (330/1200/2300)gr', "
+                "'siropes (360/1000)ml', 'sales (250/500)gr'."
+            ),
+        }
+
+    if aumento_pct is None and detal is None and mayorista is None and distribuidor is None:
+        return {"ok": False, "error": "No me dijiste que precio cambiar"}
+
+    # Buscar productos del grupo
+    conn = get_conn()
+    try:
+        productos = conn.execute(
+            f"SELECT code, name FROM siigo_products WHERE (active = 1 OR active IS NULL) AND {where_clause}",
+            params,
+        ).fetchall()
+    finally:
+        conn.close()
+    if not productos:
+        return {"ok": False, "error": f"No encontre productos en el grupo '{descripcion}'"}
+
+    # Helpers
+    from datetime import datetime as _dt
+    IVA = 19.0
+
+    def precio_pre_iva(p_con_iva: float) -> float:
+        return round(p_con_iva / (1 + IVA / 100), 2)
+
+    listas_a_cambiar: dict[str, float] = {}
+    if aumento_pct is not None:
+        # Aumento porcentual: tenemos que aplicar a cada producto su precio actual
+        # No se puede mappear a un solo "nuevo_precio"; se hace dentro del loop.
+        pass
+    else:
+        if detal is not None and detal > 0:
+            listas_a_cambiar["DETAL"] = float(detal)
+        if mayorista is not None and mayorista > 0:
+            listas_a_cambiar["MAYORISTA"] = float(mayorista)
+        if distribuidor is not None and distribuidor > 0:
+            listas_a_cambiar["DISTRIBUIDOR"] = float(distribuidor)
+
+    if aumento_pct is None and not listas_a_cambiar:
+        return {"ok": False, "error": "No me dijiste que precio cambiar"}
+
+    conn = get_conn()
+    try:
+        now = _dt.now().isoformat(timespec="seconds")
+        afectados = 0
+        listas_resumen: dict[str, int] = {}
+
+        for p in productos:
+            code = p["code"]
+            if aumento_pct is not None:
+                # Para cada producto, aplicar el % al precio actual de CADA lista
+                for lista in ("DETAL", "MAYORISTA", "DISTRIBUIDOR"):
+                    row = conn.execute(
+                        "SELECT precio_con_iva FROM precios_oficiales WHERE product_code = ? AND lista = ?",
+                        (code, lista),
+                    ).fetchone()
+                    if not row or not row["precio_con_iva"]:
+                        continue
+                    nuevo_con_iva = round(float(row["precio_con_iva"]) * (1 + aumento_pct / 100), 2)
+                    nuevo_pre_iva = precio_pre_iva(nuevo_con_iva)
+                    conn.execute(
+                        """INSERT INTO precios_oficiales
+                           (product_code, lista, precio_pre_iva, precio_con_iva, fuente, confirmed_by, updated_at)
+                           VALUES (?, ?, ?, ?, 'manual_dueno', 'dueno', ?)
+                           ON CONFLICT(product_code, lista) DO UPDATE SET
+                             precio_pre_iva = excluded.precio_pre_iva,
+                             precio_con_iva = excluded.precio_con_iva,
+                             fuente = 'manual_dueno',
+                             confirmed_by = 'dueno',
+                             updated_at = excluded.updated_at""",
+                        (code, lista, nuevo_pre_iva, nuevo_con_iva, now),
+                    )
+                    listas_resumen[lista] = listas_resumen.get(lista, 0) + 1
+                afectados += 1
+            else:
+                # Precios absolutos
+                for lista, p_con_iva in listas_a_cambiar.items():
+                    p_pre_iva = precio_pre_iva(p_con_iva)
+                    conn.execute(
+                        """INSERT INTO precios_oficiales
+                           (product_code, lista, precio_pre_iva, precio_con_iva, fuente, confirmed_by, updated_at)
+                           VALUES (?, ?, ?, ?, 'manual_dueno', 'dueno', ?)
+                           ON CONFLICT(product_code, lista) DO UPDATE SET
+                             precio_pre_iva = excluded.precio_pre_iva,
+                             precio_con_iva = excluded.precio_con_iva,
+                             fuente = 'manual_dueno',
+                             confirmed_by = 'dueno',
+                             updated_at = excluded.updated_at""",
+                        (code, lista, p_pre_iva, p_con_iva, now),
+                    )
+                    listas_resumen[lista] = listas_resumen.get(lista, 0) + 1
+                afectados += 1
+
+        # Audit log
+        try:
+            conn.execute(
+                """INSERT INTO audit_log (entity_type, entity_id, action, actor, payload, created_at)
+                   VALUES ('precios_oficiales', ?, ?, ?, ?, ?)""",
+                (
+                    descripcion[:50],
+                    "cambio_grupo",
+                    actor,
+                    json.dumps({
+                        "grupo": grupo,
+                        "filtro_aplicado": descripcion,
+                        "aumento_pct": aumento_pct,
+                        "detal": detal, "mayorista": mayorista, "distribuidor": distribuidor,
+                        "productos_afectados": afectados,
+                        "listas_resumen": listas_resumen,
+                    }, ensure_ascii=False),
+                    now,
+                ),
+            )
+        except Exception:
+            pass
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "ok": True,
+        "grupo": descripcion,
+        "productos_afectados": afectados,
+        "listas_cambiadas": listas_resumen,
+        "detalle": (
+            f"Aumento {aumento_pct:+.1f}%" if aumento_pct is not None
+            else " · ".join(f"{k} ${v:,.0f}" for k, v in listas_a_cambiar.items())
+        ),
+    }
+
+
 def cambiar_categoria_cliente(
     cliente_query: str,
     nueva_categoria: str,
@@ -1496,6 +1751,7 @@ TOOLS_MAP: dict[str, Any] = {
     "consultar_precio": consultar_precio,
     "cambiar_precio": cambiar_precio,
     "cambiar_categoria_cliente": cambiar_categoria_cliente,
+    "cambiar_precios_grupo": cambiar_precios_grupo,
     "configurar_pronto_pago": configurar_pronto_pago,
     "modificar_pedido_actual": modificar_pedido_actual,
     "analizar_pago_factura": analizar_pago_factura,
@@ -1674,7 +1930,7 @@ TOOL_DECLARATIONS: list[dict] = [
     {
         "name": "cambiar_precio",
         "description": (
-            "Cambia el precio oficial de un producto en una categoria especifica. "
+            "Cambia el precio oficial de UN producto especifico en una categoria. "
             "Usar cuando el usuario dice 'subir/bajar/cambiar precio detal de X a $Y', "
             "'la bolsa chicle mayorista ahora cuesta 24000'. "
             "El precio se interpreta SIEMPRE CON IVA. Solo admin puede usar esto."
@@ -1687,6 +1943,43 @@ TOOL_DECLARATIONS: list[dict] = [
                 "nuevo_precio_con_iva": {"type": "number", "description": "Nuevo precio CON IVA"},
             },
             "required": ["product_query", "categoria", "nuevo_precio_con_iva"],
+        },
+    },
+    {
+        "name": "cambiar_precios_grupo",
+        "description": (
+            "Cambia precios de TODO un grupo de productos a la vez (cuando el usuario "
+            "habla de grupos, no de productos individuales). Ejemplos: "
+            "'todos los sachets con licor mayorista a 2000', "
+            "'todas las bolsas 6L con licor: detal 26 mayor 24 distrib 20', "
+            "'sube 5% mayorista de todos los sachets'. "
+            "Para grupos: bolsas 6L con/sin licor, cremosos, sachets con/sin licor, "
+            "perlas (350/1200/3400)gr, gelatinas (330/1200/2300)gr, "
+            "siropes (360/1000)ml, sales (250/500)gr. "
+            "Precios SIEMPRE CON IVA. Si dice 'a 3 mil' es 3000. Solo admin."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "grupo": {
+                    "type": "string",
+                    "description": (
+                        "Filtro del grupo. Ejemplos: 'bolsas 6L con licor', "
+                        "'sachets con licor', 'perlas 1200gr', 'gelatinas', 'siropes 1000ml'."
+                    ),
+                },
+                "detal": {"type": "number", "description": "Precio DETAL con IVA (opcional)"},
+                "mayorista": {"type": "number", "description": "Precio MAYORISTA con IVA (opcional)"},
+                "distribuidor": {"type": "number", "description": "Precio DISTRIBUIDOR con IVA (opcional)"},
+                "aumento_pct": {
+                    "type": "number",
+                    "description": (
+                        "Alternativa: % a aumentar (positivo) o bajar (negativo) sobre el precio actual. "
+                        "Si se usa, no pasar precios absolutos."
+                    ),
+                },
+            },
+            "required": ["grupo"],
         },
     },
     {
