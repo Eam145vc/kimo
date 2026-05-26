@@ -106,6 +106,16 @@ def register_pages(app, templates) -> None:
             context={"user": user["username"], "page": "asistencia_config"},
         )
 
+    @app.get("/equipo-hikvision", response_class=HTMLResponse)
+    async def page_equipo_hikvision(request: Request, session_token: str | None = Cookie(default=None)):
+        user = validar_sesion(session_token)
+        if not user:
+            return RedirectResponse(url="/login", status_code=303)
+        return templates.TemplateResponse(
+            request=request, name="equipo_hikvision.html",
+            context={"user": user["username"], "page": "equipo_hikvision"},
+        )
+
 
 # =============================================================================
 # APIs
