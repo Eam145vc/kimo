@@ -466,24 +466,73 @@ async def api_config_set(payload: dict, session_token: str | None = Cookie(defau
 
 @router.get("/api/asistencia/equipo/status")
 async def api_equipo_status(session_token: str | None = Cookie(default=None)):
+    """Estado del equipo. Tiene dos formas de saber que esta vivo:
+
+      A) Si la VM puede llegar a la IP del equipo (LAN compartida) -> consulta directa
+      B) Si NO puede (caso comun: equipo detras de NAT en la fabrica) -> mira si hay
+         marcajes recientes en la DB. Si hubo eventos en los ultimos 5 min -> online.
+    """
     _require_user(session_token)
+    from datetime import datetime, timedelta
+
+    # B) verificar marcajes recientes (sirve siempre, incluso sin conexion directa)
+    conn = get_conn()
     try:
-        with HikClient() as hik:
-            di = hik.device_info()
-            t = hik.device_time()
-            n = hik.count_persons()
-        return {
-            "online": True,
-            "model": di.model,
-            "serial": di.serial,
-            "firmware": di.firmware,
-            "mac": di.mac,
-            "device_time": t.get("localTime"),
-            "timezone": t.get("timeZone"),
-            "personas_en_equipo": n,
-        }
-    except Exception as e:
-        return {"online": False, "error": str(e)}
+        row = conn.execute(
+            "SELECT MAX(ts) AS ultimo, COUNT(*) AS total FROM marcajes WHERE ts >= datetime('now', '-1 day')"
+        ).fetchone()
+        ultimo_marcaje = row["ultimo"] if row else None
+        total_dia = row["total"] if row else 0
+    finally:
+        conn.close()
+
+    push_reciente = False
+    if ultimo_marcaje:
+        try:
+            ts = datetime.fromisoformat(ultimo_marcaje)
+            edad_min = (datetime.now(ts.tzinfo) - ts).total_seconds() / 60
+            push_reciente = edad_min < 60  # ultimo evento en los ultimos 60 min
+        except Exception:
+            pass
+
+    # A) intentar conexion directa (solo si HIK_HOST esta seteado)
+    from skiimo.config import HIK_ENABLED
+    if HIK_ENABLED:
+        try:
+            with HikClient() as hik:
+                di = hik.device_info()
+                t = hik.device_time()
+                n = hik.count_persons()
+            return {
+                "online": True,
+                "modo": "direct",
+                "model": di.model,
+                "serial": di.serial,
+                "firmware": di.firmware,
+                "mac": di.mac,
+                "device_time": t.get("localTime"),
+                "timezone": t.get("timeZone"),
+                "personas_en_equipo": n,
+                "ultimo_marcaje": ultimo_marcaje,
+            }
+        except Exception as e:
+            # Cae al fallback push
+            return {
+                "online": push_reciente,
+                "modo": "push" if push_reciente else "offline",
+                "ultimo_marcaje": ultimo_marcaje,
+                "marcajes_24h": total_dia,
+                "error_direct": str(e)[:200],
+            }
+
+    # Sin HIK_HOST -> solo modo push
+    return {
+        "online": push_reciente,
+        "modo": "push" if push_reciente else "esperando",
+        "ultimo_marcaje": ultimo_marcaje,
+        "marcajes_24h": total_dia,
+        "nota": "Equipo detras de NAT. Recibo eventos via POST cuando alguien marca.",
+    }
 
 
 # =============================================================================

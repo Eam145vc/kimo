@@ -11,11 +11,8 @@
       <p class="text-xs text-text-muted mt-0.5" x-text="fechaPretty"></p>
     </div>
     <div class="flex items-center gap-2">
-      <span class="text-xs text-text-muted" x-show="equipo.online" :title="equipo.serial">
-        Equipo <span class="text-success">●</span> <span x-text="equipo.model"></span>
-      </span>
-      <span class="text-xs text-danger" x-show="!equipo.online && equipoLoaded">
-        Equipo offline
+      <span class="text-xs" x-show="equipoLoaded" :class="equipoColor()">
+        <span x-text="equipoLabel()"></span>
       </span>
       <button @click="syncManual()" :disabled="syncing"
         class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-3 py-1.5 rounded-lg transition-all disabled:opacity-50">
@@ -194,6 +191,31 @@ function asistenciaHoy() {
         'extra': 'bg-warning/15 text-warning',
         'desconocido': 'bg-danger/15 text-danger'
       }[tipo] || 'bg-text-muted/15 text-text-muted';
+    },
+
+    equipoColor() {
+      if (!this.equipoLoaded) return 'text-text-muted';
+      if (this.equipo.online && this.equipo.modo === 'direct') return 'text-success';
+      if (this.equipo.online && this.equipo.modo === 'push') return 'text-success';
+      if (this.equipo.modo === 'esperando') return 'text-text-muted';
+      return 'text-warning';
+    },
+
+    equipoLabel() {
+      if (!this.equipoLoaded) return '';
+      const m = this.equipo;
+      if (m.online && m.modo === 'direct') return `Equipo ● ${m.model || 'conectado'}`;
+      if (m.online && m.modo === 'push') return `Equipo ● recibiendo (push)`;
+      if (m.modo === 'esperando') return `Esperando primer marcaje`;
+      if (!m.online) {
+        if (m.ultimo_marcaje) {
+          const t = new Date(m.ultimo_marcaje);
+          const min = Math.round((Date.now() - t.getTime()) / 60000);
+          return `Sin actividad hace ${min} min`;
+        }
+        return 'Sin actividad';
+      }
+      return 'Equipo';
     }
   };
 }
