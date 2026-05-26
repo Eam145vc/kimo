@@ -453,16 +453,62 @@ async def api_empleado_editar(emp_id: int, body: EmpleadoIn, session_token: str 
 
 @router.delete("/api/empleados/{emp_id}")
 async def api_empleado_borrar(emp_id: int, session_token: str | None = Cookie(default=None)):
+    """Soft delete: marca empleado como inactivo. Mantiene historial de marcajes."""
     _require_user(session_token)
     conn = get_conn()
     try:
-        # Soft delete: marcamos inactivo, conservamos historial
         conn.execute("UPDATE empleados SET activo = 0, updated_at = ? WHERE id = ?",
                      (datetime.utcnow().isoformat(), emp_id))
         conn.commit()
     finally:
         conn.close()
     return {"ok": True}
+
+
+@router.delete("/api/empleados/{emp_id}/permanente")
+async def api_empleado_borrar_definitivo(emp_id: int, session_token: str | None = Cookie(default=None)):
+    """Borrado DEFINITIVO: elimina el empleado de la DB + sus marcajes.
+
+    NO borra del equipo Hikvision (eso requiere que el navegador del admin
+    en LAN local del equipo haga la llamada ISAPI).
+
+    Para borrado completo (panel + equipo), el frontend debe:
+      1. Llamar a este endpoint para limpiar la DB
+      2. Llamar al equipo via /ISAPI/AccessControl/UserInfo/Delete con
+         el hik_employee_no
+    """
+    _require_user(session_token)
+    conn = get_conn()
+    try:
+        # Verificar que existe
+        row = conn.execute(
+            "SELECT id, hik_employee_no, nombre FROM empleados WHERE id = ?",
+            (emp_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Empleado no encontrado")
+
+        nombre = row["nombre"]
+        hik_no = row["hik_employee_no"]
+
+        # Borrar marcajes asociados primero (por FK)
+        conn.execute("DELETE FROM marcajes WHERE empleado_id = ?", (emp_id,))
+        # Borrar turnos asociados
+        conn.execute("DELETE FROM turnos WHERE empleado_id = ?", (emp_id,))
+        # Borrar horas calculadas
+        conn.execute("DELETE FROM horas_calculadas WHERE empleado_id = ?", (emp_id,))
+        # Borrar el empleado
+        conn.execute("DELETE FROM empleados WHERE id = ?", (emp_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "ok": True,
+        "nombre_borrado": nombre,
+        "hik_employee_no": hik_no,
+        "nota": "Empleado eliminado del panel. Para eliminarlo tambien del equipo Hikvision, hacelo desde el menu del equipo o desde el navegador en la LAN local.",
+    }
 
 
 # ----- Quincena -----
