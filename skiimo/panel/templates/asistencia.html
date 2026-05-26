@@ -74,6 +74,19 @@
     </div>
   </div>
 
+  <div x-show="totalExtras > 0" class="rounded-xl bg-warning/10 ring-1 ring-warning/30 p-3 mb-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <p class="text-[11px] text-warning">Total horas extras del período</p>
+        <p class="text-xl font-semibold mt-0.5 tabular text-warning" x-text="totalExtras.toFixed(2) + ' h'"></p>
+      </div>
+      <p class="text-[10px] text-text-muted text-right">
+        Después de <span class="tabular" x-text="salidaOficial"></span><br>
+        + <span x-text="margenGracia"></span> min de gracia
+      </p>
+    </div>
+  </div>
+
   <!-- Tabla principal: una fila por (empleado, dia) -->
   <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
     <div class="overflow-x-auto">
@@ -88,15 +101,16 @@
             <th class="text-left px-3 py-3 font-medium">Regreso</th>
             <th class="text-left px-3 py-3 font-medium">Salida</th>
             <th class="text-right px-3 py-3 font-medium">Horas</th>
+            <th class="text-right px-3 py-3 font-medium">Extras</th>
             <th class="text-left px-4 py-3 font-medium">Detalle</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-border/40">
           <template x-if="loading">
-            <tr><td colspan="9" class="text-center py-10 text-text-muted">Cargando…</td></tr>
+            <tr><td colspan="10" class="text-center py-10 text-text-muted">Cargando…</td></tr>
           </template>
           <template x-if="!loading && !resumen.length">
-            <tr><td colspan="9" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
+            <tr><td colspan="10" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
           </template>
           <template x-for="r in resumen" :key="r.fecha + '_' + r.empleado_id">
             <tr class="hover:bg-surface-2/30">
@@ -108,6 +122,9 @@
               <td class="px-3 py-3 tabular text-text-muted" x-text="r.almuerzo_in || '—'"></td>
               <td class="px-3 py-3 tabular text-warning" x-text="r.ultima_salida || '—'"></td>
               <td class="px-3 py-3 text-right tabular" x-text="r.horas != null ? r.horas.toFixed(2) : '—'"></td>
+              <td class="px-3 py-3 text-right tabular"
+                  :class="r.horas_extras > 0 ? 'text-warning font-medium' : 'text-text-muted'"
+                  x-text="r.horas_extras != null ? r.horas_extras.toFixed(2) : '—'"></td>
               <td class="px-4 py-3">
                 <button @click="verDetalle(r)" class="text-xs text-accent hover:text-accent-hover" x-text="r.cantidad_marcajes + ' marcajes'"></button>
               </td>
@@ -183,6 +200,8 @@ function marcajesPage() {
     equipo: { online: false },
     empleados: [],
     resumen: [],
+    salidaOficial: '17:00',
+    margenGracia: 15,
     detalleOpen: false,
     detalle: {},
     fotoZoom: null,
@@ -226,6 +245,8 @@ function marcajesPage() {
         const r = await fetch('/api/asistencia/resumen-diario?' + params);
         const j = await r.json();
         this.resumen = j.items || [];
+        if (j.salida_oficial) this.salidaOficial = j.salida_oficial;
+        if (j.margen_gracia_extras_min != null) this.margenGracia = j.margen_gracia_extras_min;
       } catch (e) { console.error(e); }
       this.loading = false;
     },
@@ -265,6 +286,10 @@ function marcajesPage() {
 
     get totalHoras() {
       return this.resumen.reduce((s, r) => s + (r.horas || 0), 0);
+    },
+
+    get totalExtras() {
+      return this.resumen.reduce((s, r) => s + (r.horas_extras || 0), 0);
     },
 
     diaSemana(iso) {
@@ -399,7 +424,7 @@ function marcajesPage() {
 
     exportarCSV() {
       if (!this.resumen.length) return;
-      const headers = ['Fecha', 'Dia', 'Empleado', 'Entrada', 'Salida_almuerzo', 'Regreso_almuerzo', 'Salida', 'Horas_trabajadas', 'Marcajes'];
+      const headers = ['Fecha', 'Dia', 'Empleado', 'Entrada', 'Salida_almuerzo', 'Regreso_almuerzo', 'Salida', 'Horas_trabajadas', 'Horas_extras', 'Marcajes'];
       const rows = [headers.join(',')];
       for (const r of this.resumen) {
         rows.push([
@@ -411,6 +436,7 @@ function marcajesPage() {
           r.almuerzo_in || '',
           r.ultima_salida || '',
           r.horas != null ? r.horas.toFixed(2) : '',
+          r.horas_extras != null ? r.horas_extras.toFixed(2) : '',
           r.cantidad_marcajes
         ].join(','));
       }

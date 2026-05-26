@@ -293,6 +293,8 @@ async def api_resumen_diario(
         # Calculo de horas: usa primera_entrada / ultima_salida y descuenta almuerzo
         horas = None
         horas_almuerzo = None
+        horas_extras = None
+        t_out_real = None
         try:
             t_in = None
             t_out = None
@@ -308,6 +310,7 @@ async def api_resumen_diario(
                 t_out = datetime.fromisoformat(ts_list[-1])
 
             if t_in and t_out and t_out > t_in:
+                t_out_real = t_out
                 bruto = (t_out - t_in).total_seconds() / 3600.0
                 horas = round(bruto, 2)
                 # Descontar pausa de almuerzo si existe
@@ -336,16 +339,55 @@ async def api_resumen_diario(
             "almuerzo_out": almuerzo_out,
             "almuerzo_in": almuerzo_in,
             "ultima_salida": ultima_salida,
+            "ultima_salida_ts": t_out_real.isoformat() if t_out_real else None,
             "horas": horas,
             "horas_almuerzo": horas_almuerzo,
             "cantidad_marcajes": n,
         })
 
+    # Calcular horas extras: salida_real - (salida_oficial + margen_gracia)
+    from skiimo.asistencia.config import get_conf
+    salida_oficial_str = get_conf("jornada_salida_hora") or "17:00"
+    try:
+        sh, sm = salida_oficial_str.split(":")
+        salida_oficial_hora = int(sh)
+        salida_oficial_min = int(sm)
+    except Exception:
+        salida_oficial_hora, salida_oficial_min = 17, 0
+
+    try:
+        margen_min = int(get_conf("margen_gracia_extras_min") or 15)
+    except Exception:
+        margen_min = 15
+
+    for item in items:
+        if not item.get("ultima_salida_ts"):
+            continue
+        try:
+            t_out = datetime.fromisoformat(item["ultima_salida_ts"])
+            limite = t_out.replace(hour=salida_oficial_hora, minute=salida_oficial_min,
+                                    second=0, microsecond=0)
+            limite_con_gracia = limite + timedelta(minutes=margen_min)
+            if t_out > limite_con_gracia:
+                # Las extras se cuentan desde la salida oficial (no desde el margen),
+                # pero solo si el marcaje supera el margen de gracia.
+                diff = (t_out - limite).total_seconds() / 3600.0
+                item["horas_extras"] = round(diff, 2)
+            else:
+                item["horas_extras"] = 0.0
+        except Exception:
+            item["horas_extras"] = None
+        item.pop("ultima_salida_ts", None)
+
     # Orden: fecha desc, nombre asc
     items.sort(key=lambda x: (x["fecha"], x["empleado_nombre"]), reverse=False)
     items.sort(key=lambda x: x["fecha"], reverse=True)
 
-    return {"items": items}
+    return {
+        "items": items,
+        "salida_oficial": salida_oficial_str,
+        "margen_gracia_extras_min": margen_min,
+    }
 
 
 @router.get("/api/asistencia/hoy")

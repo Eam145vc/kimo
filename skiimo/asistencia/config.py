@@ -61,6 +61,11 @@ DEFAULTS: dict[str, Any] = {
     # o DESPUES de almuerzo_inicio - 15 min, no es entrada (sera otra cosa).
     "tolerancia_entrada_horas": 3,          # 3 horas antes/despues de entrada cuenta como entrada
     "tolerancia_salida_horas": 6,           # 6 horas despues de salida cuenta como salida
+
+    # Margen de gracia para horas extras: marcajes hasta N minutos despues de la
+    # salida oficial NO cuentan como extras. Util para evitar contar 1-15 min
+    # por casos triviales (lavarse las manos, baño antes de salir, etc).
+    "margen_gracia_extras_min": 15,         # 15 min de gracia despues de salida
 }
 
 

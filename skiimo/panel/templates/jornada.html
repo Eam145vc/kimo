@@ -50,7 +50,7 @@
   <!-- Tolerancias -->
   <div class="rounded-xl bg-surface ring-1 ring-border p-5 mb-4">
     <h3 class="text-sm font-semibold mb-3">Tolerancias</h3>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div>
         <label class="block text-xs text-text-muted mb-1">Horas antes de entrada</label>
         <input type="number" min="0" max="6" step="1"
@@ -58,7 +58,7 @@
                class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
         <p class="text-[10px] text-text-muted mt-1">
           Cuántas horas antes del horario oficial de entrada aceptamos
-          marcajes como "entrada" (para turnos madrugadores).
+          marcajes como "entrada".
         </p>
       </div>
       <div>
@@ -67,11 +67,35 @@
                x-model.number="cfg.tolerancia_salida_horas"
                class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
         <p class="text-[10px] text-text-muted mt-1">
-          Hasta cuántas horas después de la salida oficial aceptamos
-          marcajes como "salida" (para horas extras).
+          Hasta cuántas horas después aceptamos marcajes como "salida".
+        </p>
+      </div>
+      <div>
+        <label class="block text-xs text-text-muted mb-1">Margen gracia extras (min)</label>
+        <input type="number" min="0" max="60" step="5"
+               x-model.number="cfg.margen_gracia_extras_min"
+               class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        <p class="text-[10px] text-text-muted mt-1">
+          Minutos después de la salida oficial que NO cuentan como extra
+          (ej. 15 min para lavarse las manos antes de salir).
         </p>
       </div>
     </div>
+  </div>
+
+  <!-- Preview de extras -->
+  <div class="rounded-xl bg-warning/5 ring-1 ring-warning/20 p-4 mb-4">
+    <h3 class="text-sm font-semibold mb-2">⏰ Horas extras</h3>
+    <p class="text-xs text-text-muted">
+      Cualquier salida que ocurra después de
+      <strong x-text="cfg.jornada_salida_hora"></strong>
+      + <strong x-text="(cfg.margen_gracia_extras_min || 0) + ' min'"></strong>
+      de gracia cuenta como hora extra. Las extras se calculan desde la salida oficial.
+    </p>
+    <p class="text-[11px] text-text-muted mt-2">
+      Ejemplo: salida 17:00, gracia 15 min, marca a las 17:30 → cuenta como 30 min de extras.
+      Si marca a las 17:10 → 0 extras (dentro del margen).
+    </p>
   </div>
 
   <!-- Vista previa de las ventanas -->
@@ -124,6 +148,7 @@ function jornadaPage() {
       jornada_salida_hora: '17:00',
       tolerancia_entrada_horas: 3,
       tolerancia_salida_horas: 6,
+      margen_gracia_extras_min: 15,
     },
     saving: false,
     reclasificando: false,
