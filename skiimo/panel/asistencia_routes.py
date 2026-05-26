@@ -748,6 +748,29 @@ async def api_hik_event_last():
     return _LAST_HIK_PAYLOAD
 
 
+@router.post("/api/asistencia/limpiar-secundarios")
+async def api_limpiar_secundarios(session_token: str | None = Cookie(default=None)):
+    """Borra de la DB los marcajes 'desconocidos' que vienen del equipo
+    como eventos secundarios (puerta abierta, etc) sin employeeNo.
+
+    Solo borra los que tienen empleado_id IS NULL y tipo='desconocido'.
+    Los marcajes con empleado real quedan intactos.
+    """
+    _require_user(session_token)
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """DELETE FROM marcajes
+               WHERE empleado_id IS NULL
+                 AND (tipo = 'desconocido' OR metodo = 'invalid')"""
+        )
+        conn.commit()
+        borrados = cur.rowcount
+    finally:
+        conn.close()
+    return {"ok": True, "borrados": borrados}
+
+
 @router.post("/api/hik/event")
 async def api_hik_event_receiver(request: Request):
     """Recibe eventos push del Hikvision configurado como ISUP Listening.
@@ -832,6 +855,19 @@ async def api_hik_event_receiver(request: Request):
     if not isinstance(acs, dict):
         log.warning("AccessControllerEvent no es dict: %s", type(acs))
         return {"ok": True, "ignored": "estructura desconocida"}
+
+    # Filtrar eventos secundarios (puerta abierta, alarmas, etc).
+    # Solo guardamos eventos de autenticacion real de personas:
+    #   minor 75 = face authentication
+    #   minor 76 = fingerprint
+    #   minor 38 = card
+    #   minor 77 = pin
+    # El equipo emite ademas eventos minor=21/22 (door open/close) o
+    # similares por cada marcaje, sin employeeNo, que ensucian la tabla.
+    minor = int(acs.get("subEventType") or acs.get("minor") or 0)
+    SUB_EVENTS_AUTENTICACION = {75, 76, 77, 38, 1, 5, 7, 15, 16, 19, 20}
+    if minor not in SUB_EVENTS_AUTENTICACION:
+        return {"ok": True, "ignored": f"evento secundario minor={minor}"}
 
     # Adaptar nombres de campos al formato esperado por _event_from_raw
     ts = raw_payload.get("dateTime") or acs.get("dateTime") or acs.get("time")
