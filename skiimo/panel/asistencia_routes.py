@@ -853,7 +853,10 @@ async def api_plantilla_borrar(plantilla_id: int, session_token: str | None = Co
 @router.post("/api/marcajes")
 async def api_marcaje_crear_manual(body: MarcajeIn, session_token: str | None = Cookie(default=None)):
     """Crea un marcaje manual (cuando el equipo no lo registro o el admin
-    necesita agregar uno historico). origen='manual', metodo='manual'."""
+    necesita agregar uno historico). origen='manual', metodo='manual'.
+
+    Si `tipo` es null, se autoclasifica segun la hora del dia.
+    """
     user = _require_user(session_token)
     now = datetime.utcnow().isoformat()
     try:
@@ -862,6 +865,12 @@ async def api_marcaje_crear_manual(body: MarcajeIn, session_token: str | None = 
         raise HTTPException(400, "ts invalido. Use ISO-8601, ej: 2026-05-26T07:00:00-05:00")
     fecha = ts.date().isoformat()
 
+    # Si no vino tipo, clasificar por hora
+    tipo = body.tipo
+    if not tipo:
+        from skiimo.asistencia.sync import _clasificar_por_hora
+        tipo = _clasificar_por_hora(ts)
+
     conn = get_conn()
     try:
         cur = conn.execute(
@@ -869,7 +878,7 @@ async def api_marcaje_crear_manual(body: MarcajeIn, session_token: str | None = 
                                       editado, editado_por, editado_at, nota_admin,
                                       ignorar_nomina, created_at)
                VALUES (?, ?, ?, ?, 'manual', 'manual', 1, ?, ?, ?, ?, ?)""",
-            (body.empleado_id, body.ts, fecha, body.tipo,
+            (body.empleado_id, body.ts, fecha, tipo,
              user.get("username", "admin"), now, body.nota_admin,
              1 if body.ignorar_nomina else 0, now),
         )
@@ -894,6 +903,12 @@ async def api_marcaje_editar(marcaje_id: int, body: MarcajeIn,
         raise HTTPException(400, "ts invalido")
     fecha = ts.date().isoformat()
 
+    # Si no vino tipo, autoclasificar por hora
+    tipo = body.tipo
+    if not tipo:
+        from skiimo.asistencia.sync import _clasificar_por_hora
+        tipo = _clasificar_por_hora(ts)
+
     conn = get_conn()
     try:
         # Verificar que existe
@@ -904,12 +919,12 @@ async def api_marcaje_editar(marcaje_id: int, body: MarcajeIn,
 
         conn.execute(
             """UPDATE marcajes SET
-                  ts=?, fecha=?, tipo=COALESCE(?, tipo),
+                  ts=?, fecha=?, tipo=?,
                   origen=?, editado=1, editado_por=?, editado_at=?,
                   nota_admin=COALESCE(?, nota_admin),
                   ignorar_nomina=?
                WHERE id = ?""",
-            (body.ts, fecha, body.tipo, nuevo_origen,
+            (body.ts, fecha, tipo, nuevo_origen,
              user.get("username", "admin"), now,
              body.nota_admin, 1 if body.ignorar_nomina else 0, marcaje_id),
         )
