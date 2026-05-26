@@ -326,6 +326,41 @@ class HikClient:
         }
         return self._post("/ISAPI/AccessControl/UserInfo/Delete?format=json", payload)
 
+    # ----- Captura facial remota -----
+    def capture_face(self) -> dict:
+        """Dispara la captura facial en el equipo. La persona debe estar frente.
+
+        El equipo entra en modo 'collect face' por ~30 segundos. Si la persona
+        se para frente a la camara, captura su cara y devuelve la imagen.
+
+        Notas:
+          - Este endpoint NO asocia la cara a un empleado por si solo. Para
+            asociar, usar capture_face_for_employee() que hace el flujo completo.
+          - En firmware viejo el endpoint puede ser distinto. Si falla con 404,
+            usar capture_face_legacy() como fallback.
+        """
+        return self._post(
+            "/ISAPI/AccessControl/CaptureFaceData?format=json",
+            {},
+        )
+
+    def capture_face_for_employee(self, employee_no: str) -> dict:
+        """Asocia una cara nueva a un empleado existente. La persona debe estar
+        frente al equipo cuando se llama. El equipo capturara la cara y la
+        guardara en la FDLib (face library) vinculada a este employeeNo.
+        """
+        payload = {
+            "faceDataRecord": {
+                "faceLibType": "blackFD",
+                "FDID": "1",
+                "FPID": str(employee_no),
+            }
+        }
+        return self._post(
+            "/ISAPI/Intelligent/FDLib/FDSetUp?format=json&type=concurrent",
+            payload,
+        )
+
     # ----- HTTP Listening Host (push de eventos a un servidor externo) -----
     def get_http_hosts(self) -> dict:
         """Devuelve la lista de HTTP listening hosts configurados."""
