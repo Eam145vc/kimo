@@ -258,35 +258,47 @@ def format_summary(rp: ResolvedPedido) -> str:
     lines.append("")
     lines.append("*Productos*")
 
-    # Items con bullets y monospace
-    subtotal = 0.0
+    # Items con bullets y monospace. Mostramos sin IVA, IVA y con IVA por item.
+    subtotal_sin_iva = 0.0
+    iva_total = 0.0
     for item in rp.items:
         if item.elegido:
-            sub = (item.total_estimado or 0.0)
-            subtotal += sub
-            precio = item.precio_unitario or 0
-            qty_str = f"{int(item.cantidad)}" if item.cantidad == int(item.cantidad) else f"{item.cantidad:g}"
-            # Linea 1: nombre y cantidad
+            precio = item.precio_unitario or 0.0  # SIN IVA
+            qty = item.cantidad
+            sub_item = precio * qty
+            iva_pct = item.elegido.iva_percentage or 19.0
+            iva_item = round(sub_item * (iva_pct / 100.0), 2)
+            con_iva_item = round(sub_item + iva_item, 2)
+            subtotal_sin_iva += sub_item
+            iva_total += iva_item
+            qty_str = f"{int(qty)}" if qty == int(qty) else f"{qty:g}"
             lines.append(f"• {item.elegido.name}")
-            # Linea 2: detalles tipo recibo
-            lines.append(f"  `{qty_str} x ${precio:>10,.0f}  =  ${sub:>10,.0f}`")
+            lines.append(f"  `{qty_str} x ${precio:>10,.0f}  =  ${sub_item:>10,.0f}` _(sin IVA)_")
+            lines.append(f"  `+ IVA {iva_pct:>3.0f}%        =  ${iva_item:>10,.0f}`")
+            lines.append(f"  `Total item     =  ${con_iva_item:>10,.0f}`")
         else:
             lines.append(f"• _no encontrado_: {item.raw.descripcion}")
 
     lines.append("")
 
-    # Bloque de totales
+    # Bloque de totales con IVA detallado
+    total_con_iva = subtotal_sin_iva + iva_total
     dto_pct = rp.raw.descuento_pct or 0.0
     if dto_pct > 0:
-        dto_val = subtotal * dto_pct / 100
-        final = subtotal - dto_val
+        dto_val_sin_iva = subtotal_sin_iva * dto_pct / 100
+        # Descuento proporcional al IVA tambien
+        iva_dto = iva_total * dto_pct / 100
+        final = total_con_iva - dto_val_sin_iva - iva_dto
         motivo = f" — {rp.raw.descuento_motivo}" if rp.raw.descuento_motivo else ""
-        lines.append(f"Subtotal      `${subtotal:>10,.0f}`")
-        lines.append(f"Descuento {dto_pct:.0f}%{motivo}")
-        lines.append(f"              `-${dto_val:>9,.0f}`")
-        lines.append(f"*TOTAL*       `${final:>10,.0f}`")
+        lines.append(f"`Subtotal s/IVA    ${subtotal_sin_iva:>10,.0f}`")
+        lines.append(f"`IVA               ${iva_total:>10,.0f}`")
+        lines.append(f"`Descuento {dto_pct:.0f}%{motivo[:18]}`")
+        lines.append(f"`                 -${(dto_val_sin_iva + iva_dto):>10,.0f}`")
+        lines.append(f"*TOTAL con IVA*    `${final:>10,.0f}`")
     else:
-        lines.append(f"*TOTAL con IVA*  `${subtotal:>10,.0f}`")
+        lines.append(f"`Subtotal s/IVA    ${subtotal_sin_iva:>10,.0f}`")
+        lines.append(f"`IVA               ${iva_total:>10,.0f}`")
+        lines.append(f"*TOTAL con IVA*    `${total_con_iva:>10,.0f}`")
 
     # Metadata opcional
     meta_lines = []

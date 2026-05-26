@@ -1554,6 +1554,20 @@ async def _dispatch_agent_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, 
                 and reply.last_tool_result.get("pendiente_confirmacion_anulacion")):
             await _send_anulacion_proposal(update, ctx, msg, reply.last_tool_result)
             return
+        # Detectar modificacion de pedido en curso -> mostrar resumen actualizado
+        if (reply.tools_used and "modificar_pedido_actual" in reply.tools_used
+                and reply.last_tool_result and reply.last_tool_result.get("ok")):
+            pedido_id = reply.last_tool_result.get("pedido_id")
+            if pedido_id:
+                pedido_row = _load_pedido(pedido_id)
+                if pedido_row:
+                    rp = _rehydrate_resolved(pedido_row)
+                    await update.message.reply_text(
+                        f"{msg}\n\n*Pedido #{pedido_id} actualizado*\n\n{format_summary(rp)}",
+                        reply_markup=InlineKeyboardMarkup(_build_pedido_buttons(pedido_id, rp)),
+                        parse_mode="Markdown",
+                    )
+                    return
         await update.message.reply_text(msg)
         return
 
@@ -2320,6 +2334,62 @@ async def _handle_gasto_manual_callback(cb, ctx, accion: str, parts: list[str]) 
             )
 
 
+async def _handle_iva_confirm(cb, ctx, parts: list[str]) -> None:
+    """Maneja la respuesta al 'son con IVA o sin IVA'.
+
+    ivac:<pedido_id>:siiva  -> dividir precios manuales por 1.19
+    ivac:<pedido_id>:noiva  -> mantener precios tal cual
+    """
+    pedido_id = int(parts[1])
+    decision = parts[2] if len(parts) > 2 else "noiva"
+    pedido_row = _load_pedido(pedido_id)
+    if not pedido_row:
+        await cb.edit_message_text("⚠️ Pedido no encontrado.")
+        return
+
+    payload = json.loads(pedido_row["payload_extraido"] or "{}")
+    items = payload.get("items") or []
+
+    # Aplicar conversión a los items con precio manual
+    if decision == "siiva":
+        for it in items:
+            raw = it.get("raw") or {}
+            if raw.get("precio_unitario") is not None and raw.get("precio_unitario") > 0:
+                # Precio del vendedor es CON IVA. Dividimos para guardar como SIN IVA.
+                # (asumimos IVA 19% que es el de granizados)
+                precio_con_iva = float(raw["precio_unitario"])
+                precio_sin_iva = round(precio_con_iva / 1.19, 2)
+                raw["precio_unitario"] = precio_sin_iva
+                it["raw"] = raw
+                it["precio_unitario"] = precio_sin_iva
+    # Si decision == 'noiva', dejamos tal cual (el precio ya es sin IVA)
+
+    # Guardar payload actualizado
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE bot_pedidos SET payload_extraido = ?, updated_at = ? WHERE id = ?",
+            (
+                json.dumps(payload, ensure_ascii=False, default=str),
+                datetime.now().isoformat(timespec="seconds"),
+                pedido_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Re-rehidratar y mostrar resumen normal
+    pedido_row_nuevo = _load_pedido(pedido_id)
+    rp = _rehydrate_resolved(pedido_row_nuevo)
+    label = "✅ Precios CON IVA registrados" if decision == "siiva" else "🚫 Precios SIN IVA registrados"
+    await cb.edit_message_text(
+        f"{label}\n\n*Pedido #{pedido_id}*\n\n{format_summary(rp)}",
+        reply_markup=InlineKeyboardMarkup(_build_pedido_buttons(pedido_id, rp)),
+        parse_mode="Markdown",
+    )
+
+
 async def _handle_newcli_iniciar(cb, ctx, parts: list[str]) -> None:
     """Inicia el FSM de creacion de cliente desde el boton 'Crear cliente nuevo' del pedido."""
     pedido_id = int(parts[1])
@@ -2705,6 +2775,36 @@ async def _send_proposal(update: Update, ctx: ContextTypes.DEFAULT_TYPE, pedido)
     rp = resolve_pedido(pedido, _get_matcher())
     pedido_id = _save_pedido(update.effective_chat.id, update.message.message_id, rp)
 
+    # Detectar si hay precios manuales para preguntar si son con/sin IVA
+    items_manuales = [
+        (i, it) for i, it in enumerate(pedido.items)
+        if it.precio_unitario is not None and it.precio_unitario > 0
+    ]
+    if items_manuales:
+        # Mostrar lista de precios y preguntar
+        lineas = ["💵 *Detecté precios manuales*\n"]
+        for idx, it in items_manuales:
+            desc = it.descripcion[:30]
+            lineas.append(f"  • {desc}: `${it.precio_unitario:,.0f}` c/u")
+        lineas.append("")
+        lineas.append("¿Esos precios *incluyen IVA* o son *sin IVA*?")
+        await update.message.reply_text(
+            "\n".join(lineas),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "✅ Con IVA (lo que paga el cliente)",
+                    callback_data=f"ivac:{pedido_id}:siiva",
+                )],
+                [InlineKeyboardButton(
+                    "🚫 Sin IVA (más IVA después)",
+                    callback_data=f"ivac:{pedido_id}:noiva",
+                )],
+                [InlineKeyboardButton("❌ Cancelar", callback_data=f"canc:{pedido_id}")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
     resumen = format_summary(rp)
     buttons = _build_pedido_buttons(pedido_id, rp)
 
@@ -2958,6 +3058,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     if accion in ("iedi", "ieqt", "iepr", "iedl"):
         await _handle_edit_item_callback(cb, ctx, accion, parts)
+        return
+
+    # Confirmar si los precios manuales son con/sin IVA
+    if accion == "ivac":
+        await _handle_iva_confirm(cb, ctx, parts)
         return
 
     # Crear cliente nuevo desde un pedido

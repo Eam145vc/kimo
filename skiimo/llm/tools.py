@@ -1334,6 +1334,116 @@ def configurar_pronto_pago(
     }
 
 
+def modificar_pedido_actual(
+    chat_id: int,
+    item_descripcion: str | None = None,
+    nuevo_precio: float | None = None,
+    nuevo_precio_es_con_iva: bool = True,
+    nueva_cantidad: float | None = None,
+) -> dict:
+    """Ajusta un item del PEDIDO BORRADOR mas reciente del chat.
+
+    Usar cuando el usuario, despues de ver un resumen de pedido, pide cambios
+    sobre items de ese pedido (sin crear pedido nuevo). Ejemplos:
+      - 'el chicle a 25 mil' -> nuevo_precio=25000
+      - 'que sean 5 chicles' -> nueva_cantidad=5
+      - 'cambia el cremoso a 32 cada uno' -> item_descripcion='cremoso', nuevo_precio=32
+
+    Args:
+      item_descripcion: nombre o parte del nombre del item a ajustar (ej 'chicle').
+                        Si None, ajusta el item unico del pedido si es solo 1.
+      nuevo_precio: nuevo precio. Asumido CON IVA por default (lo que paga cliente).
+      nuevo_precio_es_con_iva: si False, el precio es sin IVA (precio interno).
+      nueva_cantidad: nueva cantidad para ese item.
+
+    Devuelve:
+      {"ok": bool, "pedido_id": int, "cambios": [...], "error": str?}
+    """
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, payload_extraido FROM bot_pedidos "
+            "WHERE telegram_chat_id = ? AND estado = 'borrador' "
+            "ORDER BY id DESC LIMIT 1",
+            (chat_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "No hay pedido en borrador para modificar"}
+
+    payload = json.loads(row["payload_extraido"] or "{}")
+    items = payload.get("items") or []
+    if not items:
+        return {"ok": False, "error": "El pedido no tiene items"}
+
+    # Buscar item por descripcion
+    target_idx = None
+    if item_descripcion:
+        q = item_descripcion.lower().strip()
+        for i, it in enumerate(items):
+            eleg = it.get("elegido") or {}
+            raw = it.get("raw") or {}
+            name = (eleg.get("name") or raw.get("descripcion") or "").lower()
+            if q in name or any(t in name for t in q.split()):
+                target_idx = i
+                break
+        if target_idx is None:
+            return {"ok": False, "error": f"No encontre item que coincida con '{item_descripcion}'"}
+    else:
+        if len(items) == 1:
+            target_idx = 0
+        else:
+            return {"ok": False, "error": "El pedido tiene varios items, decime cual modificar"}
+
+    cambios = []
+    item = items[target_idx]
+    raw = item.get("raw") or {}
+
+    if nuevo_precio is not None and nuevo_precio > 0:
+        precio_final = float(nuevo_precio)
+        if nuevo_precio_es_con_iva:
+            # Convertir a sin IVA para guardar internamente
+            precio_final = round(precio_final / 1.19, 2)
+        raw["precio_unitario"] = precio_final
+        item["raw"] = raw
+        item["precio_unitario"] = precio_final
+        suffix = " (con IVA)" if nuevo_precio_es_con_iva else " (sin IVA)"
+        cambios.append(f"precio: ${nuevo_precio:,.0f}{suffix}")
+
+    if nueva_cantidad is not None and nueva_cantidad > 0:
+        raw["cantidad"] = float(nueva_cantidad)
+        item["raw"] = raw
+        item["cantidad"] = float(nueva_cantidad)
+        cambios.append(f"cantidad: {nueva_cantidad:g}")
+
+    if not cambios:
+        return {"ok": False, "error": "No me dijiste que cambiar (precio, cantidad...)"}
+
+    # Guardar payload
+    from datetime import datetime as _dt2
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE bot_pedidos SET payload_extraido = ?, updated_at = ? WHERE id = ?",
+            (
+                json.dumps(payload, ensure_ascii=False, default=str),
+                _dt2.now().isoformat(timespec="seconds"),
+                row["id"],
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    eleg = items[target_idx].get("elegido") or {}
+    return {
+        "ok": True,
+        "pedido_id": row["id"],
+        "item": eleg.get("name") or items[target_idx].get("raw", {}).get("descripcion"),
+        "cambios": cambios,
+    }
+
+
 def facturas_pendientes_cobro(limit: int = 10) -> dict:
     """Facturas con balance > 0 (sin cobrar)."""
     # Pre-sync: si pagaron en Siigo web hace minutos, queremos ver saldo actualizado
@@ -1387,6 +1497,7 @@ TOOLS_MAP: dict[str, Any] = {
     "cambiar_precio": cambiar_precio,
     "cambiar_categoria_cliente": cambiar_categoria_cliente,
     "configurar_pronto_pago": configurar_pronto_pago,
+    "modificar_pedido_actual": modificar_pedido_actual,
     "analizar_pago_factura": analizar_pago_factura,
     "analizar_pago_a_proveedor": analizar_pago_a_proveedor,
     "proponer_anular_factura": proponer_anular_factura,
@@ -1766,6 +1877,38 @@ TOOL_DECLARATIONS: list[dict] = [
                 "nueva_categoria": {"type": "string", "description": "DETAL, MAYORISTA o DISTRIBUIDOR"},
             },
             "required": ["cliente_query", "nueva_categoria"],
+        },
+    },
+    {
+        "name": "modificar_pedido_actual",
+        "description": (
+            "Ajusta un item del PEDIDO BORRADOR mas reciente del chat. Usar cuando el usuario, "
+            "DESPUES de ver el resumen de un pedido, pide cambios sobre items SIN crear pedido nuevo. "
+            "Ejemplos: 'el chicle a 25 mil', 'que sean 5 chicles', 'cambia el cremoso a 32'. "
+            "NO uses esta tool si el usuario describe un pedido nuevo desde cero."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "chat_id": {"type": "integer", "description": "ID del chat actual (te lo pasa el sistema)"},
+                "item_descripcion": {
+                    "type": "string",
+                    "description": "Nombre o parte del nombre del item a modificar (ej 'chicle')",
+                },
+                "nuevo_precio": {
+                    "type": "number",
+                    "description": "Nuevo precio. Si el usuario dice '25 mil' es 25000. Asume CON IVA por default.",
+                },
+                "nuevo_precio_es_con_iva": {
+                    "type": "boolean",
+                    "description": "True si el precio incluye IVA (default). False si es sin IVA explicito.",
+                },
+                "nueva_cantidad": {
+                    "type": "number",
+                    "description": "Si el usuario quiere cambiar la cantidad, no el precio.",
+                },
+            },
+            "required": ["chat_id"],
         },
     },
     {

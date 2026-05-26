@@ -101,6 +101,12 @@ REGLAS:
 - Si dice "cambiar precio de X" / "X ahora cuesta Y" / "subir precio X a Y" -> cambiar_precio()
   (Solo admin. Si el rol no es admin, decir 'solo el admin puede cambiar precios').
 - Si dice "X es mayorista/distribuidor" / "X pasa a Y" -> cambiar_categoria_cliente() (solo admin).
+- Si el ULTIMO turno del bot mostro un resumen de pedido y el usuario pide cambios
+  sobre un item (ej "el chicle a 25", "que sean 5 cremosos", "cambia el precio del
+  bombon a 22 mil"), NO llames registrar_pedido (no es pedido nuevo). Llama
+  modificar_pedido_actual(item_descripcion=..., nuevo_precio=...).
+  Por default, asume que los precios manuales son CON IVA salvo que el usuario
+  diga explicitamente "sin IVA". Para precios "25 mil" interpretar como 25000.
 - Si dice "Hugo paga en 8 dias y le doy 10%" / "configura pronto pago de X" /
   "a Zuniga descuento 10% si paga antes de 8 dias" -> configurar_pronto_pago() (solo admin).
   Para quitar pronto pago: 'sacale el pronto pago a X' -> configurar_pronto_pago(X, 0, 0).
@@ -399,6 +405,9 @@ def process_message(
                 else:
                     try:
                         args = dict(fc.args) if fc.args else {}
+                        # Tools que necesitan chat_id pero el LLM no lo conoce: inyectarlo
+                        if fc.name in ("modificar_pedido_actual",):
+                            args.setdefault("chat_id", chat_id)
                         out = fn(**args)
                     except Exception as e:
                         out = {"error": str(e)}
