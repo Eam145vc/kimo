@@ -306,6 +306,122 @@ CREATE TABLE IF NOT EXISTS audit_log (
     payload      TEXT,
     created_at   TEXT NOT NULL
 );
+
+-- ==========================================================================
+-- ASISTENCIA (Hikvision DS-K1T321MFWX + calculo horas Colombia)
+-- ==========================================================================
+
+-- Empleados que marcan en el terminal facial
+CREATE TABLE IF NOT EXISTS empleados (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    hik_employee_no     TEXT UNIQUE,                -- ID asignado en el equipo Hikvision
+    cedula              TEXT,
+    nombre              TEXT NOT NULL,
+    cargo               TEXT,
+    telegram_chat_id    TEXT,                       -- opcional: para avisarle al empleado
+    salario_mensual     REAL,                       -- COP. Default: salario minimo 2026
+    valor_hora_ord      REAL,                       -- COP/hora ordinaria (calculado o sobrescrito)
+    fecha_ingreso       TEXT,                       -- YYYY-MM-DD
+    activo              INTEGER NOT NULL DEFAULT 1,
+    foto_path           TEXT,                       -- ruta de la foto facial subida al equipo
+    observaciones       TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emp_hik ON empleados(hik_employee_no);
+CREATE INDEX IF NOT EXISTS idx_emp_activo ON empleados(activo);
+CREATE INDEX IF NOT EXISTS idx_emp_cedula ON empleados(cedula);
+
+-- Turnos: horario que aplica a un empleado (puede tener varios si rotan)
+CREATE TABLE IF NOT EXISTS turnos (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    empleado_id             INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+    nombre                  TEXT NOT NULL,          -- "Turno manana", "Turno tarde", "Turno sabado"
+    hora_entrada            TEXT NOT NULL,          -- "07:00"
+    hora_salida             TEXT NOT NULL,          -- "16:00"
+    almuerzo_inicio         TEXT,                   -- "12:00" si marcan almuerzo, NULL si descuento auto
+    almuerzo_fin            TEXT,                   -- "13:00"
+    almuerzo_minutos_auto   INTEGER DEFAULT 60,     -- si almuerzo_inicio NULL, descuento automatico
+    dias_semana             TEXT NOT NULL,          -- "1,2,3,4,5" (lun=1 .. dom=7)
+    tolerancia_entrada_min  INTEGER NOT NULL DEFAULT 10,
+    fecha_desde             TEXT NOT NULL,          -- YYYY-MM-DD desde cuando aplica
+    fecha_hasta             TEXT,                   -- NULL = indefinido
+    activo                  INTEGER NOT NULL DEFAULT 1,
+    created_at              TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_turnos_empleado ON turnos(empleado_id, activo);
+
+-- Marcajes crudos importados del Hikvision (no se borran, son la fuente de verdad)
+CREATE TABLE IF NOT EXISTS marcajes (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    hik_event_id        TEXT UNIQUE NOT NULL,       -- para deduplicar en cada sync
+    empleado_id         INTEGER REFERENCES empleados(id),
+    hik_employee_no     TEXT,                       -- copia, util si llega evento sin matchear
+    ts                  TEXT NOT NULL,              -- ISO-8601 con tz UTC-05
+    fecha               TEXT NOT NULL,              -- YYYY-MM-DD (denormalizado para queries rapidos)
+    tipo                TEXT,                       -- entrada | salida | almuerzo_in | almuerzo_out | extra_in | extra_out | desconocido
+    metodo              TEXT,                       -- face | fingerprint | card | pin | mixed | invalid
+    major               INTEGER,                    -- 5 = access event
+    minor               INTEGER,                    -- 75 = face, 76 = fingerprint, etc.
+    nombre_hik          TEXT,                       -- nombre que llego del equipo
+    foto_url            TEXT,                       -- URL de la foto del evento (relativo al equipo)
+    raw_event           TEXT,                       -- JSON crudo del evento
+    created_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_marc_empleado_fecha ON marcajes(empleado_id, fecha);
+CREATE INDEX IF NOT EXISTS idx_marc_ts ON marcajes(ts);
+CREATE INDEX IF NOT EXISTS idx_marc_event_id ON marcajes(hik_event_id);
+
+-- Horas calculadas por dia (resumen diario derivado de marcajes)
+CREATE TABLE IF NOT EXISTS horas_calculadas (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    empleado_id             INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+    fecha                   TEXT NOT NULL,          -- YYYY-MM-DD
+    primera_entrada         TEXT,                   -- HH:MM:SS
+    ultima_salida           TEXT,
+    horas_ordinarias        REAL NOT NULL DEFAULT 0,
+    horas_extra_diurna      REAL NOT NULL DEFAULT 0, -- +25%
+    horas_extra_nocturna    REAL NOT NULL DEFAULT 0, -- +75%
+    horas_nocturnas_ord     REAL NOT NULL DEFAULT 0, -- +35% recargo nocturno
+    horas_dom_fest_ord      REAL NOT NULL DEFAULT 0, -- +75%
+    horas_dom_fest_extra_d  REAL NOT NULL DEFAULT 0, -- +100%
+    horas_dom_fest_extra_n  REAL NOT NULL DEFAULT 0, -- +150%
+    minutos_tarde           INTEGER NOT NULL DEFAULT 0,
+    minutos_almuerzo        INTEGER NOT NULL DEFAULT 0,
+    estado                  TEXT NOT NULL DEFAULT 'calculado', -- calculado | aprobado | pagado
+    aprobada_por            TEXT,                   -- "auto" o user_id del dueno
+    aprobada_at             TEXT,
+    nota                    TEXT,
+    updated_at              TEXT NOT NULL,
+    UNIQUE(empleado_id, fecha)
+);
+CREATE INDEX IF NOT EXISTS idx_horas_fecha ON horas_calculadas(fecha);
+CREATE INDEX IF NOT EXISTS idx_horas_estado ON horas_calculadas(estado);
+
+-- Festivos colombianos (precarga + edicion manual)
+CREATE TABLE IF NOT EXISTS festivos_colombia (
+    fecha           TEXT PRIMARY KEY,               -- YYYY-MM-DD
+    nombre          TEXT NOT NULL,
+    fuente          TEXT NOT NULL DEFAULT 'precargado'  -- precargado | manual
+);
+
+-- Estado del sync: para saber desde cuando jalar la proxima vez
+CREATE TABLE IF NOT EXISTS asistencia_sync (
+    id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
+    last_event_ts       TEXT,                       -- ISO-8601 del ultimo evento procesado
+    last_sync_at        TEXT,                       -- ultima ejecucion del cron
+    last_sync_status    TEXT,                       -- ok | error
+    last_sync_error     TEXT,
+    eventos_procesados  INTEGER NOT NULL DEFAULT 0
+);
+
+-- Config global de asistencia (defaults editables desde panel)
+CREATE TABLE IF NOT EXISTS asistencia_config (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL,
+    descripcion     TEXT,
+    updated_at      TEXT NOT NULL
+);
 """
 
 

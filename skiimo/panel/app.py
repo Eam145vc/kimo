@@ -18,6 +18,7 @@ from skiimo.db.schema import get_conn
 from skiimo.panel.auth import (
     autenticar, crear_sesion, validar_sesion, cerrar_sesion,
 )
+from skiimo.panel.asistencia_routes import router as asistencia_router, register_pages as register_asistencia_pages
 
 
 log = logging.getLogger("skiimo.panel")
@@ -36,6 +37,35 @@ app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 async def _startup() -> None:
     ensure_db_ready()
     log.info("Panel Esskimo arrancado")
+
+    # Background: sync periodico de asistencia (Hikvision)
+    from skiimo.config import HIK_ENABLED
+    if HIK_ENABLED:
+        asyncio.create_task(_loop_sync_asistencia())
+        log.info("Loop de sync asistencia arrancado (cada 3 min)")
+
+
+async def _loop_sync_asistencia() -> None:
+    """Tarea background que jala marcajes del Hikvision cada N minutos."""
+    from skiimo.asistencia.config import get_conf
+    from skiimo.asistencia.sync import sync_once
+    # Esperar 15s al arranque para no chocar con otros startups
+    await asyncio.sleep(15)
+    while True:
+        try:
+            summary = await asyncio.to_thread(sync_once)
+            if summary.get("inserted"):
+                log.info("Sync asistencia: %d nuevos marcajes", summary["inserted"])
+            if summary.get("error"):
+                log.warning("Sync asistencia error: %s", summary["error"])
+        except Exception:
+            log.exception("Error en loop_sync_asistencia")
+        # Intervalo configurable
+        try:
+            interval_min = int(get_conf("sync_interval_minutes") or 3)
+        except Exception:
+            interval_min = 3
+        await asyncio.sleep(max(60, interval_min * 60))
 
 
 def _require_user(session_token: str | None) -> dict:
@@ -128,6 +158,11 @@ async def page_productos(request: Request, session_token: str | None = Cookie(de
 @app.get("/equipo", response_class=HTMLResponse)
 async def page_equipo(request: Request, session_token: str | None = Cookie(default=None)):
     return _render_page(request, "equipo.html", "equipo", session_token)
+
+
+# Asistencia: registrar paginas HTML y API
+register_asistencia_pages(app, templates)
+app.include_router(asistencia_router)
 
 
 # =============================================================================

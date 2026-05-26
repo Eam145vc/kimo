@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Asistencia hoy · Esskimo{% endblock %}
+
+{% block content %}
+<div x-data="asistenciaHoy()" x-init="init()">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Asistencia hoy</h1>
+      <p class="text-xs text-text-muted mt-0.5" x-text="fechaPretty"></p>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-text-muted" x-show="equipo.online" :title="equipo.serial">
+        Equipo <span class="text-success">●</span> <span x-text="equipo.model"></span>
+      </span>
+      <span class="text-xs text-danger" x-show="!equipo.online && equipoLoaded">
+        Equipo offline
+      </span>
+      <button @click="syncManual()" :disabled="syncing"
+        class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-3 py-1.5 rounded-lg transition-all disabled:opacity-50">
+        <span x-show="!syncing">Sincronizar</span>
+        <span x-show="syncing">Sincronizando…</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- KPIs -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">Empleados activos</p>
+      <p class="text-2xl font-semibold mt-1 tabular" x-text="data.total_empleados"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">Dentro ahora</p>
+      <p class="text-2xl font-semibold mt-1 tabular text-success" x-text="data.dentro?.length || 0"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">Salieron</p>
+      <p class="text-2xl font-semibold mt-1 tabular text-text-muted" x-text="data.afuera?.length || 0"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">No marcaron</p>
+      <p class="text-2xl font-semibold mt-1 tabular text-warning" x-text="data.no_marcaron?.length || 0"></p>
+    </div>
+  </div>
+
+  <!-- Listas -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
+        <span class="h-2 w-2 rounded-full bg-success"></span> Dentro
+      </h3>
+      <template x-if="!data.dentro?.length">
+        <p class="text-xs text-text-muted">Nadie marcado adentro</p>
+      </template>
+      <ul class="space-y-1">
+        <template x-for="e in data.dentro" :key="e.id">
+          <li class="text-sm py-1 flex justify-between">
+            <span x-text="e.nombre"></span>
+            <span class="text-xs text-text-muted" x-text="e.cargo || ''"></span>
+          </li>
+        </template>
+      </ul>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
+        <span class="h-2 w-2 rounded-full bg-text-muted"></span> Ya salieron
+      </h3>
+      <template x-if="!data.afuera?.length">
+        <p class="text-xs text-text-muted">Aun nadie ha salido</p>
+      </template>
+      <ul class="space-y-1">
+        <template x-for="e in data.afuera" :key="e.id">
+          <li class="text-sm py-1" x-text="e.nombre"></li>
+        </template>
+      </ul>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
+        <span class="h-2 w-2 rounded-full bg-warning"></span> No marcaron
+      </h3>
+      <template x-if="!data.no_marcaron?.length">
+        <p class="text-xs text-text-muted">Todos marcaron</p>
+      </template>
+      <ul class="space-y-1">
+        <template x-for="e in data.no_marcaron" :key="e.id">
+          <li class="text-sm py-1" x-text="e.nombre"></li>
+        </template>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Marcajes -->
+  <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
+    <div class="px-4 py-3 border-b border-border/40 flex justify-between items-center">
+      <h3 class="text-sm font-semibold">Marcajes de hoy</h3>
+      <span class="text-xs text-text-muted" x-text="(data.marcajes?.length || 0) + ' eventos'"></span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-surface-2 text-text-muted">
+          <tr>
+            <th class="text-left px-4 py-2 font-medium">Hora</th>
+            <th class="text-left px-4 py-2 font-medium">Empleado</th>
+            <th class="text-left px-4 py-2 font-medium">Tipo</th>
+            <th class="text-left px-4 py-2 font-medium">Metodo</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border/40">
+          <template x-if="loading">
+            <tr><td colspan="4" class="text-center py-8 text-text-muted">Cargando…</td></tr>
+          </template>
+          <template x-if="!loading && !data.marcajes?.length">
+            <tr><td colspan="4" class="text-center py-8 text-text-muted">Sin marcajes hoy</td></tr>
+          </template>
+          <template x-for="m in data.marcajes" :key="m.id">
+            <tr class="hover:bg-surface-2/30">
+              <td class="px-4 py-2 tabular text-text-muted" x-text="formatTime(m.ts)"></td>
+              <td class="px-4 py-2" x-text="m.empleado_nombre || ('Sin mapear (#' + m.hik_employee_no + ')')"></td>
+              <td class="px-4 py-2">
+                <span class="text-xs px-2 py-0.5 rounded-full"
+                      :class="tipoColor(m.tipo)"
+                      x-text="m.tipo"></span>
+              </td>
+              <td class="px-4 py-2 text-xs text-text-muted" x-text="m.metodo"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function asistenciaHoy() {
+  return {
+    loading: true,
+    syncing: false,
+    equipoLoaded: false,
+    equipo: { online: false },
+    data: { dentro: [], afuera: [], no_marcaron: [], marcajes: [] },
+    fechaPretty: '',
+
+    async init() {
+      this.fechaPretty = new Date().toLocaleDateString('es-CO', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+      });
+      await Promise.all([this.cargar(), this.cargarEquipo()]);
+      setInterval(() => this.cargar(), 60_000);
+    },
+
+    async cargar() {
+      this.loading = true;
+      try {
+        const r = await fetch('/api/asistencia/hoy');
+        this.data = await r.json();
+      } catch (e) { console.error(e); }
+      this.loading = false;
+    },
+
+    async cargarEquipo() {
+      try {
+        const r = await fetch('/api/asistencia/equipo/status');
+        this.equipo = await r.json();
+      } catch (e) { console.error(e); }
+      this.equipoLoaded = true;
+    },
+
+    async syncManual() {
+      this.syncing = true;
+      try {
+        await fetch('/api/asistencia/sync', { method: 'POST' });
+        await this.cargar();
+      } catch (e) { console.error(e); }
+      this.syncing = false;
+    },
+
+    formatTime(ts) {
+      if (!ts) return '';
+      try {
+        const d = new Date(ts);
+        return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      } catch { return ts; }
+    },
+
+    tipoColor(tipo) {
+      return {
+        'entrada': 'bg-success/15 text-success',
+        'salida': 'bg-text-muted/15 text-text-muted',
+        'almuerzo_out': 'bg-warning/15 text-warning',
+        'almuerzo_in': 'bg-accent/15 text-accent',
+        'extra': 'bg-warning/15 text-warning',
+        'desconocido': 'bg-danger/15 text-danger'
+      }[tipo] || 'bg-text-muted/15 text-text-muted';
+    }
+  };
+}
+</script>
+{% endblock %}

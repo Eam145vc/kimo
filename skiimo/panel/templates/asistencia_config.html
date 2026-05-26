@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Config asistencia · Esskimo{% endblock %}
+
+{% block content %}
+<div x-data="configPage()" x-init="init()">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Configuracion de asistencia</h1>
+      <p class="text-xs text-text-muted mt-0.5">Editable. Aplica a empleados nuevos sin override propio.</p>
+    </div>
+    <button @click="guardar()" :disabled="saving" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+      <span x-show="!saving">Guardar</span>
+      <span x-show="saving">Guardando…</span>
+    </button>
+  </div>
+
+  <!-- Equipo Hikvision status -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-4 mb-4">
+    <h3 class="text-sm font-semibold mb-2 flex items-center gap-2">
+      Equipo Hikvision
+      <span x-show="equipo.online" class="text-success">●</span>
+      <span x-show="!equipo.online && equipoLoaded" class="text-danger">●</span>
+    </h3>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+      <div><span class="text-text-muted">Modelo:</span> <span x-text="equipo.model || '-'"></span></div>
+      <div><span class="text-text-muted">Serial:</span> <span class="tabular" x-text="equipo.serial || '-'"></span></div>
+      <div><span class="text-text-muted">Firmware:</span> <span x-text="equipo.firmware || '-'"></span></div>
+      <div><span class="text-text-muted">Hora equipo:</span> <span class="tabular" x-text="equipo.device_time || '-'"></span></div>
+      <div><span class="text-text-muted">MAC:</span> <span class="tabular text-[10px]" x-text="equipo.mac || '-'"></span></div>
+      <div><span class="text-text-muted">Timezone:</span> <span class="tabular" x-text="equipo.timezone || '-'"></span></div>
+      <div><span class="text-text-muted">Personas en equipo:</span> <span class="tabular" x-text="equipo.personas_en_equipo ?? '-'"></span></div>
+    </div>
+  </div>
+
+  <!-- Bloques de configuracion -->
+  <div class="space-y-4">
+
+    <div class="rounded-xl bg-surface ring-1 ring-border p-5">
+      <h3 class="text-sm font-semibold mb-3">Salario base</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Salario minimo 2026 (COP/mes)</label>
+          <input type="number" x-model.number="cfg.salario_minimo_2026" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Horas legales/mes</label>
+          <input type="number" x-model.number="cfg.horas_legales_mes" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Valor hora (calculado)</label>
+          <div class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular text-text-muted" x-text="fmtMoney(Math.round((cfg.salario_minimo_2026 || 0) / (cfg.horas_legales_mes || 1)))"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-xl bg-surface ring-1 ring-border p-5">
+      <h3 class="text-sm font-semibold mb-3">Turno default</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Hora entrada</label>
+          <input type="time" x-model="cfg.turno_default_entrada" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Hora salida</label>
+          <input type="time" x-model="cfg.turno_default_salida" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Dias semana (1=lun..7=dom)</label>
+          <input type="text" x-model="cfg.turno_default_dias" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular" placeholder="1,2,3,4,5,6">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Sabado entrada</label>
+          <input type="time" x-model="cfg.turno_default_sabado_entrada" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Sabado salida</label>
+          <input type="time" x-model="cfg.turno_default_sabado_salida" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Jornada ordinaria diaria (h)</label>
+          <input type="number" step="0.5" x-model.number="cfg.jornada_ordinaria_diaria_h" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-xl bg-surface ring-1 ring-border p-5">
+      <h3 class="text-sm font-semibold mb-3">Tolerancias y almuerzo</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Tolerancia entrada (min)</label>
+          <input type="number" x-model.number="cfg.tolerancia_entrada_min" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          <p class="text-[10px] text-text-muted mt-1">Minutos tarde permitidos sin contar como tardanza.</p>
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Almuerzo descuento auto (min)</label>
+          <input type="number" x-model.number="cfg.almuerzo_descuento_min" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          <p class="text-[10px] text-text-muted mt-1">Si NO marcan almuerzo y trabajan > 6h corridas.</p>
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Limite horas extra/semana</label>
+          <input type="number" x-model.number="cfg.limite_horas_extra_semana" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          <p class="text-[10px] text-text-muted mt-1">CST art. 22 = 12h max.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-xl bg-surface ring-1 ring-border p-5">
+      <h3 class="text-sm font-semibold mb-3">Horas extra</h3>
+      <label class="flex items-start gap-3">
+        <input type="checkbox" x-model="cfg.horas_extra_requieren_aprobacion" class="mt-0.5">
+        <div>
+          <p class="text-sm">Requerir aprobacion manual del admin</p>
+          <p class="text-[11px] text-text-muted">Si esta activo, las horas extra quedan en estado <em>pendiente</em> hasta que apruebes desde el panel.</p>
+        </div>
+      </label>
+    </div>
+
+    <div class="rounded-xl bg-surface ring-1 ring-border p-5">
+      <h3 class="text-sm font-semibold mb-3">Notificaciones</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Alertar llegada tarde (min)</label>
+          <input type="number" x-model.number="cfg.alertar_llegada_tarde_min" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Alertar no llego (h)</label>
+          <input type="number" x-model.number="cfg.alertar_no_llego_h" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Resumen diario hora</label>
+          <input type="time" x-model="cfg.resumen_diario_hora" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-xl bg-surface ring-1 ring-border p-5">
+      <h3 class="text-sm font-semibold mb-3">Sync</h3>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Sync cada (min)</label>
+          <input type="number" min="1" x-model.number="cfg.sync_interval_minutes" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          <p class="text-[10px] text-text-muted mt-1">Cada cuanto el panel jala marcajes del equipo Hikvision.</p>
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Backfill al arrancar (h)</label>
+          <input type="number" min="1" x-model.number="cfg.sync_backfill_horas" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p x-show="msg" x-text="msg" class="text-sm mt-4 text-success"></p>
+
+</div>
+
+<script>
+function configPage() {
+  return {
+    cfg: {},
+    saving: false,
+    msg: '',
+    equipo: { online: false },
+    equipoLoaded: false,
+
+    async init() {
+      const r = await fetch('/api/asistencia/config');
+      const j = await r.json();
+      this.cfg = j.config || {};
+      try {
+        const e = await fetch('/api/asistencia/equipo/status');
+        this.equipo = await e.json();
+      } catch {}
+      this.equipoLoaded = true;
+    },
+
+    async guardar() {
+      this.saving = true;
+      this.msg = '';
+      try {
+        const r = await fetch('/api/asistencia/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.cfg)
+        });
+        if (r.ok) {
+          this.msg = 'Guardado.';
+          setTimeout(() => this.msg = '', 3000);
+        } else {
+          this.msg = 'Error al guardar.';
+        }
+      } catch (e) {
+        this.msg = 'Error: ' + e;
+      }
+      this.saving = false;
+    },
+
+    fmtMoney(v) {
+      if (!v) return '$0';
+      return '$' + Math.round(v).toLocaleString('es-CO') + ' / hora';
+    }
+  };
+}
+</script>
+{% endblock %}

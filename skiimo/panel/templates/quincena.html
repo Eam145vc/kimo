@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Quincena · Esskimo{% endblock %}
+
+{% block content %}
+<div x-data="quincenaPage()" x-init="init()">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Quincena</h1>
+      <p class="text-xs text-text-muted mt-0.5" x-text="periodoLabel"></p>
+    </div>
+    <div class="flex items-center gap-2">
+      <input type="date" x-model="fechaInicio" @change="cargar()" class="bg-surface ring-1 ring-border rounded px-3 py-1.5 text-sm">
+      <button @click="exportarCSV()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-1.5 rounded-lg">Exportar CSV</button>
+    </div>
+  </div>
+
+  <!-- Total -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-4 mb-4">
+    <p class="text-xs text-text-muted">Total a pagar quincena</p>
+    <p class="text-3xl font-semibold mt-1 tabular text-accent" x-text="fmtMoney(data.total_pago)"></p>
+  </div>
+
+  <!-- Tabla -->
+  <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-surface-2 text-text-muted">
+          <tr>
+            <th class="text-left px-4 py-3 font-medium">Empleado</th>
+            <th class="text-right px-3 py-3 font-medium">Dias</th>
+            <th class="text-right px-3 py-3 font-medium">Ord. D</th>
+            <th class="text-right px-3 py-3 font-medium">Ord. N</th>
+            <th class="text-right px-3 py-3 font-medium">Ext. D</th>
+            <th class="text-right px-3 py-3 font-medium">Ext. N</th>
+            <th class="text-right px-3 py-3 font-medium">Dom/Fest</th>
+            <th class="text-right px-3 py-3 font-medium">Dom Ext</th>
+            <th class="text-right px-3 py-3 font-medium">Tarde min</th>
+            <th class="text-right px-4 py-3 font-medium">A pagar</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border/40">
+          <template x-if="!data.resumen?.length">
+            <tr><td colspan="10" class="text-center py-10 text-text-muted">Sin datos en el periodo</td></tr>
+          </template>
+          <template x-for="r in data.resumen" :key="r.empleado_id">
+            <tr class="hover:bg-surface-2/30">
+              <td class="px-4 py-3" x-text="r.nombre"></td>
+              <td class="px-3 py-3 text-right tabular" x-text="r.dias_marcados"></td>
+              <td class="px-3 py-3 text-right tabular" x-text="r.ord_diurna.toFixed(1)"></td>
+              <td class="px-3 py-3 text-right tabular text-text-muted" x-text="r.ord_nocturna.toFixed(1)"></td>
+              <td class="px-3 py-3 text-right tabular text-warning" x-text="r.extra_diurna.toFixed(1)"></td>
+              <td class="px-3 py-3 text-right tabular text-warning" x-text="r.extra_nocturna.toFixed(1)"></td>
+              <td class="px-3 py-3 text-right tabular text-accent" x-text="r.dom_fest_ord.toFixed(1)"></td>
+              <td class="px-3 py-3 text-right tabular text-accent" x-text="r.dom_fest_extra.toFixed(1)"></td>
+              <td class="px-3 py-3 text-right tabular" :class="r.minutos_tarde > 0 ? 'text-danger' : 'text-text-muted'" x-text="r.minutos_tarde"></td>
+              <td class="px-4 py-3 text-right tabular font-medium" x-text="fmtMoney(r.pago_estimado)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p class="text-xs text-text-muted mt-3">
+    Ord.D = ordinaria diurna (06-21h) · Ord.N = ordinaria nocturna (21-06h, +35%) ·
+    Ext.D = extra diurna (+25%) · Ext.N = extra nocturna (+75%) ·
+    Dom/Fest = dominical/festivo ordinario (+75%) · Dom Ext = extra en dom/fest (+100%/+150%).
+    Recargos segun CST art. 168 y 179.
+  </p>
+</div>
+
+<script>
+function quincenaPage() {
+  return {
+    fechaInicio: '',
+    data: { resumen: [], total_pago: 0, periodo: {} },
+    periodoLabel: '',
+
+    async init() {
+      const hoy = new Date();
+      const d = hoy.getDate();
+      const ini = new Date(hoy.getFullYear(), hoy.getMonth(), d <= 15 ? 1 : 16);
+      this.fechaInicio = ini.toISOString().slice(0, 10);
+      await this.cargar();
+    },
+
+    async cargar() {
+      const r = await fetch('/api/asistencia/quincena?fecha_inicio=' + this.fechaInicio);
+      this.data = await r.json();
+      const p = this.data.periodo || {};
+      if (p.inicio) {
+        this.periodoLabel = `${p.inicio} a ${p.fin}`;
+      }
+    },
+
+    exportarCSV() {
+      const rows = this.data.resumen || [];
+      if (!rows.length) return;
+      const header = ['Empleado', 'Dias', 'Ord_Diurna', 'Ord_Nocturna', 'Extra_Diurna', 'Extra_Nocturna', 'DomFest_Ord', 'DomFest_Extra', 'Minutos_Tarde', 'A_pagar_COP'];
+      const lines = [header.join(',')];
+      for (const r of rows) {
+        lines.push([
+          '"' + r.nombre.replace(/"/g, '""') + '"',
+          r.dias_marcados, r.ord_diurna, r.ord_nocturna,
+          r.extra_diurna, r.extra_nocturna,
+          r.dom_fest_ord, r.dom_fest_extra,
+          r.minutos_tarde, r.pago_estimado
+        ].join(','));
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `quincena_${this.data.periodo.inicio}_${this.data.periodo.fin}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    fmtMoney(v) {
+      if (!v) return '$0';
+      return '$' + Math.round(v).toLocaleString('es-CO');
+    }
+  };
+}
+</script>
+{% endblock %}

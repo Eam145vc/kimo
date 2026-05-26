@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Empleados · Esskimo{% endblock %}
+
+{% block content %}
+<div x-data="empleadosPage()" x-init="init()">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Empleados</h1>
+      <p class="text-xs text-text-muted mt-0.5">Operarios registrados para asistencia</p>
+    </div>
+    <div class="flex gap-2">
+      <button @click="cargarHik()" class="text-sm bg-surface-2 hover:bg-border text-text px-3 py-1.5 rounded-lg">
+        Ver personas en equipo
+      </button>
+      <button @click="openCreate()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg">
+        + Nuevo empleado
+      </button>
+    </div>
+  </div>
+
+  <!-- Info -->
+  <div class="rounded-xl bg-accent/5 ring-1 ring-accent/20 p-4 mb-4 text-sm text-text-muted">
+    <p class="font-medium text-text mb-1">Como mapear empleados</p>
+    <ol class="list-decimal list-inside space-y-0.5 text-xs">
+      <li>Registra al empleado en el equipo Hikvision (cara/huella). Obtiene un <strong>ID</strong> ahi.</li>
+      <li>Aca creas el empleado con su <strong>nombre real</strong> y pones ese mismo ID en <strong>Hik Employee No</strong>.</li>
+      <li>A partir de ese momento sus marcajes apareceran asociados a su nombre.</li>
+    </ol>
+  </div>
+
+  <!-- Tabla -->
+  <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-surface-2 text-text-muted">
+          <tr>
+            <th class="text-left px-4 py-3 font-medium">Nombre</th>
+            <th class="text-left px-4 py-3 font-medium">Cedula</th>
+            <th class="text-left px-4 py-3 font-medium">Cargo</th>
+            <th class="text-left px-4 py-3 font-medium">Hik #</th>
+            <th class="text-right px-4 py-3 font-medium">Salario</th>
+            <th class="text-right px-4 py-3 font-medium">$/hora</th>
+            <th class="text-right px-4 py-3 font-medium">Marcajes</th>
+            <th class="text-left px-4 py-3 font-medium">Estado</th>
+            <th class="text-right px-4 py-3 font-medium"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border/40">
+          <template x-if="!items.length">
+            <tr><td colspan="9" class="text-center py-10 text-text-muted">Sin empleados</td></tr>
+          </template>
+          <template x-for="e in items" :key="e.id">
+            <tr class="hover:bg-surface-2/30" :class="{ 'opacity-50': !e.activo }">
+              <td class="px-4 py-3" x-text="e.nombre"></td>
+              <td class="px-4 py-3 text-text-muted" x-text="e.cedula || '-'"></td>
+              <td class="px-4 py-3 text-text-muted" x-text="e.cargo || '-'"></td>
+              <td class="px-4 py-3 text-text-muted tabular" x-text="e.hik_employee_no || '-'"></td>
+              <td class="px-4 py-3 text-right tabular" x-text="fmtMoney(e.salario_mensual)"></td>
+              <td class="px-4 py-3 text-right tabular text-text-muted" x-text="fmtMoney(e.valor_hora_ord)"></td>
+              <td class="px-4 py-3 text-right tabular text-text-muted" x-text="e.total_marcajes"></td>
+              <td class="px-4 py-3">
+                <span x-show="e.activo" class="text-xs text-success">Activo</span>
+                <span x-show="!e.activo" class="text-xs text-text-muted">Inactivo</span>
+              </td>
+              <td class="px-4 py-3 text-right">
+                <button @click="openEdit(e)" class="text-xs text-accent hover:text-accent-hover">Editar</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Modal CRUD -->
+  <div x-show="modalOpen" x-transition.opacity
+       class="fixed inset-0 bg-bg/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+       @keydown.escape.window="modalOpen = false" style="display:none">
+    <div class="bg-surface ring-1 ring-border rounded-xl p-6 max-w-md w-full">
+      <h3 class="text-lg font-semibold mb-4" x-text="form.id ? 'Editar empleado' : 'Nuevo empleado'"></h3>
+      <div class="space-y-3 text-sm">
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Nombre *</label>
+          <input x-model="form.nombre" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Cedula</label>
+            <input x-model="form.cedula" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Cargo</label>
+            <input x-model="form.cargo" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Hik Employee No (ID del equipo)</label>
+          <input x-model="form.hik_employee_no" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular" placeholder="ej: 2">
+          <p class="text-[10px] text-text-muted mt-1">Mira el ID asignado en el equipo Hikvision al registrar al empleado.</p>
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Salario mensual (COP)</label>
+          <input x-model.number="form.salario_mensual" type="number" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular" placeholder="1423500">
+          <p class="text-[10px] text-text-muted mt-1">Vacio = salario minimo 2026 ($1.423.500). Valor/hora se calcula auto.</p>
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Fecha ingreso</label>
+          <input x-model="form.fecha_ingreso" type="date" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
+        </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Telegram chat ID (opcional)</label>
+          <input x-model="form.telegram_chat_id" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        </div>
+      </div>
+      <div class="flex justify-between mt-5">
+        <button x-show="form.id" @click="del()" class="text-sm text-danger">Desactivar</button>
+        <div class="flex gap-2 ml-auto">
+          <button @click="modalOpen = false" class="text-sm px-4 py-2 text-text-muted hover:text-text">Cancelar</button>
+          <button @click="save()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg">Guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Hik -->
+  <div x-show="hikModalOpen" x-transition.opacity
+       class="fixed inset-0 bg-bg/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+       @keydown.escape.window="hikModalOpen = false" style="display:none">
+    <div class="bg-surface ring-1 ring-border rounded-xl p-6 max-w-md w-full">
+      <h3 class="text-lg font-semibold mb-3">Personas en el equipo Hikvision</h3>
+      <p class="text-xs text-text-muted mb-3">Estos son los IDs que ves al registrar caras/huellas en el equipo.</p>
+      <ul class="space-y-1 max-h-96 overflow-y-auto">
+        <template x-for="p in hikPersons" :key="p.employeeNo">
+          <li class="text-sm py-2 px-3 bg-surface-2 rounded flex justify-between">
+            <span class="tabular">#<span x-text="p.employeeNo"></span></span>
+            <span class="text-text-muted" x-text="p.name || '(sin nombre)'"></span>
+          </li>
+        </template>
+      </ul>
+      <div class="flex justify-end mt-4">
+        <button @click="hikModalOpen = false" class="text-sm px-4 py-2 text-text-muted hover:text-text">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function empleadosPage() {
+  return {
+    items: [],
+    modalOpen: false,
+    hikModalOpen: false,
+    hikPersons: [],
+    form: { id: null, nombre: '', cedula: '', cargo: '', hik_employee_no: '', salario_mensual: null, fecha_ingreso: '', telegram_chat_id: '' },
+
+    async init() { await this.cargar(); },
+
+    async cargar() {
+      const r = await fetch('/api/empleados');
+      const j = await r.json();
+      this.items = j.items || [];
+    },
+
+    openCreate() {
+      this.form = { id: null, nombre: '', cedula: '', cargo: '', hik_employee_no: '', salario_mensual: null, fecha_ingreso: '', telegram_chat_id: '' };
+      this.modalOpen = true;
+    },
+
+    openEdit(e) {
+      this.form = {
+        id: e.id, nombre: e.nombre || '', cedula: e.cedula || '', cargo: e.cargo || '',
+        hik_employee_no: e.hik_employee_no || '', salario_mensual: e.salario_mensual,
+        fecha_ingreso: e.fecha_ingreso || '', telegram_chat_id: e.telegram_chat_id || ''
+      };
+      this.modalOpen = true;
+    },
+
+    async save() {
+      if (!this.form.nombre.trim()) { alert('Nombre obligatorio'); return; }
+      const url = this.form.id ? `/api/empleados/${this.form.id}` : '/api/empleados';
+      const method = this.form.id ? 'PUT' : 'POST';
+      const r = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.form)
+      });
+      if (!r.ok) { alert('Error al guardar'); return; }
+      this.modalOpen = false;
+      await this.cargar();
+    },
+
+    async del() {
+      if (!confirm('Desactivar empleado?')) return;
+      await fetch(`/api/empleados/${this.form.id}`, { method: 'DELETE' });
+      this.modalOpen = false;
+      await this.cargar();
+    },
+
+    async cargarHik() {
+      try {
+        const r = await fetch('/api/empleados/hik');
+        if (!r.ok) { alert('No se pudo conectar al equipo Hikvision'); return; }
+        const j = await r.json();
+        this.hikPersons = j.items || [];
+        this.hikModalOpen = true;
+      } catch (e) { alert('Error: ' + e); }
+    },
+
+    fmtMoney(v) {
+      if (!v) return '-';
+      return '$' + Math.round(v).toLocaleString('es-CO');
+    }
+  };
+}
+</script>
+{% endblock %}

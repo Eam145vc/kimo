@@ -66,6 +66,15 @@ IMAP_PROCESSED_LABEL = _get("IMAP_PROCESSED_LABEL", "Kimo-Procesado")
 IMAP_ENABLED = bool(IMAP_USER and IMAP_APP_PASSWORD)
 
 
+# Hikvision DS-K1T321MFWX (terminal facial de asistencia)
+HIK_HOST = _get("HIK_HOST", "")                       # ej: 192.168.128.32
+HIK_PORT = int(_get("HIK_PORT", "80"))
+HIK_USER = _get("HIK_USER", "admin")
+HIK_PASSWORD = _get("HIK_PASSWORD", "")
+HIK_TIMEOUT_SECONDS = int(_get("HIK_TIMEOUT_SECONDS", "10"))
+HIK_ENABLED = bool(HIK_HOST and HIK_PASSWORD)
+
+
 # Mapping Siigo de impuestos
 IVA_TAX_IDS_BY_PCT: dict[float, int] = {
     0.0: 13999,
