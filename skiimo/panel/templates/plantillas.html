@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}Plantillas de horario · Esskimo{% endblock %}
+
+{% block content %}
+<div x-data="plantillasPage()" x-init="init()">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Plantillas de horario</h1>
+      <p class="text-xs text-text-muted mt-0.5">
+        Define horarios reutilizables y asignalos a empleados desde /empleados.
+      </p>
+    </div>
+    <button @click="openCreate()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg">
+      + Nueva plantilla
+    </button>
+  </div>
+
+  <!-- Tabla -->
+  <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-surface-2 text-text-muted">
+          <tr>
+            <th class="text-left px-4 py-3 font-medium">Nombre</th>
+            <th class="text-left px-3 py-3 font-medium">Entrada</th>
+            <th class="text-left px-3 py-3 font-medium">Salida</th>
+            <th class="text-left px-3 py-3 font-medium">Días</th>
+            <th class="text-left px-3 py-3 font-medium">Almuerzo</th>
+            <th class="text-right px-3 py-3 font-medium">Empleados</th>
+            <th class="text-left px-3 py-3 font-medium">Estado</th>
+            <th class="text-right px-4 py-3 font-medium"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border/40">
+          <template x-if="!items.length">
+            <tr><td colspan="8" class="text-center py-10 text-text-muted">Sin plantillas. Creá la primera con "+ Nueva plantilla"</td></tr>
+          </template>
+          <template x-for="p in items" :key="p.id">
+            <tr class="hover:bg-surface-2/30" :class="{ 'opacity-50': !p.activa }">
+              <td class="px-4 py-3 font-medium" x-text="p.nombre"></td>
+              <td class="px-3 py-3 tabular" x-text="p.hora_entrada"></td>
+              <td class="px-3 py-3 tabular" x-text="p.hora_salida"></td>
+              <td class="px-3 py-3 text-xs text-text-muted" x-text="diasLabel(p.dias_semana)"></td>
+              <td class="px-3 py-3 text-xs text-text-muted" x-text="almuerzoLabel(p)"></td>
+              <td class="px-3 py-3 text-right tabular" x-text="p.empleados_count || 0"></td>
+              <td class="px-3 py-3">
+                <span x-show="p.activa" class="text-xs text-success">Activa</span>
+                <span x-show="!p.activa" class="text-xs text-text-muted">Inactiva</span>
+              </td>
+              <td class="px-4 py-3 text-right">
+                <button @click="openEdit(p)" class="text-xs text-accent hover:text-accent-hover">Editar</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Modal CRUD -->
+  <div x-show="modalOpen" x-transition.opacity
+       class="fixed inset-0 bg-bg/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+       @keydown.escape.window="modalOpen = false" style="display:none">
+    <div class="bg-surface ring-1 ring-border rounded-xl p-6 max-w-lg w-full">
+      <h3 class="text-lg font-semibold mb-4" x-text="form.id ? 'Editar plantilla' : 'Nueva plantilla'"></h3>
+
+      <div class="space-y-3 text-sm">
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Nombre *</label>
+          <input x-model="form.nombre" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2"
+                 placeholder="Turno producción, Administrativo, etc.">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Hora entrada *</label>
+            <input type="time" x-model="form.hora_entrada" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          </div>
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Hora salida *</label>
+            <input type="time" x-model="form.hora_salida" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Días de la semana</label>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="(d, i) in diasNombres" :key="i">
+              <label class="flex items-center gap-1 px-2 py-1 rounded bg-surface-2 ring-1 ring-border cursor-pointer hover:bg-border">
+                <input type="checkbox" :value="i+1" v-model="form._dias" @change="updateDias()" :checked="form._dias.includes(i+1)">
+                <span class="text-xs" x-text="d"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Almuerzo inicio</label>
+            <input type="time" x-model="form.almuerzo_inicio" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular" placeholder="opcional">
+          </div>
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Almuerzo fin</label>
+            <input type="time" x-model="form.almuerzo_fin" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular" placeholder="opcional">
+          </div>
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Descuento auto (min)</label>
+            <input type="number" x-model.number="form.almuerzo_minutos_auto" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Tolerancia entrada (min)</label>
+            <input type="number" x-model.number="form.tolerancia_entrada_min" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          </div>
+          <div class="flex items-end">
+            <label class="flex items-center gap-2 text-sm pb-2">
+              <input type="checkbox" x-model="form.activa">
+              <span>Activa</span>
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Descripción (opcional)</label>
+          <textarea x-model="form.descripcion" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2" rows="2"></textarea>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between mt-5">
+        <button x-show="form.id" @click="del()" class="text-xs text-danger">Borrar</button>
+        <div class="flex gap-2 ml-auto">
+          <button @click="modalOpen = false" class="text-sm px-4 py-2 text-text-muted hover:text-text">Cancelar</button>
+          <button @click="save()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg">Guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function plantillasPage() {
+  return {
+    items: [],
+    modalOpen: false,
+    diasNombres: ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'],
+    form: this.emptyForm(),
+
+    emptyForm() {
+      return {
+        id: null, nombre: '', descripcion: '',
+        hora_entrada: '07:00', hora_salida: '16:00',
+        almuerzo_inicio: '', almuerzo_fin: '', almuerzo_minutos_auto: 60,
+        dias_semana: '1,2,3,4,5', _dias: [1,2,3,4,5],
+        tolerancia_entrada_min: 10, activa: true
+      };
+    },
+
+    async init() {
+      this.form = this.emptyForm();
+      await this.cargar();
+    },
+
+    async cargar() {
+      const r = await fetch('/api/plantillas');
+      const j = await r.json();
+      this.items = j.items || [];
+    },
+
+    diasLabel(diasStr) {
+      if (!diasStr) return '-';
+      const nums = diasStr.split(',').map(n => parseInt(n.trim(), 10)).filter(n => n >= 1 && n <= 7);
+      const sorted = nums.sort((a,b) => a-b);
+      return sorted.map(n => this.diasNombres[n-1]).join(', ');
+    },
+
+    almuerzoLabel(p) {
+      if (p.almuerzo_inicio && p.almuerzo_fin) return `${p.almuerzo_inicio} - ${p.almuerzo_fin}`;
+      if (p.almuerzo_minutos_auto) return `auto ${p.almuerzo_minutos_auto} min`;
+      return 'sin';
+    },
+
+    openCreate() {
+      this.form = this.emptyForm();
+      this.modalOpen = true;
+    },
+
+    openEdit(p) {
+      this.form = {
+        ...p,
+        almuerzo_inicio: p.almuerzo_inicio || '',
+        almuerzo_fin: p.almuerzo_fin || '',
+        descripcion: p.descripcion || '',
+        activa: !!p.activa,
+        _dias: (p.dias_semana || '').split(',').map(n => parseInt(n.trim(), 10)).filter(n => n >= 1 && n <= 7)
+      };
+      this.modalOpen = true;
+    },
+
+    updateDias() {
+      this.form.dias_semana = this.form._dias.sort((a,b) => a-b).join(',');
+    },
+
+    async save() {
+      if (!this.form.nombre.trim()) { alert('Nombre obligatorio'); return; }
+      this.updateDias();
+      if (!this.form.dias_semana) { alert('Seleccioná al menos un día'); return; }
+
+      const body = { ...this.form };
+      delete body._dias;
+      delete body.id;
+      delete body.empleados_count;
+      delete body.created_at;
+      delete body.updated_at;
+      // Limpiar campos vacios
+      if (!body.almuerzo_inicio) body.almuerzo_inicio = null;
+      if (!body.almuerzo_fin) body.almuerzo_fin = null;
+
+      const url = this.form.id ? `/api/plantillas/${this.form.id}` : '/api/plantillas';
+      const method = this.form.id ? 'PUT' : 'POST';
+      const r = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!r.ok) {
+        const err = await r.text();
+        alert('Error: ' + err.slice(0, 200));
+        return;
+      }
+      this.modalOpen = false;
+      await this.cargar();
+    },
+
+    async del() {
+      if (!confirm('Borrar esta plantilla? Los empleados que la usan quedarán sin horario asignado.')) return;
+      await fetch(`/api/plantillas/${this.form.id}`, { method: 'DELETE' });
+      this.modalOpen = false;
+      await this.cargar();
+    }
+  };
+}
+</script>
+{% endblock %}

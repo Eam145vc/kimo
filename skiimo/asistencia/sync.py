@@ -83,37 +83,31 @@ def _auto_create_empleado(hik_employee_no: str, nombre_hik: str | None) -> int |
     """Crea un empleado automaticamente cuando llega un marcaje de un ID nuevo.
 
     Usa el nombre que vino del equipo (puede estar en minusculas). El usuario
-    luego puede editarlo desde /empleados. Cargo queda 'Pendiente revision'.
+    DEBE editarlo despues desde /empleados para asignar salario y plantilla
+    de horario - no usamos defaults para evitar pagos erroneos.
     """
     if not hik_employee_no:
         return None
 
-    from skiimo.asistencia.config import DEFAULTS
-
     nombre = (nombre_hik or f"Empleado #{hik_employee_no}").strip()
-    # Capitalizar nombre si vino todo en minusculas
     if nombre.islower():
         nombre = " ".join(w.capitalize() for w in nombre.split())
-
-    sal = DEFAULTS["salario_minimo_2026"]
-    valor_hora = round(sal / DEFAULTS["horas_legales_mes"])
 
     now = datetime.now(TZ_BOGOTA).isoformat()
     conn = get_conn()
     try:
         try:
+            # salario_mensual NULL: obligar a admin a configurarlo manualmente
             cur = conn.execute(
-                """INSERT INTO empleados (hik_employee_no, nombre, cargo, salario_mensual,
-                                           valor_hora_ord, activo, observaciones,
+                """INSERT INTO empleados (hik_employee_no, nombre, cargo,
+                                           activo, observaciones,
                                            created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+                   VALUES (?, ?, ?, 1, ?, ?, ?)""",
                 (
                     hik_employee_no,
                     nombre,
-                    "Pendiente revision",
-                    sal,
-                    valor_hora,
-                    "auto-creado desde push del equipo",
+                    "Pendiente configuracion",
+                    "Auto-creado desde push del equipo. Configurar salario y plantilla.",
                     now,
                     now,
                 ),
@@ -121,7 +115,6 @@ def _auto_create_empleado(hik_employee_no: str, nombre_hik: str | None) -> int |
             conn.commit()
             return cur.lastrowid
         except Exception as e:
-            # Race condition: alguien lo creo entre el SELECT y el INSERT
             if "UNIQUE" in str(e):
                 row = conn.execute(
                     "SELECT id FROM empleados WHERE hik_employee_no = ?",

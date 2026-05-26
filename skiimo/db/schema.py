@@ -311,6 +311,23 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- ASISTENCIA (Hikvision DS-K1T321MFWX + calculo horas Colombia)
 -- ==========================================================================
 
+-- Plantillas de horario: para reutilizar configuracion entre empleados similares
+CREATE TABLE IF NOT EXISTS plantillas_turno (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre                  TEXT NOT NULL,          -- "Turno produccion", "Administrativo"
+    descripcion             TEXT,
+    hora_entrada            TEXT NOT NULL,          -- "07:00"
+    hora_salida             TEXT NOT NULL,          -- "16:00"
+    almuerzo_inicio         TEXT,                   -- "12:00" o NULL (sin descuento auto)
+    almuerzo_fin            TEXT,                   -- "13:00"
+    almuerzo_minutos_auto   INTEGER DEFAULT 60,     -- si no marcan almuerzo y jornada >6h
+    dias_semana             TEXT NOT NULL,          -- "1,2,3,4,5" (lun=1 .. dom=7)
+    tolerancia_entrada_min  INTEGER NOT NULL DEFAULT 10,
+    activa                  INTEGER NOT NULL DEFAULT 1,
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL
+);
+
 -- Empleados que marcan en el terminal facial
 CREATE TABLE IF NOT EXISTS empleados (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -319,9 +336,10 @@ CREATE TABLE IF NOT EXISTS empleados (
     nombre              TEXT NOT NULL,
     cargo               TEXT,
     telegram_chat_id    TEXT,                       -- opcional: para avisarle al empleado
-    salario_mensual     REAL,                       -- COP. Default: salario minimo 2026
+    salario_mensual     REAL,                       -- COP. Obligatorio al crear (no hay default)
     valor_hora_ord      REAL,                       -- COP/hora ordinaria (calculado o sobrescrito)
     fecha_ingreso       TEXT,                       -- YYYY-MM-DD
+    plantilla_id        INTEGER REFERENCES plantillas_turno(id),  -- horario asignado
     activo              INTEGER NOT NULL DEFAULT 1,
     foto_path           TEXT,                       -- ruta de la foto facial subida al equipo
     observaciones       TEXT,
@@ -332,45 +350,73 @@ CREATE INDEX IF NOT EXISTS idx_emp_hik ON empleados(hik_employee_no);
 CREATE INDEX IF NOT EXISTS idx_emp_activo ON empleados(activo);
 CREATE INDEX IF NOT EXISTS idx_emp_cedula ON empleados(cedula);
 
--- Turnos: horario que aplica a un empleado (puede tener varios si rotan)
+-- Turnos: override puntual de plantilla para un empleado (si rota, vacaciones, etc).
+-- Para la mayoria de los casos, el empleado tiene una plantilla_id y no necesita filas aca.
 CREATE TABLE IF NOT EXISTS turnos (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     empleado_id             INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
-    nombre                  TEXT NOT NULL,          -- "Turno manana", "Turno tarde", "Turno sabado"
-    hora_entrada            TEXT NOT NULL,          -- "07:00"
-    hora_salida             TEXT NOT NULL,          -- "16:00"
-    almuerzo_inicio         TEXT,                   -- "12:00" si marcan almuerzo, NULL si descuento auto
-    almuerzo_fin            TEXT,                   -- "13:00"
-    almuerzo_minutos_auto   INTEGER DEFAULT 60,     -- si almuerzo_inicio NULL, descuento automatico
-    dias_semana             TEXT NOT NULL,          -- "1,2,3,4,5" (lun=1 .. dom=7)
+    plantilla_id            INTEGER REFERENCES plantillas_turno(id),
+    nombre                  TEXT NOT NULL,
+    hora_entrada            TEXT NOT NULL,
+    hora_salida             TEXT NOT NULL,
+    almuerzo_inicio         TEXT,
+    almuerzo_fin            TEXT,
+    almuerzo_minutos_auto   INTEGER DEFAULT 60,
+    dias_semana             TEXT NOT NULL,
     tolerancia_entrada_min  INTEGER NOT NULL DEFAULT 10,
-    fecha_desde             TEXT NOT NULL,          -- YYYY-MM-DD desde cuando aplica
-    fecha_hasta             TEXT,                   -- NULL = indefinido
+    fecha_desde             TEXT NOT NULL,
+    fecha_hasta             TEXT,
     activo                  INTEGER NOT NULL DEFAULT 1,
     created_at              TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_turnos_empleado ON turnos(empleado_id, activo);
 
--- Marcajes crudos importados del Hikvision (no se borran, son la fuente de verdad)
+-- Marcajes: del Hikvision (hik_event_id NOT NULL) o manuales (hik_event_id NULL).
+-- Los del equipo NO se borran salvo error grave; los manuales si.
+-- editado=1 cuando un admin corrige el ts/tipo (queda copia en raw_event).
 CREATE TABLE IF NOT EXISTS marcajes (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    hik_event_id        TEXT UNIQUE NOT NULL,       -- para deduplicar en cada sync
+    hik_event_id        TEXT UNIQUE,                -- NULL = marcaje manual
     empleado_id         INTEGER REFERENCES empleados(id),
-    hik_employee_no     TEXT,                       -- copia, util si llega evento sin matchear
-    ts                  TEXT NOT NULL,              -- ISO-8601 con tz UTC-05
-    fecha               TEXT NOT NULL,              -- YYYY-MM-DD (denormalizado para queries rapidos)
-    tipo                TEXT,                       -- entrada | salida | almuerzo_in | almuerzo_out | extra_in | extra_out | desconocido
-    metodo              TEXT,                       -- face | fingerprint | card | pin | mixed | invalid
-    major               INTEGER,                    -- 5 = access event
-    minor               INTEGER,                    -- 75 = face, 76 = fingerprint, etc.
-    nombre_hik          TEXT,                       -- nombre que llego del equipo
-    foto_url            TEXT,                       -- URL de la foto del evento (relativo al equipo)
-    raw_event           TEXT,                       -- JSON crudo del evento
+    hik_employee_no     TEXT,
+    ts                  TEXT NOT NULL,
+    fecha               TEXT NOT NULL,
+    tipo                TEXT,                       -- entrada | salida | almuerzo_in | almuerzo_out | desconocido
+    metodo              TEXT,                       -- face | fingerprint | card | pin | manual
+    major               INTEGER,
+    minor               INTEGER,
+    nombre_hik          TEXT,
+    foto_url            TEXT,
+    raw_event           TEXT,                       -- JSON crudo del evento original
+    origen              TEXT NOT NULL DEFAULT 'hikvision',  -- hikvision | manual | corregido
+    editado             INTEGER NOT NULL DEFAULT 0, -- 1 si admin lo corrigio
+    editado_por         TEXT,
+    editado_at          TEXT,
+    nota_admin          TEXT,                       -- "Olvido marcar salida", "Permiso autorizado", etc.
+    ignorar_nomina      INTEGER NOT NULL DEFAULT 0, -- 1 = no contar para horas calculadas
     created_at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_marc_empleado_fecha ON marcajes(empleado_id, fecha);
 CREATE INDEX IF NOT EXISTS idx_marc_ts ON marcajes(ts);
 CREATE INDEX IF NOT EXISTS idx_marc_event_id ON marcajes(hik_event_id);
+
+-- Excepciones / novedades de nomina: permisos, ausencias justificadas, vacaciones,
+-- incapacidades, horas extra autorizadas anticipadamente, ajustes manuales, etc.
+-- No estan vinculadas a marcajes especificos sino a un dia o rango.
+CREATE TABLE IF NOT EXISTS excepciones_asistencia (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    empleado_id     INTEGER NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+    fecha_desde     TEXT NOT NULL,                  -- YYYY-MM-DD
+    fecha_hasta     TEXT NOT NULL,                  -- YYYY-MM-DD (mismo dia si es 1 solo)
+    tipo            TEXT NOT NULL,                  -- permiso | vacaciones | incapacidad | ausencia_justificada | ausencia_injustificada | hora_extra_aprobada | ajuste_horas | tardanza_perdonada
+    horas_ajuste    REAL DEFAULT 0,                 -- horas a sumar/restar (puede ser negativo)
+    paga            INTEGER NOT NULL DEFAULT 1,     -- 1 = se paga, 0 = descuenta de nomina
+    motivo          TEXT,                           -- texto libre
+    aprobado_por    TEXT,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_excep_empleado_fecha ON excepciones_asistencia(empleado_id, fecha_desde, fecha_hasta);
+CREATE INDEX IF NOT EXISTS idx_excep_tipo ON excepciones_asistencia(tipo);
 
 -- Horas calculadas por dia (resumen diario derivado de marcajes)
 CREATE TABLE IF NOT EXISTS horas_calculadas (
@@ -433,10 +479,100 @@ def get_conn(db_path: Path | str | None = None) -> sqlite3.Connection:
     return conn
 
 
+# Migraciones idempotentes: agregar columnas que se sumaron despues de la creacion inicial.
+# Solo necesario porque SQLite no soporta IF NOT EXISTS en ALTER TABLE ADD COLUMN.
+MIGRATIONS = [
+    # Empleados: columna plantilla_id
+    ("empleados", "plantilla_id", "INTEGER REFERENCES plantillas_turno(id)"),
+    # Marcajes: columnas nuevas para correccion manual
+    ("marcajes", "origen", "TEXT NOT NULL DEFAULT 'hikvision'"),
+    ("marcajes", "editado", "INTEGER NOT NULL DEFAULT 0"),
+    ("marcajes", "editado_por", "TEXT"),
+    ("marcajes", "editado_at", "TEXT"),
+    ("marcajes", "nota_admin", "TEXT"),
+    ("marcajes", "ignorar_nomina", "INTEGER NOT NULL DEFAULT 0"),
+    # Turnos: link a plantilla
+    ("turnos", "plantilla_id", "INTEGER REFERENCES plantillas_turno(id)"),
+]
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    for table, column, ddl in MIGRATIONS:
+        # Chequear si la columna ya existe
+        cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {c["name"] for c in cols}
+        if column not in existing:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            except sqlite3.OperationalError as e:
+                # Si la tabla todavia no existe (DB nueva), el CREATE TABLE de SCHEMA la creara
+                # con la columna ya incluida. Ignoramos.
+                if "no such table" not in str(e).lower():
+                    raise
+
+    # Caso especial: hik_event_id tenia NOT NULL, lo aflojamos.
+    # SQLite no soporta DROP NOT NULL directo; rehacemos la tabla si detectamos el constraint.
+    try:
+        info = conn.execute("PRAGMA table_info(marcajes)").fetchall()
+        for c in info:
+            if c["name"] == "hik_event_id" and c["notnull"] == 1:
+                # Renombrar tabla vieja
+                conn.execute("ALTER TABLE marcajes RENAME TO marcajes_old")
+                # Crear nueva con hik_event_id UNIQUE pero permitiendo NULL
+                conn.execute("""
+                    CREATE TABLE marcajes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        hik_event_id TEXT UNIQUE,
+                        empleado_id INTEGER REFERENCES empleados(id),
+                        hik_employee_no TEXT,
+                        ts TEXT NOT NULL,
+                        fecha TEXT NOT NULL,
+                        tipo TEXT,
+                        metodo TEXT,
+                        major INTEGER,
+                        minor INTEGER,
+                        nombre_hik TEXT,
+                        foto_url TEXT,
+                        raw_event TEXT,
+                        origen TEXT NOT NULL DEFAULT 'hikvision',
+                        editado INTEGER NOT NULL DEFAULT 0,
+                        editado_por TEXT,
+                        editado_at TEXT,
+                        nota_admin TEXT,
+                        ignorar_nomina INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL
+                    )
+                """)
+                conn.execute("""
+                    INSERT INTO marcajes
+                    (id, hik_event_id, empleado_id, hik_employee_no, ts, fecha, tipo, metodo,
+                     major, minor, nombre_hik, foto_url, raw_event, origen, editado,
+                     editado_por, editado_at, nota_admin, ignorar_nomina, created_at)
+                    SELECT id, hik_event_id, empleado_id, hik_employee_no, ts, fecha, tipo, metodo,
+                           major, minor, nombre_hik, foto_url, raw_event,
+                           COALESCE(origen, 'hikvision'),
+                           COALESCE(editado, 0),
+                           editado_por, editado_at, nota_admin,
+                           COALESCE(ignorar_nomina, 0),
+                           created_at
+                    FROM marcajes_old
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_marc_empleado_fecha ON marcajes(empleado_id, fecha)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_marc_ts ON marcajes(ts)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_marc_event_id ON marcajes(hik_event_id)")
+                conn.execute("DROP TABLE marcajes_old")
+                break
+    except sqlite3.OperationalError as e:
+        # Si la tabla no existia, la migracion no aplica
+        if "no such table" not in str(e).lower():
+            raise
+
+
 def init_db(db_path: Path | str | None = None) -> None:
     conn = get_conn(db_path)
     try:
         conn.executescript(SCHEMA)
+        _apply_migrations(conn)
         conn.commit()
     finally:
         conn.close()

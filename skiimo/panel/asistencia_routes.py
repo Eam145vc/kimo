@@ -116,6 +116,26 @@ def register_pages(app, templates) -> None:
             context={"user": user["username"], "page": "equipo_hikvision"},
         )
 
+    @app.get("/plantillas", response_class=HTMLResponse)
+    async def page_plantillas(request: Request, session_token: str | None = Cookie(default=None)):
+        user = validar_sesion(session_token)
+        if not user:
+            return RedirectResponse(url="/login", status_code=303)
+        return templates.TemplateResponse(
+            request=request, name="plantillas.html",
+            context={"user": user["username"], "page": "plantillas"},
+        )
+
+    @app.get("/excepciones", response_class=HTMLResponse)
+    async def page_excepciones(request: Request, session_token: str | None = Cookie(default=None)):
+        user = validar_sesion(session_token)
+        if not user:
+            return RedirectResponse(url="/login", status_code=303)
+        return templates.TemplateResponse(
+            request=request, name="excepciones.html",
+            context={"user": user["username"], "page": "excepciones"},
+        )
+
 
 # =============================================================================
 # APIs
@@ -235,6 +255,39 @@ class EmpleadoIn(BaseModel):
     telegram_chat_id: str | None = None
     salario_mensual: float | None = None
     fecha_ingreso: str | None = None
+    plantilla_id: int | None = None
+
+
+class PlantillaIn(BaseModel):
+    nombre: str
+    descripcion: str | None = None
+    hora_entrada: str            # "07:00"
+    hora_salida: str             # "16:00"
+    almuerzo_inicio: str | None = None
+    almuerzo_fin: str | None = None
+    almuerzo_minutos_auto: int = 60
+    dias_semana: str             # "1,2,3,4,5"
+    tolerancia_entrada_min: int = 10
+    activa: bool = True
+
+
+class MarcajeIn(BaseModel):
+    """Para crear marcaje manual o editar uno existente."""
+    empleado_id: int
+    ts: str                      # ISO-8601 con tz
+    tipo: str | None = None      # entrada | salida | almuerzo_in | almuerzo_out
+    nota_admin: str | None = None
+    ignorar_nomina: bool = False
+
+
+class ExcepcionIn(BaseModel):
+    empleado_id: int
+    fecha_desde: str             # YYYY-MM-DD
+    fecha_hasta: str
+    tipo: str                    # permiso | vacaciones | incapacidad | ausencia_justificada | etc.
+    horas_ajuste: float = 0
+    paga: bool = True
+    motivo: str | None = None
 
 
 @router.get("/api/empleados")
@@ -413,18 +466,18 @@ async def api_empleados_sync_hik(
 async def api_empleado_crear(body: EmpleadoIn, session_token: str | None = Cookie(default=None)):
     _require_user(session_token)
     now = datetime.utcnow().isoformat()
-    # Valor hora calculado
-    sal = body.salario_mensual or DEFAULTS["salario_minimo_2026"]
-    valor_hora = round(sal / DEFAULTS["horas_legales_mes"])
+    # Valor hora: solo si el salario esta seteado
+    sal = body.salario_mensual
+    valor_hora = round(sal / DEFAULTS["horas_legales_mes"]) if sal else None
     conn = get_conn()
     try:
         cur = conn.execute(
             """INSERT INTO empleados (hik_employee_no, cedula, nombre, cargo, telegram_chat_id,
-                                       salario_mensual, valor_hora_ord, fecha_ingreso,
+                                       salario_mensual, valor_hora_ord, fecha_ingreso, plantilla_id,
                                        activo, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
             (body.hik_employee_no, body.cedula, body.nombre, body.cargo, body.telegram_chat_id,
-             sal, valor_hora, body.fecha_ingreso, now, now),
+             sal, valor_hora, body.fecha_ingreso, body.plantilla_id, now, now),
         )
         conn.commit()
         emp_id = cur.lastrowid
@@ -437,17 +490,17 @@ async def api_empleado_crear(body: EmpleadoIn, session_token: str | None = Cooki
 async def api_empleado_editar(emp_id: int, body: EmpleadoIn, session_token: str | None = Cookie(default=None)):
     _require_user(session_token)
     now = datetime.utcnow().isoformat()
-    sal = body.salario_mensual or DEFAULTS["salario_minimo_2026"]
-    valor_hora = round(sal / DEFAULTS["horas_legales_mes"])
+    sal = body.salario_mensual
+    valor_hora = round(sal / DEFAULTS["horas_legales_mes"]) if sal else None
     conn = get_conn()
     try:
         conn.execute(
             """UPDATE empleados SET hik_employee_no=?, cedula=?, nombre=?, cargo=?,
                                      telegram_chat_id=?, salario_mensual=?, valor_hora_ord=?,
-                                     fecha_ingreso=?, updated_at=?
+                                     fecha_ingreso=?, plantilla_id=?, updated_at=?
                WHERE id = ?""",
             (body.hik_employee_no, body.cedula, body.nombre, body.cargo, body.telegram_chat_id,
-             sal, valor_hora, body.fecha_ingreso, now, emp_id),
+             sal, valor_hora, body.fecha_ingreso, body.plantilla_id, now, emp_id),
         )
         # Re-asignar marcajes huerfanos con el mismo hik_employee_no
         if body.hik_employee_no:
@@ -455,6 +508,258 @@ async def api_empleado_editar(emp_id: int, body: EmpleadoIn, session_token: str 
                 "UPDATE marcajes SET empleado_id = ? WHERE empleado_id IS NULL AND hik_employee_no = ?",
                 (emp_id, body.hik_employee_no),
             )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+# =============================================================================
+# Plantillas de turno
+# =============================================================================
+
+
+@router.get("/api/plantillas")
+async def api_plantillas_list(session_token: str | None = Cookie(default=None)):
+    _require_user(session_token)
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT p.*,
+                      (SELECT COUNT(*) FROM empleados e WHERE e.plantilla_id = p.id AND e.activo = 1) AS empleados_count
+               FROM plantillas_turno p
+               ORDER BY p.activa DESC, p.nombre"""
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.post("/api/plantillas")
+async def api_plantilla_crear(body: PlantillaIn, session_token: str | None = Cookie(default=None)):
+    _require_user(session_token)
+    now = datetime.utcnow().isoformat()
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO plantillas_turno (nombre, descripcion, hora_entrada, hora_salida,
+                                              almuerzo_inicio, almuerzo_fin, almuerzo_minutos_auto,
+                                              dias_semana, tolerancia_entrada_min, activa,
+                                              created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (body.nombre, body.descripcion, body.hora_entrada, body.hora_salida,
+             body.almuerzo_inicio, body.almuerzo_fin, body.almuerzo_minutos_auto,
+             body.dias_semana, body.tolerancia_entrada_min,
+             1 if body.activa else 0, now, now),
+        )
+        conn.commit()
+        pid = cur.lastrowid
+    finally:
+        conn.close()
+    return {"id": pid}
+
+
+@router.put("/api/plantillas/{plantilla_id}")
+async def api_plantilla_editar(plantilla_id: int, body: PlantillaIn,
+                                session_token: str | None = Cookie(default=None)):
+    _require_user(session_token)
+    now = datetime.utcnow().isoformat()
+    conn = get_conn()
+    try:
+        conn.execute(
+            """UPDATE plantillas_turno SET
+                  nombre=?, descripcion=?, hora_entrada=?, hora_salida=?,
+                  almuerzo_inicio=?, almuerzo_fin=?, almuerzo_minutos_auto=?,
+                  dias_semana=?, tolerancia_entrada_min=?, activa=?, updated_at=?
+               WHERE id = ?""",
+            (body.nombre, body.descripcion, body.hora_entrada, body.hora_salida,
+             body.almuerzo_inicio, body.almuerzo_fin, body.almuerzo_minutos_auto,
+             body.dias_semana, body.tolerancia_entrada_min,
+             1 if body.activa else 0, now, plantilla_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@router.delete("/api/plantillas/{plantilla_id}")
+async def api_plantilla_borrar(plantilla_id: int, session_token: str | None = Cookie(default=None)):
+    _require_user(session_token)
+    conn = get_conn()
+    try:
+        # Marcar empleados que la usan como sin plantilla
+        conn.execute("UPDATE empleados SET plantilla_id = NULL WHERE plantilla_id = ?", (plantilla_id,))
+        conn.execute("DELETE FROM plantillas_turno WHERE id = ?", (plantilla_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+# =============================================================================
+# Correccion de marcajes
+# =============================================================================
+
+
+@router.post("/api/marcajes")
+async def api_marcaje_crear_manual(body: MarcajeIn, session_token: str | None = Cookie(default=None)):
+    """Crea un marcaje manual (cuando el equipo no lo registro o el admin
+    necesita agregar uno historico). origen='manual', metodo='manual'."""
+    user = _require_user(session_token)
+    now = datetime.utcnow().isoformat()
+    try:
+        ts = datetime.fromisoformat(body.ts)
+    except ValueError:
+        raise HTTPException(400, "ts invalido. Use ISO-8601, ej: 2026-05-26T07:00:00-05:00")
+    fecha = ts.date().isoformat()
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO marcajes (empleado_id, ts, fecha, tipo, metodo, origen,
+                                      editado, editado_por, editado_at, nota_admin,
+                                      ignorar_nomina, created_at)
+               VALUES (?, ?, ?, ?, 'manual', 'manual', 1, ?, ?, ?, ?, ?)""",
+            (body.empleado_id, body.ts, fecha, body.tipo,
+             user.get("username", "admin"), now, body.nota_admin,
+             1 if body.ignorar_nomina else 0, now),
+        )
+        conn.commit()
+        mid = cur.lastrowid
+    finally:
+        conn.close()
+    return {"id": mid}
+
+
+@router.put("/api/marcajes/{marcaje_id}")
+async def api_marcaje_editar(marcaje_id: int, body: MarcajeIn,
+                              session_token: str | None = Cookie(default=None)):
+    """Edita un marcaje existente (cambiar hora, tipo, o marcar ignorar_nomina).
+    Marca origen='corregido' y editado=1.
+    """
+    user = _require_user(session_token)
+    now = datetime.utcnow().isoformat()
+    try:
+        ts = datetime.fromisoformat(body.ts)
+    except ValueError:
+        raise HTTPException(400, "ts invalido")
+    fecha = ts.date().isoformat()
+
+    conn = get_conn()
+    try:
+        # Verificar que existe
+        row = conn.execute("SELECT origen FROM marcajes WHERE id = ?", (marcaje_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Marcaje no encontrado")
+        nuevo_origen = "manual" if row["origen"] == "manual" else "corregido"
+
+        conn.execute(
+            """UPDATE marcajes SET
+                  ts=?, fecha=?, tipo=COALESCE(?, tipo),
+                  origen=?, editado=1, editado_por=?, editado_at=?,
+                  nota_admin=COALESCE(?, nota_admin),
+                  ignorar_nomina=?
+               WHERE id = ?""",
+            (body.ts, fecha, body.tipo, nuevo_origen,
+             user.get("username", "admin"), now,
+             body.nota_admin, 1 if body.ignorar_nomina else 0, marcaje_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@router.delete("/api/marcajes/{marcaje_id}")
+async def api_marcaje_borrar(marcaje_id: int, session_token: str | None = Cookie(default=None)):
+    """Borra un marcaje. Solo permitido si es manual; si es del Hikvision,
+    en lugar de borrar marcamos ignorar_nomina=1 para mantener trazabilidad."""
+    _require_user(session_token)
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT origen FROM marcajes WHERE id = ?", (marcaje_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Marcaje no encontrado")
+        if row["origen"] == "manual":
+            conn.execute("DELETE FROM marcajes WHERE id = ?", (marcaje_id,))
+        else:
+            # Marcajes del equipo: soft delete (ignorar para nomina)
+            conn.execute(
+                "UPDATE marcajes SET ignorar_nomina = 1 WHERE id = ?", (marcaje_id,)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "soft_delete": row["origen"] != "manual"}
+
+
+# =============================================================================
+# Excepciones (permisos, vacaciones, ajustes)
+# =============================================================================
+
+
+@router.get("/api/excepciones")
+async def api_excepciones_list(
+    session_token: str | None = Cookie(default=None),
+    empleado_id: int | None = None,
+    desde: str = "",
+    hasta: str = "",
+):
+    _require_user(session_token)
+    sql = """SELECT x.*, e.nombre AS empleado_nombre
+             FROM excepciones_asistencia x
+             JOIN empleados e ON e.id = x.empleado_id
+             WHERE 1=1"""
+    params: list[Any] = []
+    if empleado_id:
+        sql += " AND x.empleado_id = ?"
+        params.append(empleado_id)
+    if desde:
+        sql += " AND x.fecha_hasta >= ?"
+        params.append(desde)
+    if hasta:
+        sql += " AND x.fecha_desde <= ?"
+        params.append(hasta)
+    sql += " ORDER BY x.fecha_desde DESC, x.id DESC"
+    conn = get_conn()
+    try:
+        rows = conn.execute(sql, tuple(params)).fetchall()
+    finally:
+        conn.close()
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.post("/api/excepciones")
+async def api_excepcion_crear(body: ExcepcionIn,
+                                session_token: str | None = Cookie(default=None)):
+    user = _require_user(session_token)
+    now = datetime.utcnow().isoformat()
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO excepciones_asistencia
+                (empleado_id, fecha_desde, fecha_hasta, tipo, horas_ajuste, paga,
+                 motivo, aprobado_por, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (body.empleado_id, body.fecha_desde, body.fecha_hasta, body.tipo,
+             body.horas_ajuste, 1 if body.paga else 0,
+             body.motivo, user.get("username", "admin"), now),
+        )
+        conn.commit()
+        xid = cur.lastrowid
+    finally:
+        conn.close()
+    return {"id": xid}
+
+
+@router.delete("/api/excepciones/{excep_id}")
+async def api_excepcion_borrar(excep_id: int,
+                                 session_token: str | None = Cookie(default=None)):
+    _require_user(session_token)
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM excepciones_asistencia WHERE id = ?", (excep_id,))
         conn.commit()
     finally:
         conn.close()
