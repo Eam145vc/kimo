@@ -183,19 +183,18 @@ async def api_resumen_diario(
         where.append("m.fecha <= ?")
         params.append(hasta)
 
+    # Obtener todos los marcajes del rango con todos sus timestamps,
+    # para poder inferir entrada/almuerzo/salida cuando hay 3 o 4 marcajes en el dia.
     sql = f"""
         SELECT
             m.empleado_id,
             e.nombre AS empleado_nombre,
             m.fecha,
-            MIN(m.ts) AS primera_ts,
-            MAX(m.ts) AS ultima_ts,
-            COUNT(*) AS cantidad_marcajes
+            m.ts
         FROM marcajes m
         JOIN empleados e ON e.id = m.empleado_id
         WHERE {' AND '.join(where)}
-        GROUP BY m.empleado_id, m.fecha
-        ORDER BY m.fecha DESC, e.nombre
+        ORDER BY m.empleado_id, m.fecha, m.ts
     """
 
     conn = get_conn()
@@ -204,39 +203,84 @@ async def api_resumen_diario(
     finally:
         conn.close()
 
-    items = []
+    # Agrupar por (empleado_id, fecha)
+    grupos: dict[tuple[int, str], dict] = {}
     for r in rows:
-        primera_ts = r["primera_ts"]
-        ultima_ts = r["ultima_ts"]
-        primera_entrada = None
-        ultima_salida = None
+        key = (r["empleado_id"], r["fecha"])
+        if key not in grupos:
+            grupos[key] = {
+                "empleado_id": r["empleado_id"],
+                "empleado_nombre": r["empleado_nombre"],
+                "fecha": r["fecha"],
+                "ts_list": [],
+            }
+        grupos[key]["ts_list"].append(r["ts"])
+
+    def _fmt(ts_iso: str) -> str | None:
+        try:
+            return datetime.fromisoformat(ts_iso).strftime("%H:%M:%S")
+        except Exception:
+            return None
+
+    items = []
+    for (eid, fecha), g in grupos.items():
+        ts_list = g["ts_list"]
+        n = len(ts_list)
+        # Etiquetar segun cantidad
+        primera_entrada = _fmt(ts_list[0]) if n >= 1 else None
+        ultima_salida = _fmt(ts_list[-1]) if n >= 2 else None
+        almuerzo_out = None
+        almuerzo_in = None
+        if n == 3:
+            # Entrada, salida-almuerzo, regreso-almuerzo (falta salida final)
+            almuerzo_out = _fmt(ts_list[1])
+            almuerzo_in = _fmt(ts_list[2])
+            ultima_salida = None
+        elif n == 4:
+            almuerzo_out = _fmt(ts_list[1])
+            almuerzo_in = _fmt(ts_list[2])
+            ultima_salida = _fmt(ts_list[3])
+        elif n >= 5:
+            # Caso raro: marcajes adicionales. Tomamos primer/ultimo como entrada/salida.
+            almuerzo_out = _fmt(ts_list[1])
+            almuerzo_in = _fmt(ts_list[2])
+            ultima_salida = _fmt(ts_list[-1])
+
+        # Calculo de horas
         horas = None
-        if primera_ts and ultima_ts and primera_ts != ultima_ts:
-            try:
-                t1 = datetime.fromisoformat(primera_ts)
-                t2 = datetime.fromisoformat(ultima_ts)
-                primera_entrada = t1.strftime("%H:%M:%S")
-                ultima_salida = t2.strftime("%H:%M:%S")
-                horas = round((t2 - t1).total_seconds() / 3600.0, 2)
-            except Exception:
-                pass
-        elif primera_ts:
-            # Solo 1 marcaje: lo mostramos como entrada
-            try:
-                t1 = datetime.fromisoformat(primera_ts)
-                primera_entrada = t1.strftime("%H:%M:%S")
-            except Exception:
-                pass
+        horas_almuerzo = None
+        try:
+            if n >= 2:
+                t_in = datetime.fromisoformat(ts_list[0])
+                t_out = datetime.fromisoformat(ts_list[-1])
+                bruto = (t_out - t_in).total_seconds() / 3600.0
+                horas = round(bruto, 2)
+                # Si hubo almuerzo registrado, descontarlo
+                if n >= 4:
+                    t_alm_out = datetime.fromisoformat(ts_list[1])
+                    t_alm_in = datetime.fromisoformat(ts_list[2])
+                    pausa = (t_alm_in - t_alm_out).total_seconds() / 3600.0
+                    horas_almuerzo = round(pausa, 2)
+                    horas = round(bruto - pausa, 2)
+        except Exception:
+            pass
 
         items.append({
-            "empleado_id": r["empleado_id"],
-            "empleado_nombre": r["empleado_nombre"],
-            "fecha": r["fecha"],
+            "empleado_id": g["empleado_id"],
+            "empleado_nombre": g["empleado_nombre"],
+            "fecha": fecha,
             "primera_entrada": primera_entrada,
+            "almuerzo_out": almuerzo_out,
+            "almuerzo_in": almuerzo_in,
             "ultima_salida": ultima_salida,
             "horas": horas,
-            "cantidad_marcajes": r["cantidad_marcajes"],
+            "horas_almuerzo": horas_almuerzo,
+            "cantidad_marcajes": n,
         })
+
+    # Orden: fecha desc, nombre asc
+    items.sort(key=lambda x: (x["fecha"], x["empleado_nombre"]), reverse=False)
+    items.sort(key=lambda x: x["fecha"], reverse=True)
 
     return {"items": items}
 

@@ -84,18 +84,19 @@
             <th class="text-left px-3 py-3 font-medium">Día</th>
             <th class="text-left px-3 py-3 font-medium">Empleado</th>
             <th class="text-left px-3 py-3 font-medium">Entrada</th>
+            <th class="text-left px-3 py-3 font-medium">Almuerzo</th>
+            <th class="text-left px-3 py-3 font-medium">Regreso</th>
             <th class="text-left px-3 py-3 font-medium">Salida</th>
             <th class="text-right px-3 py-3 font-medium">Horas</th>
-            <th class="text-right px-3 py-3 font-medium">Marcajes</th>
             <th class="text-left px-4 py-3 font-medium">Detalle</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-border/40">
           <template x-if="loading">
-            <tr><td colspan="8" class="text-center py-10 text-text-muted">Cargando…</td></tr>
+            <tr><td colspan="9" class="text-center py-10 text-text-muted">Cargando…</td></tr>
           </template>
           <template x-if="!loading && !resumen.length">
-            <tr><td colspan="8" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
+            <tr><td colspan="9" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
           </template>
           <template x-for="r in resumen" :key="r.fecha + '_' + r.empleado_id">
             <tr class="hover:bg-surface-2/30">
@@ -103,11 +104,12 @@
               <td class="px-3 py-3 text-xs text-text-muted" x-text="diaSemana(r.fecha)"></td>
               <td class="px-3 py-3" x-text="r.empleado_nombre"></td>
               <td class="px-3 py-3 tabular text-success" x-text="r.primera_entrada || '—'"></td>
+              <td class="px-3 py-3 tabular text-text-muted" x-text="r.almuerzo_out || '—'"></td>
+              <td class="px-3 py-3 tabular text-text-muted" x-text="r.almuerzo_in || '—'"></td>
               <td class="px-3 py-3 tabular text-warning" x-text="r.ultima_salida || '—'"></td>
               <td class="px-3 py-3 text-right tabular" x-text="r.horas != null ? r.horas.toFixed(2) : '—'"></td>
-              <td class="px-3 py-3 text-right tabular text-text-muted" x-text="r.cantidad_marcajes"></td>
               <td class="px-4 py-3">
-                <button @click="verDetalle(r)" class="text-xs text-accent hover:text-accent-hover">Ver marcajes</button>
+                <button @click="verDetalle(r)" class="text-xs text-accent hover:text-accent-hover" x-text="r.cantidad_marcajes + ' marcajes'"></button>
               </td>
             </tr>
           </template>
@@ -126,9 +128,13 @@
 
       <ul class="space-y-2">
         <template x-for="m in detalle.marcajes || []" :key="m.id">
-          <li class="flex items-center justify-between bg-surface-2 rounded px-3 py-2">
-            <span class="tabular text-sm" x-text="formatTime(m.ts)"></span>
-            <span class="text-xs text-text-muted" x-text="m.metodo"></span>
+          <li class="flex items-center justify-between bg-surface-2 rounded px-3 py-2 gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+              <span class="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0"
+                    :class="etiquetaColor(m.etiqueta)" x-text="m.etiqueta"></span>
+              <span class="tabular text-sm" x-text="formatTime(m.ts)"></span>
+            </div>
+            <span class="text-[11px] text-text-muted truncate" x-text="m.metodo"></span>
           </li>
         </template>
       </ul>
@@ -260,14 +266,50 @@ function marcajesPage() {
       try {
         const resp = await fetch('/api/asistencia/marcajes?' + params);
         const j = await resp.json();
-        this.detalle.marcajes = (j.items || []).sort((a, b) => a.ts.localeCompare(b.ts));
+        const sorted = (j.items || []).sort((a, b) => a.ts.localeCompare(b.ts));
+        // Etiquetar cada marcaje segun su posicion en el dia
+        this.detalle.marcajes = this.etiquetarMarcajes(sorted);
       } catch (e) {}
       this.detalleOpen = true;
     },
 
+    etiquetarMarcajes(marcajes) {
+      const n = marcajes.length;
+      const etiquetas = {
+        1: ['Entrada'],
+        2: ['Entrada', 'Salida'],
+        3: ['Entrada', 'Salida almuerzo', 'Regreso almuerzo'],
+        4: ['Entrada', 'Salida almuerzo', 'Regreso almuerzo', 'Salida'],
+      };
+
+      if (n <= 4 && etiquetas[n]) {
+        return marcajes.map((m, i) => ({ ...m, etiqueta: etiquetas[n][i] }));
+      }
+      // Si hay mas de 4: primero entrada, ultimo salida, intermedios son
+      // pares de salida/entrada (almuerzos o pausas)
+      return marcajes.map((m, i) => {
+        if (i === 0) return { ...m, etiqueta: 'Entrada' };
+        if (i === n - 1) return { ...m, etiqueta: 'Salida' };
+        // Intermedio: alternar salida/entrada
+        const esSalida = (i % 2 === 1);
+        return { ...m, etiqueta: esSalida ? 'Salida intermedia' : 'Regreso' };
+      });
+    },
+
+    etiquetaColor(et) {
+      return {
+        'Entrada': 'bg-success/15 text-success',
+        'Salida': 'bg-warning/15 text-warning',
+        'Salida almuerzo': 'bg-accent/15 text-accent',
+        'Regreso almuerzo': 'bg-accent/15 text-accent',
+        'Salida intermedia': 'bg-accent/15 text-accent',
+        'Regreso': 'bg-accent/15 text-accent',
+      }[et] || 'bg-text-muted/15 text-text-muted';
+    },
+
     exportarCSV() {
       if (!this.resumen.length) return;
-      const headers = ['Fecha', 'Dia', 'Empleado', 'Entrada', 'Salida', 'Horas', 'Marcajes'];
+      const headers = ['Fecha', 'Dia', 'Empleado', 'Entrada', 'Salida_almuerzo', 'Regreso_almuerzo', 'Salida', 'Horas_trabajadas', 'Marcajes'];
       const rows = [headers.join(',')];
       for (const r of this.resumen) {
         rows.push([
@@ -275,6 +317,8 @@ function marcajesPage() {
           this.diaSemana(r.fecha),
           '"' + (r.empleado_nombre || '').replace(/"/g, '""') + '"',
           r.primera_entrada || '',
+          r.almuerzo_out || '',
+          r.almuerzo_in || '',
           r.ultima_salida || '',
           r.horas != null ? r.horas.toFixed(2) : '',
           r.cantidad_marcajes
