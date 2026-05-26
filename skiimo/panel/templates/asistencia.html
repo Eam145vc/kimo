@@ -337,25 +337,30 @@ function marcajesPage() {
     },
 
     metodoLabel(m) {
-      // Mapeo por minor (el subEventType del Hikvision indica exacto que se uso)
-      // 75 = face, 76 = fingerprint, 38 = card, 77 = PIN
+      // El equipo manda subEventType (minor) con codigos especificos solo en algunos casos:
+      //   75 = Face Authenticated  (especifico)
+      //   76 = Fingerprint Authenticated  (especifico)
+      //   77 = Password Authenticated  (especifico)
+      //   38 = Acceso autorizado generico (no dice metodo)
       const byMinor = {
         75: '😊 Cara',
         76: '👆 Huella',
         77: '🔢 PIN',
-        38: '💳 Tarjeta',
       };
       if (m.minor && byMinor[m.minor]) return byMinor[m.minor];
 
-      // Fallback por el campo metodo si no tenemos minor
+      // 38 = autenticado generico, sin distinguir metodo
+      if (m.minor === 38) return '✓ Autenticado';
+
+      // Fallback por el campo metodo (legacy o manual)
       const v = (m.metodo || '').toLowerCase();
-      if (v.includes('face')) return '😊 Cara';
-      if (v.includes('fingerprint') || v.includes('fp')) return '👆 Huella';
-      if (v.includes('card')) return '💳 Tarjeta';
-      if (v.includes('pin') || v.includes('pw')) return '🔢 PIN';
       if (v === 'manual') return '✏️ Manual';
-      if (v === 'invalid') return '— —';
-      return m.metodo || '—';
+      if (v === 'invalid') return '—';
+      if (v.includes('face') && !v.includes('or')) return '😊 Cara';
+      if (v.includes('fingerprint') && !v.includes('or')) return '👆 Huella';
+      if (v.includes('card') && !v.includes('or')) return '💳 Tarjeta';
+      if (v.includes('pin') && !v.includes('or')) return '🔢 PIN';
+      return '✓ Autenticado';
     },
 
     fotoUrl(m) {
