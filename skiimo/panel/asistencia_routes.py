@@ -4,19 +4,24 @@ Vistas:
   GET  /asistencia          -> resumen de HOY (quien marco, llegadas tarde, etc.)
   GET  /empleados           -> CRUD de empleados
   GET  /quincena            -> resumen quincenal de horas
+  GET  /asistencia/config   -> configuracion editable
 
-APIs JSON:
+APIs JSON (autenticadas):
   GET  /api/asistencia/hoy
   GET  /api/asistencia/marcajes?desde=...&hasta=...&empleado_id=...
   GET  /api/empleados
   POST /api/empleados
   PUT  /api/empleados/{id}
   DELETE /api/empleados/{id}
-  GET  /api/empleados/hik           -> personas registradas en el equipo Hikvision (para mapear)
-  POST /api/asistencia/sync         -> ejecuta sync manual
+  GET  /api/empleados/hik
+  POST /api/asistencia/sync
   GET  /api/asistencia/quincena?fecha_inicio=YYYY-MM-DD
   GET  /api/asistencia/config
   PUT  /api/asistencia/config
+  GET  /api/asistencia/equipo/status
+
+Endpoint publico (recibe push del Hikvision via ISUP Listening / httpHosts):
+  POST /api/hik/event
 """
 from __future__ import annotations
 
@@ -479,3 +484,151 @@ async def api_equipo_status(session_token: str | None = Cookie(default=None)):
         }
     except Exception as e:
         return {"online": False, "error": str(e)}
+
+
+# =============================================================================
+# Endpoint PUBLICO: receptor de eventos push del Hikvision (ISUP Listening / httpHosts)
+# =============================================================================
+#
+# El equipo se configura para hacer POST a esta URL cada vez que pasa un evento.
+# Es PUBLICO (sin auth de sesion) porque el equipo no maneja cookies.
+# Si se requiere auth, se pasa via Basic/Digest configurado en el equipo, pero
+# por simplicidad y porque la conexion sale del equipo en LAN -> internet con
+# IP destino fija (la nuestra), confiamos en el origen.
+#
+# El equipo puede mandar JSON, XML, o multipart/form-data segun firmware.
+# Manejamos los 3 casos.
+
+
+# Memoria para debug: guardar el ultimo evento crudo recibido (solo desarrollo)
+_LAST_HIK_PAYLOAD: dict = {"count": 0, "samples": []}
+
+
+@router.get("/api/hik/event/last")
+async def api_hik_event_last():
+    """Devuelve el ultimo evento crudo recibido. DEBUG."""
+    return _LAST_HIK_PAYLOAD
+
+
+@router.post("/api/hik/event")
+async def api_hik_event_receiver(request: Request):
+    """Recibe eventos push del Hikvision configurado como ISUP Listening.
+
+    El equipo manda multipart/form-data con un campo JSON o XML
+    describiendo el evento. Si tiene foto, vienen partes binarias adicionales.
+    """
+    import json
+    from skiimo.hikvision import _event_from_raw
+
+    raw_payload: dict | None = None
+    content_type = (request.headers.get("content-type") or "").lower()
+    _LAST_HIK_PAYLOAD["count"] += 1
+
+    try:
+        if "json" in content_type:
+            raw_payload = await request.json()
+        elif "xml" in content_type:
+            text = (await request.body()).decode("utf-8", errors="ignore")
+            from xml.etree import ElementTree as ET
+            try:
+                from skiimo.hikvision import _xml_walk, _strip_ns
+                root = ET.fromstring(text)
+                walked = _xml_walk(root)
+                raw_payload = walked if isinstance(walked, dict) else {"_text": str(walked)}
+            except ET.ParseError as e:
+                log.warning("XML parse error en hik event: %s", e)
+                raw_payload = {"_raw_xml": text[:1000]}
+        elif "multipart" in content_type:
+            form = await request.form()
+            # Buscar el campo JSON principal (suele llamarse "event_log" o similar)
+            for k, v in form.items():
+                if hasattr(v, "read"):  # es archivo
+                    continue
+                s = str(v)
+                if s.startswith("{"):
+                    try:
+                        raw_payload = json.loads(s)
+                        break
+                    except Exception:
+                        pass
+            if raw_payload is None:
+                # fallback: tomar todos los campos como dict
+                raw_payload = {k: str(v) for k, v in form.items() if not hasattr(v, "read")}
+        else:
+            # Plain body, probemos JSON crudo
+            body = (await request.body()).decode("utf-8", errors="ignore")
+            try:
+                raw_payload = json.loads(body)
+            except Exception:
+                raw_payload = {"_raw_body": body[:1000]}
+    except Exception as e:
+        log.exception("Error parseando push del Hikvision")
+        return {"ok": False, "error": str(e)}
+
+    if not raw_payload:
+        return {"ok": False, "error": "Sin payload"}
+
+    # DEBUG: guardar muestras (solo primeras 10)
+    if len(_LAST_HIK_PAYLOAD["samples"]) < 10:
+        _LAST_HIK_PAYLOAD["samples"].append({
+            "content_type": content_type,
+            "payload": raw_payload,
+        })
+
+    # DEBUG: log el primer evento de cada tipo para entender el formato
+    et = raw_payload.get("eventType") or raw_payload.get("EventNotificationAlert", {}).get("eventType") if isinstance(raw_payload.get("EventNotificationAlert"), dict) else None
+    log.debug("Hik push eventType=%s keys=%s", et, list(raw_payload.keys())[:10])
+
+    # Estructura esperada del evento de Hikvision (eventos AccessControl):
+    # {
+    #   "ipAddress": "...", "portNo": ..., "macAddress": "...",
+    #   "channelID": 1, "dateTime": "2026-05-26T14:30:00-05:00",
+    #   "activePostCount": 1, "eventType": "AccessControllerEvent",
+    #   "AccessControllerEvent": { "majorEventType": 5, "subEventType": 75,
+    #     "employeeNoString": "1", "name": "...", "currentVerifyMode": "...",
+    #     "attendanceStatus": "...", "pictureURL": "...", ... }
+    # }
+
+    # Extraer el bloque relevante
+    acs = raw_payload.get("AccessControllerEvent") or raw_payload
+    if not isinstance(acs, dict):
+        log.warning("AccessControllerEvent no es dict: %s", type(acs))
+        return {"ok": True, "ignored": "estructura desconocida"}
+
+    # Adaptar nombres de campos al formato esperado por _event_from_raw
+    ts = raw_payload.get("dateTime") or acs.get("dateTime") or acs.get("time")
+    adapted = {
+        "time": ts,
+        "employeeNoString": acs.get("employeeNoString") or acs.get("employeeNo"),
+        "employeeNo": acs.get("employeeNo"),
+        "name": acs.get("name"),
+        "cardNo": acs.get("cardNo"),
+        "major": acs.get("majorEventType") or acs.get("major") or 5,
+        "minor": acs.get("subEventType") or acs.get("minor") or 0,
+        "currentVerifyMode": acs.get("currentVerifyMode"),
+        "attendanceStatus": acs.get("attendanceStatus"),
+        "pictureURL": acs.get("pictureURL"),
+        "serialNo": acs.get("serialNo") or raw_payload.get("macAddress"),
+    }
+
+    ev = _event_from_raw(adapted)
+
+    # Insertar via la misma logica del sync (dedup, resolver empleado_id, etc.)
+    from skiimo.asistencia.sync import _insert_marcaje
+    try:
+        inserted = _insert_marcaje(ev)
+    except Exception as e:
+        log.exception("Error insertando evento push")
+        return {"ok": False, "error": str(e)}
+
+    log.info(
+        "Push Hik recibido: emp=%s name=%s mayor.minor=%d.%d insert=%s",
+        ev.employee_no, ev.name, ev.major, ev.minor, inserted,
+    )
+    return {"ok": True, "inserted": inserted, "event_id": ev.event_id}
+
+
+@router.get("/api/hik/event/test")
+async def api_hik_event_test():
+    """Smoke endpoint publico para que el equipo verifique conectividad."""
+    return {"ok": True, "service": "skiimo-asistencia", "ready": True}

@@ -326,6 +326,65 @@ class HikClient:
         }
         return self._post("/ISAPI/AccessControl/UserInfo/Delete?format=json", payload)
 
+    # ----- HTTP Listening Host (push de eventos a un servidor externo) -----
+    def get_http_hosts(self) -> dict:
+        """Devuelve la lista de HTTP listening hosts configurados."""
+        return self._get("/ISAPI/Event/notification/httpHosts?format=json")
+
+    def set_http_host(
+        self,
+        host_id: int,
+        *,
+        ip: str,
+        port: int = 80,
+        url: str = "/api/hik/event",
+        protocol: str = "HTTP",
+        parameter_format: str = "json",
+        user: str | None = None,
+        password: str | None = None,
+        host_name: str = "skiimo-panel",
+    ) -> dict:
+        """Configura UN HTTP listening host. host_id suele ser 1, 2 o 3.
+
+        protocol: HTTP | HTTPS
+        parameter_format: json | XML
+        """
+        # Construir XML porque el endpoint individual es mas confiable con XML
+        # (algunos firmwares ignoran ?format=json en httpHosts)
+        auth_block = ""
+        if user and password:
+            auth_block = f"<httpAuthenticationMethod>digest</httpAuthenticationMethod><userName>{user}</userName><password>{password}</password>"
+        xml_body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<HttpHostNotification version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">'
+            f"<id>{host_id}</id>"
+            f"<url>{url}</url>"
+            f"<protocolType>{protocol}</protocolType>"
+            f"<parameterFormatType>{parameter_format}</parameterFormatType>"
+            "<addressingFormatType>ipaddress</addressingFormatType>"
+            f"<ipAddress>{ip}</ipAddress>"
+            f"<portNo>{port}</portNo>"
+            f"<httpAuthenticationMethod>none</httpAuthenticationMethod>"
+            f"<httpBroken>true</httpBroken>"
+            f"<uploadImagesDataType>URL</uploadImagesDataType>"
+            f"</HttpHostNotification>"
+        )
+        if auth_block:
+            xml_body = xml_body.replace("<httpAuthenticationMethod>none</httpAuthenticationMethod>", auth_block)
+        r = self._client.put(
+            f"/ISAPI/Event/notification/httpHosts/{host_id}",
+            content=xml_body,
+            headers={"Content-Type": "application/xml"},
+        )
+        r.raise_for_status()
+        return parse_response(r)
+
+    def test_http_host(self, host_id: int) -> dict:
+        """Dispara un POST de prueba al host configurado para verificar conectividad."""
+        r = self._client.post(f"/ISAPI/Event/notification/httpHosts/{host_id}/test")
+        r.raise_for_status()
+        return parse_response(r)
+
 
 # ---------------------------------------------------------------------------
 # Builders raw -> dataclass
