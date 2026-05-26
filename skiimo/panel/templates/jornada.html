@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}Jornada · Esskimo{% endblock %}
+
+{% block content %}
+<div x-data="jornadaPage()" x-init="init()">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Configuración de jornada</h1>
+      <p class="text-xs text-text-muted mt-0.5">
+        Define el horario oficial de la fábrica. El sistema usa estas horas para
+        clasificar automáticamente cada marcaje como entrada, almuerzo o salida.
+      </p>
+    </div>
+    <button @click="guardar()" :disabled="saving"
+            class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+      <span x-show="!saving">Guardar</span>
+      <span x-show="saving">Guardando…</span>
+    </button>
+  </div>
+
+  <!-- Horarios principales -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-5 mb-4">
+    <h3 class="text-sm font-semibold mb-3">Horario oficial</h3>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div>
+        <label class="block text-xs text-text-muted mb-1">🟢 Entrada</label>
+        <input type="time" x-model="cfg.jornada_entrada_hora"
+               class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+      </div>
+      <div>
+        <label class="block text-xs text-text-muted mb-1">🔵 Salida almuerzo</label>
+        <input type="time" x-model="cfg.jornada_almuerzo_inicio"
+               class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+      </div>
+      <div>
+        <label class="block text-xs text-text-muted mb-1">🔵 Regreso almuerzo</label>
+        <input type="time" x-model="cfg.jornada_almuerzo_fin"
+               class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+      </div>
+      <div>
+        <label class="block text-xs text-text-muted mb-1">🟠 Salida</label>
+        <input type="time" x-model="cfg.jornada_salida_hora"
+               class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+      </div>
+    </div>
+  </div>
+
+  <!-- Tolerancias -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-5 mb-4">
+    <h3 class="text-sm font-semibold mb-3">Tolerancias</h3>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-xs text-text-muted mb-1">Horas antes de entrada</label>
+        <input type="number" min="0" max="6" step="1"
+               x-model.number="cfg.tolerancia_entrada_horas"
+               class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        <p class="text-[10px] text-text-muted mt-1">
+          Cuántas horas antes del horario oficial de entrada aceptamos
+          marcajes como "entrada" (para turnos madrugadores).
+        </p>
+      </div>
+      <div>
+        <label class="block text-xs text-text-muted mb-1">Horas después de salida</label>
+        <input type="number" min="0" max="12" step="1"
+               x-model.number="cfg.tolerancia_salida_horas"
+               class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+        <p class="text-[10px] text-text-muted mt-1">
+          Hasta cuántas horas después de la salida oficial aceptamos
+          marcajes como "salida" (para horas extras).
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vista previa de las ventanas -->
+  <div class="rounded-xl bg-accent/5 ring-1 ring-accent/20 p-5">
+    <h3 class="text-sm font-semibold mb-3">Vista previa de clasificación</h3>
+    <p class="text-xs text-text-muted mb-3">
+      Con esta configuración, cada marcaje se clasifica según la hora a la que pase:
+    </p>
+    <div class="space-y-2">
+      <template x-for="v in ventanas" :key="v.tipo">
+        <div class="flex items-center gap-3 text-sm">
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium tabular flex-shrink-0 w-44"
+                :class="v.color" x-text="v.label"></span>
+          <span class="text-text-muted tabular text-xs">
+            <span x-text="v.ini"></span> a <span x-text="v.fin"></span>
+          </span>
+        </div>
+      </template>
+    </div>
+    <p class="text-[10px] text-text-muted mt-3">
+      Si alguien marca dos veces en la misma franja (ej. dos marcajes en la
+      ventana de entrada), el primero queda como entrada y el segundo como "extra".
+    </p>
+  </div>
+
+  <!-- Reclasificar -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-5 mt-4">
+    <h3 class="text-sm font-semibold mb-2">Aplicar a marcajes existentes</h3>
+    <p class="text-xs text-text-muted mb-3">
+      Re-clasifica todos los marcajes ya registrados usando las nuevas ventanas.
+      No toca los que fueron editados manualmente.
+    </p>
+    <button @click="reclasificar()" :disabled="reclasificando"
+            class="text-sm bg-surface-2 hover:bg-border text-text px-4 py-2 rounded-lg disabled:opacity-50">
+      <span x-show="!reclasificando">Reclasificar marcajes históricos</span>
+      <span x-show="reclasificando">Reclasificando…</span>
+    </button>
+    <p x-show="mensaje" class="text-xs mt-2" :class="mensajeError ? 'text-danger' : 'text-success'" x-text="mensaje"></p>
+  </div>
+
+</div>
+
+<script>
+function jornadaPage() {
+  return {
+    cfg: {
+      jornada_entrada_hora: '07:00',
+      jornada_almuerzo_inicio: '12:00',
+      jornada_almuerzo_fin: '13:00',
+      jornada_salida_hora: '17:00',
+      tolerancia_entrada_horas: 3,
+      tolerancia_salida_horas: 6,
+    },
+    saving: false,
+    reclasificando: false,
+    mensaje: '',
+    mensajeError: false,
+
+    async init() {
+      const r = await fetch('/api/asistencia/config');
+      const j = await r.json();
+      const c = j.config || {};
+      for (const k of Object.keys(this.cfg)) {
+        if (c[k] !== undefined && c[k] !== null && c[k] !== '') {
+          this.cfg[k] = c[k];
+        }
+      }
+    },
+
+    get ventanas() {
+      // Replica la logica del backend para mostrar preview en vivo
+      const toMin = s => {
+        const [h, m] = (s || '00:00').split(':').map(Number);
+        return h * 60 + m;
+      };
+      const fromMin = m => {
+        const h = Math.floor(m / 60), mn = m % 60;
+        return `${String(h).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;
+      };
+      const entrada = toMin(this.cfg.jornada_entrada_hora);
+      const alm_ini = toMin(this.cfg.jornada_almuerzo_inicio);
+      const alm_fin = toMin(this.cfg.jornada_almuerzo_fin);
+      const salida = toMin(this.cfg.jornada_salida_hora);
+      const tol_ent = Number(this.cfg.tolerancia_entrada_horas) || 3;
+      const tol_sal = Number(this.cfg.tolerancia_salida_horas) || 6;
+
+      const ini_entrada = Math.max(0, entrada - tol_ent * 60);
+      const fin_entrada = alm_ini - 30 > entrada ? alm_ini - 30 : Math.floor((entrada + alm_ini) / 2);
+      const medio_almuerzo = Math.floor((alm_ini + alm_fin) / 2);
+      const fin_almuerzo_in = alm_fin + 90 < salida ? alm_fin + 90 : Math.floor((alm_fin + salida) / 2);
+      const fin_salida = Math.min(salida + tol_sal * 60, 23 * 60 + 59);
+
+      return [
+        { tipo: 'entrada', label: '🟢 Entrada', ini: fromMin(ini_entrada), fin: fromMin(fin_entrada), color: 'bg-success/15 text-success' },
+        { tipo: 'almuerzo_out', label: '🔵 Salida almuerzo', ini: fromMin(fin_entrada), fin: fromMin(medio_almuerzo), color: 'bg-accent/15 text-accent' },
+        { tipo: 'almuerzo_in', label: '🔵 Regreso almuerzo', ini: fromMin(medio_almuerzo), fin: fromMin(fin_almuerzo_in), color: 'bg-accent/15 text-accent' },
+        { tipo: 'salida', label: '🟠 Salida', ini: fromMin(fin_almuerzo_in), fin: fromMin(fin_salida), color: 'bg-warning/15 text-warning' },
+      ];
+    },
+
+    async guardar() {
+      this.saving = true;
+      this.mensaje = '';
+      try {
+        const r = await fetch('/api/asistencia/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.cfg)
+        });
+        if (r.ok) {
+          this.mensaje = 'Guardado. Los próximos marcajes se clasificarán con esta jornada.';
+          this.mensajeError = false;
+          setTimeout(() => { this.mensaje = ''; }, 4000);
+        } else {
+          this.mensaje = 'Error al guardar';
+          this.mensajeError = true;
+        }
+      } catch (e) {
+        this.mensaje = 'Error: ' + e;
+        this.mensajeError = true;
+      }
+      this.saving = false;
+    },
+
+    async reclasificar() {
+      if (!confirm('Re-clasificar todos los marcajes históricos según la jornada actual?')) return;
+      this.reclasificando = true;
+      this.mensaje = '';
+      try {
+        const r = await fetch('/api/asistencia/reclasificar', { method: 'POST' });
+        const j = await r.json();
+        if (r.ok) {
+          this.mensaje = `Listo. ${j.actualizados} marcajes reclasificados.`;
+          this.mensajeError = false;
+        } else {
+          this.mensaje = 'Error al reclasificar';
+          this.mensajeError = true;
+        }
+      } catch (e) {
+        this.mensaje = 'Error: ' + e;
+        this.mensajeError = true;
+      }
+      this.reclasificando = false;
+    }
+  };
+}
+</script>
+{% endblock %}

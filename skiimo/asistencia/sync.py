@@ -141,28 +141,68 @@ _ATTENDANCE_STATUS_MAP = {
 }
 
 
-# Jornada estandar de Esskimo (configurable a futuro via plantillas):
-#   07:00 entrada / 12:00 salida almuerzo / 13:00 regreso / 17:00 salida
-# Ventanas horarias para clasificar marcajes automaticamente. Generosas
-# para tolerar llegadas tarde / temprano sin confundirse.
-_VENTANAS_JORNADA = [
-    # (hora_inicio_min, hora_fin_min, tipo)
-    # Cada tupla: rango de minutos desde 00:00.
-    (5 * 60 + 30, 10 * 60 + 30, "entrada"),         # 05:30 - 10:30
-    (10 * 60 + 30, 12 * 60 + 45, "almuerzo_out"),   # 10:30 - 12:45
-    (12 * 60 + 45, 14 * 60 + 30, "almuerzo_in"),    # 12:45 - 14:30
-    (14 * 60 + 30, 23 * 60 + 30, "salida"),         # 14:30 - 23:30
-]
+def _hora_str_a_minutos(s: str, default: int) -> int:
+    """Convierte 'HH:MM' a minutos desde 00:00. Si falla, devuelve default."""
+    try:
+        h, m = s.split(":")
+        return int(h) * 60 + int(m)
+    except Exception:
+        return default
+
+
+def _ventanas_jornada() -> list[tuple[int, int, str]]:
+    """Calcula las ventanas horarias para clasificar marcajes segun la
+    config de jornada del panel.
+
+    Cada marcaje cae en una de 4 ventanas:
+      entrada / almuerzo_out / almuerzo_in / salida
+    Las ventanas se calculan dinamicamente como puntos medios entre los
+    horarios oficiales.
+    """
+    from skiimo.asistencia.config import get_conf
+
+    entrada = _hora_str_a_minutos(get_conf("jornada_entrada_hora") or "07:00", 7 * 60)
+    alm_ini = _hora_str_a_minutos(get_conf("jornada_almuerzo_inicio") or "12:00", 12 * 60)
+    alm_fin = _hora_str_a_minutos(get_conf("jornada_almuerzo_fin") or "13:00", 13 * 60)
+    salida = _hora_str_a_minutos(get_conf("jornada_salida_hora") or "17:00", 17 * 60)
+
+    try:
+        tol_entrada_h = int(get_conf("tolerancia_entrada_horas") or 3)
+    except Exception:
+        tol_entrada_h = 3
+    try:
+        tol_salida_h = int(get_conf("tolerancia_salida_horas") or 6)
+    except Exception:
+        tol_salida_h = 6
+
+    # Calcular bordes entre franjas (puntos medios)
+    medio_entrada_almuerzo = (entrada + alm_ini) // 2 + (alm_ini - entrada) // 2
+    # Mejor: la entrada va hasta ~30 min antes del almuerzo
+    fin_entrada = alm_ini - 30 if alm_ini - 30 > entrada else (entrada + alm_ini) // 2
+    # Almuerzo_out: desde fin_entrada hasta el punto medio entre alm_ini y alm_fin
+    medio_almuerzo = (alm_ini + alm_fin) // 2
+    # Almuerzo_in: desde medio_almuerzo hasta 30 min despues de alm_fin
+    fin_almuerzo_in = alm_fin + 90 if alm_fin + 90 < salida else (alm_fin + salida) // 2
+    # Salida: desde fin_almuerzo_in hasta tol_salida_h despues de salida
+    fin_salida = min(salida + tol_salida_h * 60, 23 * 60 + 59)
+
+    ini_entrada = max(0, entrada - tol_entrada_h * 60)
+
+    return [
+        (ini_entrada, fin_entrada, "entrada"),
+        (fin_entrada, medio_almuerzo, "almuerzo_out"),
+        (medio_almuerzo, fin_almuerzo_in, "almuerzo_in"),
+        (fin_almuerzo_in, fin_salida, "salida"),
+    ]
 
 
 def _clasificar_por_hora(ts: datetime) -> str:
     """Devuelve el tipo segun la franja horaria del marcaje.
 
-    Usa la jornada estandar de Esskimo: 7-12 / 13-17. Cada marcaje cae
-    en una de 4 ventanas: entrada / almuerzo_out / almuerzo_in / salida.
+    Las franjas se calculan a partir de la jornada configurada en el panel.
     """
     mins = ts.hour * 60 + ts.minute
-    for ini, fin, tipo in _VENTANAS_JORNADA:
+    for ini, fin, tipo in _ventanas_jornada():
         if ini <= mins < fin:
             return tipo
     return "desconocido"

@@ -44,12 +44,23 @@ DEFAULTS: dict[str, Any] = {
     "sync_backfill_horas": 24,                     # ventana inicial de backfill
 
     # Equipo Hikvision (IP local en la red de la fabrica)
-    # Esta IP la usa el NAVEGADOR del admin (no la VM) cuando sincroniza empleados.
-    # En la VM solo sirve si HIK_HOST esta en el .env. En el browser, se usa esta config.
-    "hik_local_ip": "",                            # ej: 192.168.128.32
+    "hik_local_ip": "",
     "hik_local_port": 80,
     "hik_local_user": "admin",
-    # password NO se guarda en DB. El usuario la pone cada vez que sincroniza.
+
+    # Jornada estandar de la fabrica (usado para clasificar marcajes
+    # automaticamente por hora del dia).
+    # Cada marcaje cae en una de 4 franjas: entrada / almuerzo_out / almuerzo_in / salida.
+    # Las ventanas son AMPLIAS para tolerar lleegadas tarde / temprano.
+    "jornada_entrada_hora": "07:00",        # hora oficial de entrada
+    "jornada_almuerzo_inicio": "12:00",     # hora oficial de inicio almuerzo
+    "jornada_almuerzo_fin": "13:00",        # hora oficial de fin almuerzo
+    "jornada_salida_hora": "17:00",         # hora oficial de salida
+
+    # Ventana de tolerancia para entrada: si marcan ANTES de entrada-tolerancia
+    # o DESPUES de almuerzo_inicio - 15 min, no es entrada (sera otra cosa).
+    "tolerancia_entrada_horas": 3,          # 3 horas antes/despues de entrada cuenta como entrada
+    "tolerancia_salida_horas": 6,           # 6 horas despues de salida cuenta como salida
 }
 
 
