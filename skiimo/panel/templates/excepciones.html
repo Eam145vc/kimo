@@ -82,12 +82,17 @@
       <div class="space-y-3 text-sm">
         <div>
           <label class="block text-xs text-text-muted mb-1">Empleado *</label>
-          <select x-model.number="form.empleado_id" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
-            <option value="">Seleccionar...</option>
-            <template x-for="e in empleados" :key="e.id">
+          <input type="text" x-model="empleadoBusqueda" placeholder="Buscar empleado..."
+                 class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 mb-1">
+          <select x-model.number="form.empleado_id" size="6"
+                  class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
+            <template x-for="e in empleadosFiltrados" :key="e.id">
               <option :value="e.id" x-text="e.nombre"></option>
             </template>
           </select>
+          <p class="text-[10px] text-text-muted mt-1" x-show="form.empleado_id">
+            Seleccionado: <span class="text-text" x-text="nombreSeleccionado()"></span>
+          </p>
         </div>
 
         <div>
@@ -150,9 +155,10 @@ function excepcionesPage() {
   return {
     items: [],
     empleados: [],
+    empleadoBusqueda: '',
     modalOpen: false,
     filtro: { empleado_id: '', desde: '', hasta: '' },
-    form: this.emptyForm(),
+    form: { empleado_id: '', tipo: 'permiso', fecha_desde: '', fecha_hasta: '', horas_ajuste: 0, paga: true, motivo: '' },
 
     emptyForm() {
       const hoy = new Date().toISOString().slice(0, 10);
@@ -167,6 +173,12 @@ function excepcionesPage() {
       this.form = this.emptyForm();
       await this.cargarEmpleados();
       await this.cargar();
+    },
+
+    get empleadosFiltrados() {
+      const q = (this.empleadoBusqueda || '').toLowerCase().trim();
+      if (!q) return this.empleados;
+      return this.empleados.filter(e => e.nombre.toLowerCase().includes(q));
     },
 
     async cargarEmpleados() {
@@ -192,7 +204,13 @@ function excepcionesPage() {
 
     openCreate() {
       this.form = this.emptyForm();
+      this.empleadoBusqueda = '';
       this.modalOpen = true;
+    },
+
+    nombreSeleccionado() {
+      const e = this.empleados.find(x => x.id === this.form.empleado_id);
+      return e ? e.nombre : '';
     },
 
     async save() {
