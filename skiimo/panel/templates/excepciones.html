@@ -6,13 +6,14 @@
 
   <div class="flex items-center justify-between mb-6">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight">Excepciones y novedades</h1>
+      <h1 class="text-xl font-semibold tracking-tight">Incapacidades</h1>
       <p class="text-xs text-text-muted mt-0.5">
-        Permisos, vacaciones, ausencias justificadas, horas extra autorizadas y ajustes manuales.
+        Incapacidades EPS. Se pagan al 100% del día y no requieren marcar.
+        Para correcciones de horario, editá los marcajes en Asistencia.
       </p>
     </div>
     <button @click="openCreate()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg">
-      + Nueva excepción
+      + Registrar incapacidad
     </button>
   </div>
 
@@ -36,32 +37,30 @@
         <thead class="bg-surface-2 text-text-muted">
           <tr>
             <th class="text-left px-4 py-3 font-medium">Empleado</th>
-            <th class="text-left px-3 py-3 font-medium">Tipo</th>
             <th class="text-left px-3 py-3 font-medium">Desde</th>
             <th class="text-left px-3 py-3 font-medium">Hasta</th>
-            <th class="text-right px-3 py-3 font-medium">Ajuste (h)</th>
-            <th class="text-left px-3 py-3 font-medium">Paga</th>
+            <th class="text-right px-3 py-3 font-medium">Días</th>
             <th class="text-left px-3 py-3 font-medium">Motivo</th>
+            <th class="text-center px-3 py-3 font-medium">Documento</th>
             <th class="text-right px-4 py-3 font-medium"></th>
           </tr>
         </thead>
         <tbody class="divide-y divide-border/40">
           <template x-if="!items.length">
-            <tr><td colspan="8" class="text-center py-10 text-text-muted">Sin excepciones registradas</td></tr>
+            <tr><td colspan="7" class="text-center py-10 text-text-muted">Sin incapacidades registradas</td></tr>
           </template>
           <template x-for="x in items" :key="x.id">
             <tr class="hover:bg-surface-2/30">
               <td class="px-4 py-3" x-text="x.empleado_nombre"></td>
-              <td class="px-3 py-3">
-                <span class="text-xs px-2 py-0.5 rounded-full" :class="tipoColor(x.tipo)" x-text="x.tipo"></span>
-              </td>
               <td class="px-3 py-3 tabular" x-text="x.fecha_desde"></td>
               <td class="px-3 py-3 tabular" x-text="x.fecha_hasta"></td>
-              <td class="px-3 py-3 text-right tabular" x-text="(x.horas_ajuste || 0).toFixed(1)"></td>
-              <td class="px-3 py-3">
-                <span class="text-xs" :class="x.paga ? 'text-success' : 'text-warning'" x-text="x.paga ? 'Sí' : 'No'"></span>
-              </td>
+              <td class="px-3 py-3 text-right tabular" x-text="diasEntre(x.fecha_desde, x.fecha_hasta)"></td>
               <td class="px-3 py-3 text-xs text-text-muted truncate max-w-xs" x-text="x.motivo || '-'"></td>
+              <td class="px-3 py-3 text-center">
+                <a x-show="x.adjunto_path" :href="x.adjunto_path" target="_blank"
+                   class="text-xs text-accent hover:text-accent-hover">📎 Ver</a>
+                <span x-show="!x.adjunto_path" class="text-xs text-text-muted">—</span>
+              </td>
               <td class="px-4 py-3 text-right">
                 <button @click="del(x.id)" class="text-xs text-danger">Borrar</button>
               </td>
@@ -77,7 +76,7 @@
        class="fixed inset-0 bg-bg/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
        @keydown.escape.window="modalOpen = false" style="display:none">
     <div class="bg-surface ring-1 ring-border rounded-xl p-6 max-w-md w-full">
-      <h3 class="text-lg font-semibold mb-4">Nueva excepción</h3>
+      <h3 class="text-lg font-semibold mb-4">Registrar incapacidad</h3>
 
       <div class="space-y-3 text-sm">
         <div>
@@ -95,20 +94,6 @@
           </p>
         </div>
 
-        <div>
-          <label class="block text-xs text-text-muted mb-1">Tipo *</label>
-          <select x-model="form.tipo" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
-            <option value="permiso">Permiso (paga)</option>
-            <option value="vacaciones">Vacaciones</option>
-            <option value="incapacidad">Incapacidad (EPS)</option>
-            <option value="ausencia_justificada">Ausencia justificada</option>
-            <option value="ausencia_injustificada">Ausencia injustificada (descuenta)</option>
-            <option value="hora_extra_aprobada">Horas extra autorizadas</option>
-            <option value="tardanza_perdonada">Tardanza perdonada</option>
-            <option value="ajuste_horas">Ajuste manual de horas</option>
-          </select>
-        </div>
-
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-xs text-text-muted mb-1">Desde *</label>
@@ -120,30 +105,28 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-xs text-text-muted mb-1">Ajuste horas</label>
-            <input type="number" step="0.5" x-model.number="form.horas_ajuste" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
-            <p class="text-[10px] text-text-muted mt-0.5">Positivo = suma, negativo = resta</p>
-          </div>
-          <div class="flex items-end">
-            <label class="flex items-center gap-2 text-sm pb-2">
-              <input type="checkbox" x-model="form.paga">
-              <span>Se paga</span>
-            </label>
-          </div>
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Motivo / nota (opcional)</label>
+          <textarea x-model="form.motivo" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2" rows="2"
+                    placeholder="Diagnóstico, n° de incapacidad, EPS, etc."></textarea>
         </div>
 
         <div>
-          <label class="block text-xs text-text-muted mb-1">Motivo / nota</label>
-          <textarea x-model="form.motivo" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2" rows="2"
-                    placeholder="Detalle del motivo, autorización, etc."></textarea>
+          <label class="block text-xs text-text-muted mb-1">Adjuntar incapacidad (opcional)</label>
+          <input type="file" x-ref="archivo" accept=".pdf,.jpg,.jpeg,.png"
+                 class="w-full text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-accent file:text-bg file:text-xs file:cursor-pointer bg-surface-2 ring-1 ring-border rounded">
+          <p class="text-[10px] text-text-muted mt-1">PDF o imagen del documento de la EPS.</p>
         </div>
       </div>
 
+      <p x-show="formError" class="text-xs text-danger mt-3" x-text="formError"></p>
+
       <div class="flex justify-end gap-2 mt-5">
         <button @click="modalOpen = false" class="text-sm px-4 py-2 text-text-muted hover:text-text">Cancelar</button>
-        <button @click="save()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg">Guardar</button>
+        <button @click="save()" :disabled="saving" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+          <span x-show="!saving">Guardar</span>
+          <span x-show="saving">Guardando...</span>
+        </button>
       </div>
     </div>
   </div>
@@ -157,15 +140,17 @@ function excepcionesPage() {
     empleados: [],
     empleadoBusqueda: '',
     modalOpen: false,
+    saving: false,
+    formError: '',
     filtro: { empleado_id: '', desde: '', hasta: '' },
-    form: { empleado_id: '', tipo: 'permiso', fecha_desde: '', fecha_hasta: '', horas_ajuste: 0, paga: true, motivo: '' },
+    form: { empleado_id: '', fecha_desde: '', fecha_hasta: '', motivo: '' },
 
     emptyForm() {
       const hoy = new Date().toISOString().slice(0, 10);
       return {
-        empleado_id: '', tipo: 'permiso',
+        empleado_id: '',
         fecha_desde: hoy, fecha_hasta: hoy,
-        horas_ajuste: 0, paga: true, motivo: ''
+        motivo: ''
       };
     },
 
@@ -205,6 +190,8 @@ function excepcionesPage() {
     openCreate() {
       this.form = this.emptyForm();
       this.empleadoBusqueda = '';
+      this.formError = '';
+      if (this.$refs.archivo) this.$refs.archivo.value = '';
       this.modalOpen = true;
     },
 
@@ -213,35 +200,51 @@ function excepcionesPage() {
       return e ? e.nombre : '';
     },
 
+    diasEntre(desde, hasta) {
+      try {
+        const d1 = new Date(desde + 'T00:00:00');
+        const d2 = new Date(hasta + 'T00:00:00');
+        return Math.round((d2 - d1) / 86400000) + 1;
+      } catch { return 1; }
+    },
+
     async save() {
-      if (!this.form.empleado_id) { alert('Seleccioná un empleado'); return; }
-      const r = await fetch('/api/excepciones', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.form)
-      });
-      if (!r.ok) { alert('Error al guardar'); return; }
-      this.modalOpen = false;
-      await this.cargar();
+      this.formError = '';
+      if (!this.form.empleado_id) { this.formError = 'Seleccioná un empleado'; return; }
+      if (!this.form.fecha_desde || !this.form.fecha_hasta) { this.formError = 'Fechas obligatorias'; return; }
+
+      // FormData para enviar archivo opcional
+      const fd = new FormData();
+      fd.append('empleado_id', this.form.empleado_id);
+      fd.append('fecha_desde', this.form.fecha_desde);
+      fd.append('fecha_hasta', this.form.fecha_hasta);
+      fd.append('tipo', 'incapacidad');
+      fd.append('horas_ajuste', '0');
+      fd.append('paga', 'true');
+      fd.append('motivo', this.form.motivo || '');
+      const archivo = this.$refs.archivo?.files?.[0];
+      if (archivo) fd.append('adjunto', archivo);
+
+      this.saving = true;
+      try {
+        const r = await fetch('/api/excepciones', { method: 'POST', body: fd });
+        if (!r.ok) {
+          const t = await r.text();
+          this.formError = 'Error: ' + t.slice(0, 150);
+          return;
+        }
+        this.modalOpen = false;
+        await this.cargar();
+      } catch (e) {
+        this.formError = 'Error: ' + e.message;
+      }
+      this.saving = false;
     },
 
     async del(id) {
-      if (!confirm('Borrar esta excepción?')) return;
+      if (!confirm('Borrar esta incapacidad?')) return;
       await fetch(`/api/excepciones/${id}`, { method: 'DELETE' });
       await this.cargar();
-    },
-
-    tipoColor(tipo) {
-      return {
-        'permiso': 'bg-accent/15 text-accent',
-        'vacaciones': 'bg-success/15 text-success',
-        'incapacidad': 'bg-warning/15 text-warning',
-        'ausencia_justificada': 'bg-text-muted/15 text-text-muted',
-        'ausencia_injustificada': 'bg-danger/15 text-danger',
-        'hora_extra_aprobada': 'bg-warning/15 text-warning',
-        'tardanza_perdonada': 'bg-text-muted/15 text-text-muted',
-        'ajuste_horas': 'bg-accent/15 text-accent',
-      }[tipo] || 'bg-text-muted/15 text-text-muted';
     }
   };
 }

@@ -38,6 +38,11 @@ _fotos_dir = _DB_PATH.parent / "photos"
 _fotos_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/photos", StaticFiles(directory=str(_fotos_dir)), name="photos")
 
+# Adjuntos de incapacidades (PDF/imagen escaneados)
+_inc_dir = _DB_PATH.parent / "incapacidades"
+_inc_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/incapacidades", StaticFiles(directory=str(_inc_dir)), name="incapacidades")
+
 
 @app.on_event("startup")
 async def _startup() -> None:

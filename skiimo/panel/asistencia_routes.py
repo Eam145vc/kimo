@@ -30,7 +30,7 @@ import logging
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Cookie, HTTPException, Request
+from fastapi import APIRouter, Cookie, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -1246,26 +1246,54 @@ async def api_excepciones_list(
 
 
 @router.post("/api/excepciones")
-async def api_excepcion_crear(body: ExcepcionIn,
-                                session_token: str | None = Cookie(default=None)):
+async def api_excepcion_crear(
+    session_token: str | None = Cookie(default=None),
+    empleado_id: int = Form(...),
+    fecha_desde: str = Form(...),
+    fecha_hasta: str = Form(...),
+    tipo: str = Form("incapacidad"),
+    horas_ajuste: float = Form(0),
+    paga: bool = Form(True),
+    motivo: str = Form(""),
+    adjunto: UploadFile | None = File(None),
+):
+    """Crea una excepcion (incapacidad). Acepta multipart con archivo opcional."""
     user = _require_user(session_token)
     now = datetime.utcnow().isoformat()
+
+    # Guardar adjunto si vino
+    adjunto_path = None
+    if adjunto is not None and adjunto.filename:
+        import uuid
+        from pathlib import Path
+        from skiimo.config import DB_PATH
+        dir_inc = Path(DB_PATH).parent / "incapacidades"
+        dir_inc.mkdir(parents=True, exist_ok=True)
+        contenido = await adjunto.read()
+        if contenido:
+            ext = ".pdf"
+            if "." in adjunto.filename:
+                ext = "." + adjunto.filename.rsplit(".", 1)[-1].lower()[:5]
+            fname = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{ext}"
+            (dir_inc / fname).write_bytes(contenido)
+            adjunto_path = f"/incapacidades/{fname}"
+
     conn = get_conn()
     try:
         cur = conn.execute(
             """INSERT INTO excepciones_asistencia
                 (empleado_id, fecha_desde, fecha_hasta, tipo, horas_ajuste, paga,
-                 motivo, aprobado_por, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (body.empleado_id, body.fecha_desde, body.fecha_hasta, body.tipo,
-             body.horas_ajuste, 1 if body.paga else 0,
-             body.motivo, user.get("username", "admin"), now),
+                 motivo, aprobado_por, adjunto_path, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (empleado_id, fecha_desde, fecha_hasta, tipo,
+             horas_ajuste, 1 if paga else 0,
+             motivo, user.get("username", "admin"), adjunto_path, now),
         )
         conn.commit()
         xid = cur.lastrowid
     finally:
         conn.close()
-    return {"id": xid}
+    return {"id": xid, "adjunto_path": adjunto_path}
 
 
 @router.delete("/api/excepciones/{excep_id}")

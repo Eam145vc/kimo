@@ -198,13 +198,9 @@ function nominaPage() {
         params.set('desde', this.desde);
         params.set('hasta', this.hasta);
         params.set('cargo', cargo);
-        const url = '/api/asistencia/resumen-diario?' + params;
-        console.log('[nomina] fetch:', url);
-        const r = await fetch(url);
+        const r = await fetch('/api/asistencia/resumen-diario?' + params);
         const j = await r.json();
-        console.log('[nomina] items recibidos:', (j.items || []).length, j.items?.[0]);
         this.agrupar(j.items || []);
-        console.log('[nomina] filas agrupadas:', this.filas.length);
       } catch (e) { console.error('[nomina] error:', e); }
       this.loading = false;
     },

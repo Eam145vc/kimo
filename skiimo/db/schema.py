@@ -493,6 +493,8 @@ MIGRATIONS = [
     ("marcajes", "ignorar_nomina", "INTEGER NOT NULL DEFAULT 0"),
     # Turnos: link a plantilla
     ("turnos", "plantilla_id", "INTEGER REFERENCES plantillas_turno(id)"),
+    # Excepciones: archivo adjunto (incapacidad escaneada, etc)
+    ("excepciones_asistencia", "adjunto_path", "TEXT"),
 ]
 
 
