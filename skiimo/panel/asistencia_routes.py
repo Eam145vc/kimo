@@ -727,8 +727,25 @@ async def api_resumen_diario(
         item["pago_total"] = round(pago_ord + pago_extras)
         item["valor_hora_extra"] = valor_hora_extra
 
-        # Status de extras
-        item["status_extra_in"] = "ok" if item["extra_in_ts"] else ("falta" if horas_extras > 0 else "no_aplica")
+        # Status de extras.
+        # extra_in: 'tarde' si marco el inicio DESPUES de la hora oficial de
+        # extras (17:30) -> llego tarde a las extras (rojo). 'ok' si marco a
+        # tiempo o antes. 'falta' si hizo extras pero no hay marca.
+        if item["extra_in_ts"]:
+            try:
+                _t_exin = datetime.fromisoformat(item["extra_in_ts"])
+                _inicio_of = _t_exin.replace(
+                    hour=salida_h, minute=salida_m, second=0, microsecond=0
+                ) + timedelta(minutes=margen_extras_min)
+                # tolerancia: si entra dentro de TOLERANCIA_MIN despues, sigue ok
+                item["status_extra_in"] = (
+                    "tarde" if (_t_exin - _inicio_of).total_seconds() / 60.0 > TOLERANCIA_MIN
+                    else "ok"
+                )
+            except Exception:
+                item["status_extra_in"] = "ok"
+        else:
+            item["status_extra_in"] = "falta" if horas_extras > 0 else "no_aplica"
         item["status_extra_out"] = "ok" if item["extra_out_ts"] else ("falta" if horas_extras > 0 else "no_aplica")
 
         # ----- Desglose por hito: hora real vs hora que conto (ajustada) -----
