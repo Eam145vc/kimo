@@ -626,18 +626,19 @@ async def api_resumen_diario(
                 real = datetime.fromisoformat(ts_iso).replace(second=0, microsecond=0)
             except Exception:
                 return None
-            delta_min = 0
+            # "perdidos" = minutos que se le recortaron frente a la hora OFICIAL.
+            # Se compara la hora ajustada (la que cuenta) contra la oficial:
+            #   entrada/almuerzo_in: llego tarde -> ajustada > oficial -> pierde
+            #   salida/almuerzo_out: se fue temprano -> ajustada < oficial -> pierde
+            # Entrar antes o quedarse de mas NO es perdida (no gana tiempo).
+            perdidos = 0
             if ajust is not None:
-                delta_min = round((ajust - real).total_seconds() / 60.0)
-            # "perdidos" = minutos de trabajo que se le recortaron de verdad.
-            # Solo cuenta cuando el ajuste va EN CONTRA del empleado:
-            #   entrada/almuerzo_in: llego tarde -> ajustada > real (delta > 0)
-            #   salida/almuerzo_out: se fue temprano -> ajustada < real (delta < 0)
-            # Quedarse de mas (salida tarde) o entrar antes NO es perdida (no gana).
-            if tipo in ("entrada", "almuerzo_in"):
-                perdidos = delta_min if delta_min > 0 else 0
-            else:  # salida, almuerzo_out
-                perdidos = -delta_min if delta_min < 0 else 0
+                oficial = real.replace(hour=h, minute=m, second=0, microsecond=0)
+                diff = round((ajust - oficial).total_seconds() / 60.0)
+                if tipo in ("entrada", "almuerzo_in"):
+                    perdidos = diff if diff > 0 else 0
+                else:  # salida, almuerzo_out
+                    perdidos = -diff if diff < 0 else 0
             return {
                 "hito": label,
                 "real": real.strftime("%H:%M"),
