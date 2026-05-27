@@ -477,16 +477,27 @@ async def api_resumen_diario(
         t_out_ajust = _ajustar_a_oficial(item["ultima_salida_ts"], salida_h, salida_m, "salida")
 
         # En curso: si el dia es HOY y NO marco salida pero tiene entrada
-        # -> usamos la hora actual como salida estimada
+        # -> usamos la hora actual como salida estimada, pero NUNCA mas alla
+        #    de la hora de salida oficial (la jornada se cierra a las 17:00).
+        #    Si ya pasaron las 17:00 y no marco salida, se cuenta hasta las
+        #    17:00 (no sigue sumando) y deja de estar "en curso".
         en_curso = False
         if (
             t_in_ajust is not None
             and t_out_ajust is None
             and item["fecha"] == hoy_str
         ):
-            # Solo si tiene entrada (sino no esta trabajando)
-            t_out_ajust = ahora_bogota
-            en_curso = True
+            salida_oficial_hoy = ahora_bogota.replace(
+                hour=salida_h, minute=salida_m, second=0, microsecond=0
+            )
+            if ahora_bogota < salida_oficial_hoy:
+                # Aun dentro de jornada: cuenta hasta ahora
+                t_out_ajust = ahora_bogota
+                en_curso = True
+            else:
+                # Ya termino la jornada y no marco salida: tope a las 17:00
+                t_out_ajust = salida_oficial_hoy
+                en_curso = False
 
         item["en_curso"] = en_curso
 
