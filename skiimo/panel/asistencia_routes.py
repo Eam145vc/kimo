@@ -86,15 +86,20 @@ def register_pages(app, templates) -> None:
             context={"user": user["username"], "page": "empleados"},
         )
 
-    @app.get("/quincena", response_class=HTMLResponse)
-    async def page_quincena(request: Request, session_token: str | None = Cookie(default=None)):
+    @app.get("/nomina", response_class=HTMLResponse)
+    async def page_nomina(request: Request, session_token: str | None = Cookie(default=None)):
         user = validar_sesion(session_token)
         if not user:
             return RedirectResponse(url="/login", status_code=303)
         return templates.TemplateResponse(
-            request=request, name="quincena.html",
-            context={"user": user["username"], "page": "quincena"},
+            request=request, name="nomina.html",
+            context={"user": user["username"], "page": "nomina"},
         )
+
+    @app.get("/quincena")
+    async def page_quincena_alias():
+        # Alias viejo -> redirige a nomina
+        return RedirectResponse(url="/nomina", status_code=301)
 
     @app.get("/jornada", response_class=HTMLResponse)
     async def page_jornada(request: Request, session_token: str | None = Cookie(default=None)):
@@ -138,6 +143,7 @@ async def api_resumen_diario(
     empleado_id: int | None = None,
     desde: str = "",
     hasta: str = "",
+    cargo: str = "",
 ):
     """Fase 1: Resumen simple por dia y empleado.
 
@@ -172,6 +178,9 @@ async def api_resumen_diario(
     if hasta:
         where.append("m.fecha <= ?")
         params.append(hasta)
+    if cargo:
+        where.append("LOWER(e.cargo) = LOWER(?)")
+        params.append(cargo)
 
     # Traemos timestamps + tipo + datos salariales del empleado
     sql = f"""

@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Quincena · Esskimo{% endblock %}
+{% block title %}Nómina · Esskimo{% endblock %}
 
 {% block content %}
-<div x-data="quincenaPage()" x-init="init()">
+<div x-data="nominaPage()" x-init="init()">
 
   <!-- Header -->
   <div class="flex items-center justify-between mb-4">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight">Reporte de pago</h1>
+      <h1 class="text-xl font-semibold tracking-tight">Nómina</h1>
       <p class="text-xs text-text-muted mt-0.5" x-text="periodoLabel"></p>
     </div>
     <button @click="exportarCSV()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-1.5 rounded-lg">
@@ -15,37 +15,55 @@
     </button>
   </div>
 
+  <!-- Pestañas tipo de nomina -->
+  <div class="flex gap-1 mb-4 bg-surface ring-1 ring-border rounded-lg p-1 w-fit">
+    <button @click="setModo('semanal')"
+            :class="modo === 'semanal' ? 'bg-accent text-bg' : 'text-text-muted hover:text-text'"
+            class="text-sm px-4 py-2 rounded-md font-medium transition-all">
+      🔧 Operarios (semanal)
+    </button>
+    <button @click="setModo('quincenal')"
+            :class="modo === 'quincenal' ? 'bg-accent text-bg' : 'text-text-muted hover:text-text'"
+            class="text-sm px-4 py-2 rounded-md font-medium transition-all">
+      💼 Administrativos (quincenal)
+    </button>
+  </div>
+
   <!-- Filtros de periodo -->
   <div class="rounded-xl bg-surface ring-1 ring-border p-4 mb-4">
     <div class="flex flex-wrap items-end gap-3">
-      <div class="flex gap-2">
-        <button @click="setPeriodo('semana')" :class="periodoTipo === 'semana' ? 'bg-accent text-bg' : 'bg-surface-2 text-text'" class="text-sm px-3 py-1.5 rounded-lg">Semana</button>
-        <button @click="setPeriodo('q1')" :class="periodoTipo === 'q1' ? 'bg-accent text-bg' : 'bg-surface-2 text-text'" class="text-sm px-3 py-1.5 rounded-lg">1ª quincena</button>
-        <button @click="setPeriodo('q2')" :class="periodoTipo === 'q2' ? 'bg-accent text-bg' : 'bg-surface-2 text-text'" class="text-sm px-3 py-1.5 rounded-lg">2ª quincena</button>
-        <button @click="setPeriodo('mes')" :class="periodoTipo === 'mes' ? 'bg-accent text-bg' : 'bg-surface-2 text-text'" class="text-sm px-3 py-1.5 rounded-lg">Mes</button>
-      </div>
+      <template x-if="modo === 'semanal'">
+        <div class="flex gap-2">
+          <button @click="setRangoSemana(0)" class="text-xs bg-surface-2 hover:bg-border px-3 py-1.5 rounded">Esta semana</button>
+          <button @click="setRangoSemana(-1)" class="text-xs bg-surface-2 hover:bg-border px-3 py-1.5 rounded">Semana pasada</button>
+        </div>
+      </template>
+      <template x-if="modo === 'quincenal'">
+        <div class="flex gap-2">
+          <button @click="setQuincena('q1')" class="text-xs bg-surface-2 hover:bg-border px-3 py-1.5 rounded">1ª quincena</button>
+          <button @click="setQuincena('q2')" class="text-xs bg-surface-2 hover:bg-border px-3 py-1.5 rounded">2ª quincena</button>
+        </div>
+      </template>
+
       <div class="h-6 w-px bg-border"></div>
       <div>
         <label class="block text-[11px] text-text-muted mb-1">Desde</label>
-        <input type="date" x-model="desde" @change="periodoTipo='custom'; cargar()" class="bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm tabular">
+        <input type="date" x-model="desde" @change="cargar()" class="bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm tabular">
       </div>
       <div>
         <label class="block text-[11px] text-text-muted mb-1">Hasta</label>
-        <input type="date" x-model="hasta" @change="periodoTipo='custom'; cargar()" class="bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm tabular">
-      </div>
-      <div>
-        <label class="block text-[11px] text-text-muted mb-1">Empleado</label>
-        <select x-model="empleadoId" @change="cargar()" class="bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm">
-          <option value="">Todos</option>
-          <template x-for="e in empleados" :key="e.id">
-            <option :value="e.id" x-text="e.nombre"></option>
-          </template>
-        </select>
+        <input type="date" x-model="hasta" @change="cargar()" class="bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm tabular">
       </div>
     </div>
+    <p class="text-[11px] text-text-muted mt-2" x-show="modo === 'semanal'">
+      Operarios: lunes a viernes. Si trabajaron sábado/domingo, amplía el rango con las fechas. Pago cada viernes.
+    </p>
+    <p class="text-[11px] text-text-muted mt-2" x-show="modo === 'quincenal'">
+      Administrativos: 1-15 y 16-fin de mes.
+    </p>
   </div>
 
-  <!-- Total a pagar -->
+  <!-- KPIs -->
   <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
     <div class="rounded-xl bg-success/10 ring-1 ring-success/30 p-4 col-span-2">
       <p class="text-xs text-success">💰 Total a pagar (período)</p>
@@ -55,7 +73,7 @@
       <p class="text-xs text-text-muted">Horas ordinarias</p>
       <p class="text-xl font-semibold mt-1 tabular" x-text="totalHorasOrd.toFixed(1) + ' h'"></p>
     </div>
-    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4" x-show="modo === 'semanal'">
       <p class="text-xs text-text-muted">Horas extras</p>
       <p class="text-xl font-semibold mt-1 tabular text-warning" x-text="totalHorasExtras.toFixed(1) + ' h'"></p>
     </div>
@@ -70,10 +88,10 @@
             <th class="text-left px-4 py-3 font-medium">Empleado</th>
             <th class="text-right px-3 py-3 font-medium">Días</th>
             <th class="text-right px-3 py-3 font-medium">H. ordinarias</th>
-            <th class="text-right px-3 py-3 font-medium">H. extras</th>
+            <th class="text-right px-3 py-3 font-medium" x-show="modo === 'semanal'">H. extras</th>
             <th class="text-right px-3 py-3 font-medium">$/hora</th>
             <th class="text-right px-3 py-3 font-medium">Pago ord.</th>
-            <th class="text-right px-3 py-3 font-medium">Pago extras</th>
+            <th class="text-right px-3 py-3 font-medium" x-show="modo === 'semanal'">Pago extras</th>
             <th class="text-right px-4 py-3 font-medium">Total</th>
           </tr>
         </thead>
@@ -82,17 +100,17 @@
             <tr><td colspan="8" class="text-center py-10 text-text-muted">Cargando…</td></tr>
           </template>
           <template x-if="!loading && !filas.length">
-            <tr><td colspan="8" class="text-center py-10 text-text-muted">Sin datos en el período</td></tr>
+            <tr><td colspan="8" class="text-center py-10 text-text-muted">Sin datos en el período para este tipo de empleado</td></tr>
           </template>
           <template x-for="f in filas" :key="f.empleado_id">
             <tr class="hover:bg-surface-2/30">
               <td class="px-4 py-3" :class="f.sin_salario ? 'text-warning' : ''" x-text="f.nombre"></td>
               <td class="px-3 py-3 text-right tabular" x-text="f.dias"></td>
               <td class="px-3 py-3 text-right tabular" x-text="f.horas_ord.toFixed(2)"></td>
-              <td class="px-3 py-3 text-right tabular text-warning" x-text="f.horas_extras > 0 ? f.horas_extras.toFixed(2) : '—'"></td>
+              <td class="px-3 py-3 text-right tabular text-warning" x-show="modo === 'semanal'" x-text="f.horas_extras > 0 ? f.horas_extras.toFixed(2) : '—'"></td>
               <td class="px-3 py-3 text-right tabular text-text-muted" x-text="f.valor_hora ? '$' + f.valor_hora.toLocaleString('es-CO') : '—'"></td>
               <td class="px-3 py-3 text-right tabular" x-text="'$' + f.pago_ord.toLocaleString('es-CO')"></td>
-              <td class="px-3 py-3 text-right tabular text-warning" x-text="f.pago_extras > 0 ? '$' + f.pago_extras.toLocaleString('es-CO') : '—'"></td>
+              <td class="px-3 py-3 text-right tabular text-warning" x-show="modo === 'semanal'" x-text="f.pago_extras > 0 ? '$' + f.pago_extras.toLocaleString('es-CO') : '—'"></td>
               <td class="px-4 py-3 text-right tabular font-semibold"
                   :class="f.sin_salario ? 'text-warning' : ''"
                   x-text="f.sin_salario ? 'falta sal.' : '$' + f.pago_total.toLocaleString('es-CO')"></td>
@@ -104,28 +122,27 @@
   </div>
 
   <p class="text-[11px] text-text-muted mt-3">
-    Horas ordinarias × valor/hora + horas extras × $14.000.
+    Horas ordinarias × valor/hora<span x-show="modo === 'semanal'"> + horas extras × $14.000</span>.
     El almuerzo (12:00-13:00) no se cuenta como trabajado.
-    Los empleados sin salario configurado aparecen en naranja.
+    Empleados sin salario configurado aparecen en naranja.
   </p>
 
 </div>
 
 <script>
-function quincenaPage() {
+function nominaPage() {
   return {
     loading: true,
-    periodoTipo: 'q1',
+    modo: 'semanal',  // semanal (operarios) | quincenal (administrativos)
     desde: '',
     hasta: '',
-    empleadoId: '',
     empleados: [],
     filas: [],
     periodoLabel: '',
 
     async init() {
       await this.cargarEmpleados();
-      this.setPeriodo('q1');
+      this.setModo('semanal');
     },
 
     async cargarEmpleados() {
@@ -136,21 +153,37 @@ function quincenaPage() {
 
     _fmt(d) { return d.toISOString().slice(0, 10); },
 
-    setPeriodo(tipo) {
-      this.periodoTipo = tipo;
+    setModo(modo) {
+      this.modo = modo;
+      if (modo === 'semanal') {
+        this.setRangoSemana(0);
+      } else {
+        const hoy = new Date();
+        if (hoy.getDate() <= 15) this.setQuincena('q1');
+        else this.setQuincena('q2');
+      }
+    },
+
+    setRangoSemana(offset) {
+      // Lunes a viernes de la semana (offset 0 = esta semana, -1 = pasada)
+      const hoy = new Date();
+      const dia = hoy.getDay(); // 0=dom, 1=lun...
+      const diffLunes = (dia === 0 ? -6 : 1 - dia) + (offset * 7);
+      const lunes = new Date(hoy); lunes.setDate(hoy.getDate() + diffLunes);
+      const viernes = new Date(lunes); viernes.setDate(lunes.getDate() + 4);
+      this.desde = this._fmt(lunes);
+      this.hasta = this._fmt(viernes);
+      this.cargar();
+    },
+
+    setQuincena(q) {
       const hoy = new Date();
       const y = hoy.getFullYear(), m = hoy.getMonth();
-      if (tipo === 'semana') {
-        const ini = new Date(hoy); ini.setDate(hoy.getDate() - 6);
-        this.desde = this._fmt(ini); this.hasta = this._fmt(hoy);
-      } else if (tipo === 'q1') {
+      if (q === 'q1') {
         this.desde = this._fmt(new Date(y, m, 1));
         this.hasta = this._fmt(new Date(y, m, 15));
-      } else if (tipo === 'q2') {
+      } else {
         this.desde = this._fmt(new Date(y, m, 16));
-        this.hasta = this._fmt(new Date(y, m + 1, 0)); // ultimo dia del mes
-      } else if (tipo === 'mes') {
-        this.desde = this._fmt(new Date(y, m, 1));
         this.hasta = this._fmt(new Date(y, m + 1, 0));
       }
       this.cargar();
@@ -160,10 +193,11 @@ function quincenaPage() {
       this.loading = true;
       this.periodoLabel = `${this.desde} a ${this.hasta}`;
       try {
+        const cargo = this.modo === 'semanal' ? 'Operario' : 'Administrativo';
         const params = new URLSearchParams();
-        if (this.empleadoId) params.set('empleado_id', this.empleadoId);
         params.set('desde', this.desde);
         params.set('hasta', this.hasta);
+        params.set('cargo', cargo);
         const r = await fetch('/api/asistencia/resumen-diario?' + params);
         const j = await r.json();
         this.agrupar(j.items || []);
@@ -172,7 +206,6 @@ function quincenaPage() {
     },
 
     agrupar(items) {
-      // Agrupar los dias por empleado
       const map = {};
       for (const it of items) {
         const id = it.empleado_id;
@@ -182,12 +215,8 @@ function quincenaPage() {
             nombre: it.empleado_nombre,
             valor_hora: it.valor_hora_ord || 0,
             sin_salario: !it.salario_mensual,
-            dias: 0,
-            horas_ord: 0,
-            horas_extras: 0,
-            pago_ord: 0,
-            pago_extras: 0,
-            pago_total: 0,
+            dias: 0, horas_ord: 0, horas_extras: 0,
+            pago_ord: 0, pago_extras: 0, pago_total: 0,
           };
         }
         const g = map[id];
@@ -201,37 +230,30 @@ function quincenaPage() {
       this.filas = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre));
     },
 
-    get totalPago() {
-      return this.filas.reduce((s, f) => s + (f.pago_total || 0), 0);
-    },
-    get totalHorasOrd() {
-      return this.filas.reduce((s, f) => s + (f.horas_ord || 0), 0);
-    },
-    get totalHorasExtras() {
-      return this.filas.reduce((s, f) => s + (f.horas_extras || 0), 0);
-    },
+    get totalPago() { return this.filas.reduce((s, f) => s + (f.pago_total || 0), 0); },
+    get totalHorasOrd() { return this.filas.reduce((s, f) => s + (f.horas_ord || 0), 0); },
+    get totalHorasExtras() { return this.filas.reduce((s, f) => s + (f.horas_extras || 0), 0); },
 
     exportarCSV() {
       if (!this.filas.length) return;
-      const headers = ['Empleado', 'Dias', 'Horas_ordinarias', 'Horas_extras', 'Valor_hora', 'Pago_ordinario', 'Pago_extras', 'Total'];
+      const esSemanal = this.modo === 'semanal';
+      const headers = esSemanal
+        ? ['Empleado', 'Dias', 'Horas_ord', 'Horas_extras', 'Valor_hora', 'Pago_ord', 'Pago_extras', 'Total']
+        : ['Empleado', 'Dias', 'Horas_ord', 'Valor_hora', 'Pago_ord', 'Total'];
       const rows = [headers.join(',')];
       for (const f of this.filas) {
-        rows.push([
-          '"' + f.nombre.replace(/"/g, '""') + '"',
-          f.dias,
-          f.horas_ord.toFixed(2),
-          f.horas_extras.toFixed(2),
-          f.valor_hora,
-          Math.round(f.pago_ord),
-          Math.round(f.pago_extras),
-          Math.round(f.pago_total),
-        ].join(','));
+        const base = ['"' + f.nombre.replace(/"/g, '""') + '"', f.dias, f.horas_ord.toFixed(2)];
+        if (esSemanal) base.push(f.horas_extras.toFixed(2));
+        base.push(f.valor_hora, Math.round(f.pago_ord));
+        if (esSemanal) base.push(Math.round(f.pago_extras));
+        base.push(Math.round(f.pago_total));
+        rows.push(base.join(','));
       }
       const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `pago_${this.desde}_${this.hasta}.csv`;
+      a.download = `nomina_${this.modo}_${this.desde}_${this.hasta}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     }
