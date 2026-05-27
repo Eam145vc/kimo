@@ -90,20 +90,7 @@
     </div>
   </div>
 
-  <!-- Reclasificar -->
-  <div class="rounded-xl bg-surface ring-1 ring-border p-5">
-    <h3 class="text-sm font-semibold mb-2">Aplicar a marcajes existentes</h3>
-    <p class="text-xs text-text-muted mb-3">
-      Re-clasifica los marcajes ya registrados usando la jornada y tolerancia actuales.
-      No toca los que fueron editados manualmente desde el panel.
-    </p>
-    <button @click="reclasificar()" :disabled="reclasificando"
-            class="text-sm bg-surface-2 hover:bg-border text-text px-4 py-2 rounded-lg disabled:opacity-50">
-      <span x-show="!reclasificando">Reclasificar marcajes históricos</span>
-      <span x-show="reclasificando">Reclasificando…</span>
-    </button>
-    <p x-show="mensaje" class="text-xs mt-2" :class="mensajeError ? 'text-danger' : 'text-success'" x-text="mensaje"></p>
-  </div>
+  <p x-show="mensaje" class="text-xs mt-2" :class="mensajeError ? 'text-danger' : 'text-success'" x-text="mensaje"></p>
 
 </div>
 
@@ -119,7 +106,6 @@ function jornadaPage() {
       margen_gracia_extras_min: 30,
     },
     saving: false,
-    reclasificando: false,
     mensaje: '',
     mensajeError: false,
 
@@ -175,27 +161,6 @@ function jornadaPage() {
         this.mensajeError = true;
       }
       this.saving = false;
-    },
-
-    async reclasificar() {
-      if (!confirm('Re-clasificar todos los marcajes históricos según la jornada actual?')) return;
-      this.reclasificando = true;
-      this.mensaje = '';
-      try {
-        const r = await fetch('/api/asistencia/reclasificar', { method: 'POST' });
-        const j = await r.json();
-        if (r.ok) {
-          this.mensaje = `Listo. ${j.actualizados} marcajes reclasificados.`;
-          this.mensajeError = false;
-        } else {
-          this.mensaje = 'Error al reclasificar';
-          this.mensajeError = true;
-        }
-      } catch (e) {
-        this.mensaje = 'Error: ' + e;
-        this.mensajeError = true;
-      }
-      this.reclasificando = false;
     }
   };
 }
