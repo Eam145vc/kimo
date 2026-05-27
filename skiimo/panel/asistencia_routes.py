@@ -485,6 +485,14 @@ async def api_resumen_diario(
             return "ok"
         return "temprano" if delta_min < 0 else "tarde"
 
+    def _horas_truncadas(t_ini: datetime, t_fin: datetime) -> float:
+        """Horas entre dos tiempos contando solo MINUTOS ENTEROS (los segundos
+        no suman: 13:06:54 cuenta como 13:06). Devuelve horas con 2 decimales.
+        Asume que los tiempos ya vienen con segundos en 0; por seguridad usa
+        division entera de segundos a minutos (floor)."""
+        total_min = int((t_fin - t_ini).total_seconds() // 60)
+        return round(total_min / 60.0, 2)
+
     def _ajustar_a_oficial(ts_iso: str | None, hora_oficial_h: int, hora_oficial_m: int,
                             tipo: str) -> datetime | None:
         """Aplica reglas de tolerancia para calculo de horas trabajadas.
@@ -580,8 +588,8 @@ async def api_resumen_diario(
                 hour=salida_h, minute=salida_m, second=0, microsecond=0
             )
             if ahora_bogota < salida_oficial_hoy:
-                # Aun dentro de jornada: cuenta hasta ahora
-                t_out_ajust = ahora_bogota
+                # Aun dentro de jornada: cuenta hasta ahora (segundos truncados)
+                t_out_ajust = ahora_bogota.replace(second=0, microsecond=0)
                 en_curso = True
             else:
                 # Ya termino la jornada y no marco salida: tope a las 17:00
@@ -689,17 +697,17 @@ async def api_resumen_diario(
                     t_ex_in_efectivo = t_ex_in - tol
 
                 if item["extra_out_ts"]:
-                    # Caso normal: hay cierre -> extras de 17:30 al cierre
-                    t_ex_out = datetime.fromisoformat(item["extra_out_ts"])
+                    # Caso normal: hay cierre -> extras de 17:30 al cierre.
+                    # Truncar segundos (los segundos no suman, se redondea abajo).
+                    t_ex_out = datetime.fromisoformat(item["extra_out_ts"]).replace(
+                        second=0, microsecond=0
+                    )
                     if t_ex_out > t_ex_in_efectivo:
-                        horas_extras = round(
-                            (t_ex_out - t_ex_in_efectivo).total_seconds() / 3600.0, 2
-                        )
+                        horas_extras = _horas_truncadas(t_ex_in_efectivo, t_ex_out)
                 elif item["fecha"] == hoy_str and ahora_bogota > t_ex_in_efectivo:
                     # HOY y sin cierre aun -> contador EN VIVO desde 17:30
-                    horas_extras = round(
-                        (ahora_bogota - t_ex_in_efectivo).total_seconds() / 3600.0, 2
-                    )
+                    ahora_trunc = ahora_bogota.replace(second=0, microsecond=0)
+                    horas_extras = _horas_truncadas(t_ex_in_efectivo, ahora_trunc)
                     item["extras_en_curso"] = True
                 else:
                     # Dia pasado con extra_in pero SIN cierre -> no se paga, novedad
