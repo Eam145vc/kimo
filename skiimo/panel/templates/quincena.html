@@ -4,57 +4,98 @@
 {% block content %}
 <div x-data="quincenaPage()" x-init="init()">
 
-  <div class="flex items-center justify-between mb-6">
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-4">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight">Quincena</h1>
+      <h1 class="text-xl font-semibold tracking-tight">Reporte de pago</h1>
       <p class="text-xs text-text-muted mt-0.5" x-text="periodoLabel"></p>
     </div>
-    <div class="flex items-center gap-2">
-      <input type="date" x-model="fechaInicio" @change="cargar()" class="bg-surface ring-1 ring-border rounded px-3 py-1.5 text-sm">
-      <button @click="exportarCSV()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-1.5 rounded-lg">Exportar CSV</button>
+    <button @click="exportarCSV()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-1.5 rounded-lg">
+      Exportar CSV
+    </button>
+  </div>
+
+  <!-- Filtros de periodo -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-4 mb-4">
+    <div class="flex flex-wrap items-end gap-3">
+      <div class="flex gap-2">
+        <button @click="setPeriodo('semana')" :class="periodoTipo === 'semana' ? 'bg-accent text-bg' : 'bg-surface-2 text-text'" class="text-sm px-3 py-1.5 rounded-lg">Semana</button>
+        <button @click="setPeriodo('q1')" :class="periodoTipo === 'q1' ? 'bg-accent text-bg' : 'bg-surface-2 text-text'" class="text-sm px-3 py-1.5 rounded-lg">1ª quincena</button>
+        <button @click="setPeriodo('q2')" :class="periodoTipo === 'q2' ? 'bg-accent text-bg' : 'bg-surface-2 text-text'" class="text-sm px-3 py-1.5 rounded-lg">2ª quincena</button>
+        <button @click="setPeriodo('mes')" :class="periodoTipo === 'mes' ? 'bg-accent text-bg' : 'bg-surface-2 text-text'" class="text-sm px-3 py-1.5 rounded-lg">Mes</button>
+      </div>
+      <div class="h-6 w-px bg-border"></div>
+      <div>
+        <label class="block text-[11px] text-text-muted mb-1">Desde</label>
+        <input type="date" x-model="desde" @change="periodoTipo='custom'; cargar()" class="bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm tabular">
+      </div>
+      <div>
+        <label class="block text-[11px] text-text-muted mb-1">Hasta</label>
+        <input type="date" x-model="hasta" @change="periodoTipo='custom'; cargar()" class="bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm tabular">
+      </div>
+      <div>
+        <label class="block text-[11px] text-text-muted mb-1">Empleado</label>
+        <select x-model="empleadoId" @change="cargar()" class="bg-surface-2 ring-1 ring-border rounded px-3 py-1.5 text-sm">
+          <option value="">Todos</option>
+          <template x-for="e in empleados" :key="e.id">
+            <option :value="e.id" x-text="e.nombre"></option>
+          </template>
+        </select>
+      </div>
     </div>
   </div>
 
-  <!-- Total -->
-  <div class="rounded-xl bg-surface ring-1 ring-border p-4 mb-4">
-    <p class="text-xs text-text-muted">Total a pagar quincena</p>
-    <p class="text-3xl font-semibold mt-1 tabular text-accent" x-text="fmtMoney(data.total_pago)"></p>
+  <!-- Total a pagar -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+    <div class="rounded-xl bg-success/10 ring-1 ring-success/30 p-4 col-span-2">
+      <p class="text-xs text-success">💰 Total a pagar (período)</p>
+      <p class="text-2xl font-bold mt-1 tabular text-success" x-text="'$' + totalPago.toLocaleString('es-CO')"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">Horas ordinarias</p>
+      <p class="text-xl font-semibold mt-1 tabular" x-text="totalHorasOrd.toFixed(1) + ' h'"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">Horas extras</p>
+      <p class="text-xl font-semibold mt-1 tabular text-warning" x-text="totalHorasExtras.toFixed(1) + ' h'"></p>
+    </div>
   </div>
 
-  <!-- Tabla -->
+  <!-- Tabla agrupada por empleado -->
   <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-surface-2 text-text-muted">
           <tr>
             <th class="text-left px-4 py-3 font-medium">Empleado</th>
-            <th class="text-right px-3 py-3 font-medium">Dias</th>
-            <th class="text-right px-3 py-3 font-medium">Ord. D</th>
-            <th class="text-right px-3 py-3 font-medium">Ord. N</th>
-            <th class="text-right px-3 py-3 font-medium">Ext. D</th>
-            <th class="text-right px-3 py-3 font-medium">Ext. N</th>
-            <th class="text-right px-3 py-3 font-medium">Dom/Fest</th>
-            <th class="text-right px-3 py-3 font-medium">Dom Ext</th>
-            <th class="text-right px-3 py-3 font-medium">Tarde min</th>
-            <th class="text-right px-4 py-3 font-medium">A pagar</th>
+            <th class="text-right px-3 py-3 font-medium">Días</th>
+            <th class="text-right px-3 py-3 font-medium">H. ordinarias</th>
+            <th class="text-right px-3 py-3 font-medium">H. extras</th>
+            <th class="text-right px-3 py-3 font-medium">$/hora</th>
+            <th class="text-right px-3 py-3 font-medium">Pago ord.</th>
+            <th class="text-right px-3 py-3 font-medium">Pago extras</th>
+            <th class="text-right px-4 py-3 font-medium">Total</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-border/40">
-          <template x-if="!data.resumen?.length">
-            <tr><td colspan="10" class="text-center py-10 text-text-muted">Sin datos en el periodo</td></tr>
+          <template x-if="loading">
+            <tr><td colspan="8" class="text-center py-10 text-text-muted">Cargando…</td></tr>
           </template>
-          <template x-for="r in data.resumen" :key="r.empleado_id">
+          <template x-if="!loading && !filas.length">
+            <tr><td colspan="8" class="text-center py-10 text-text-muted">Sin datos en el período</td></tr>
+          </template>
+          <template x-for="f in filas" :key="f.empleado_id">
             <tr class="hover:bg-surface-2/30">
-              <td class="px-4 py-3" x-text="r.nombre"></td>
-              <td class="px-3 py-3 text-right tabular" x-text="r.dias_marcados"></td>
-              <td class="px-3 py-3 text-right tabular" x-text="r.ord_diurna.toFixed(1)"></td>
-              <td class="px-3 py-3 text-right tabular text-text-muted" x-text="r.ord_nocturna.toFixed(1)"></td>
-              <td class="px-3 py-3 text-right tabular text-warning" x-text="r.extra_diurna.toFixed(1)"></td>
-              <td class="px-3 py-3 text-right tabular text-warning" x-text="r.extra_nocturna.toFixed(1)"></td>
-              <td class="px-3 py-3 text-right tabular text-accent" x-text="r.dom_fest_ord.toFixed(1)"></td>
-              <td class="px-3 py-3 text-right tabular text-accent" x-text="r.dom_fest_extra.toFixed(1)"></td>
-              <td class="px-3 py-3 text-right tabular" :class="r.minutos_tarde > 0 ? 'text-danger' : 'text-text-muted'" x-text="r.minutos_tarde"></td>
-              <td class="px-4 py-3 text-right tabular font-medium" x-text="fmtMoney(r.pago_estimado)"></td>
+              <td class="px-4 py-3" :class="f.sin_salario ? 'text-warning' : ''" x-text="f.nombre"></td>
+              <td class="px-3 py-3 text-right tabular" x-text="f.dias"></td>
+              <td class="px-3 py-3 text-right tabular" x-text="f.horas_ord.toFixed(2)"></td>
+              <td class="px-3 py-3 text-right tabular text-warning" x-text="f.horas_extras > 0 ? f.horas_extras.toFixed(2) : '—'"></td>
+              <td class="px-3 py-3 text-right tabular text-text-muted" x-text="f.valor_hora ? '$' + f.valor_hora.toLocaleString('es-CO') : '—'"></td>
+              <td class="px-3 py-3 text-right tabular" x-text="'$' + f.pago_ord.toLocaleString('es-CO')"></td>
+              <td class="px-3 py-3 text-right tabular text-warning" x-text="f.pago_extras > 0 ? '$' + f.pago_extras.toLocaleString('es-CO') : '—'"></td>
+              <td class="px-4 py-3 text-right tabular font-semibold"
+                  :class="f.sin_salario ? 'text-warning' : ''"
+                  x-text="f.sin_salario ? 'falta sal.' : '$' + f.pago_total.toLocaleString('es-CO')"></td>
             </tr>
           </template>
         </tbody>
@@ -62,63 +103,137 @@
     </div>
   </div>
 
-  <p class="text-xs text-text-muted mt-3">
-    Ord.D = ordinaria diurna (06-21h) · Ord.N = ordinaria nocturna (21-06h, +35%) ·
-    Ext.D = extra diurna (+25%) · Ext.N = extra nocturna (+75%) ·
-    Dom/Fest = dominical/festivo ordinario (+75%) · Dom Ext = extra en dom/fest (+100%/+150%).
-    Recargos segun CST art. 168 y 179.
+  <p class="text-[11px] text-text-muted mt-3">
+    Horas ordinarias × valor/hora + horas extras × $14.000.
+    El almuerzo (12:00-13:00) no se cuenta como trabajado.
+    Los empleados sin salario configurado aparecen en naranja.
   </p>
+
 </div>
 
 <script>
 function quincenaPage() {
   return {
-    fechaInicio: '',
-    data: { resumen: [], total_pago: 0, periodo: {} },
+    loading: true,
+    periodoTipo: 'q1',
+    desde: '',
+    hasta: '',
+    empleadoId: '',
+    empleados: [],
+    filas: [],
     periodoLabel: '',
 
     async init() {
+      await this.cargarEmpleados();
+      this.setPeriodo('q1');
+    },
+
+    async cargarEmpleados() {
+      const r = await fetch('/api/empleados');
+      const j = await r.json();
+      this.empleados = (j.items || []).filter(e => e.activo);
+    },
+
+    _fmt(d) { return d.toISOString().slice(0, 10); },
+
+    setPeriodo(tipo) {
+      this.periodoTipo = tipo;
       const hoy = new Date();
-      const d = hoy.getDate();
-      const ini = new Date(hoy.getFullYear(), hoy.getMonth(), d <= 15 ? 1 : 16);
-      this.fechaInicio = ini.toISOString().slice(0, 10);
-      await this.cargar();
+      const y = hoy.getFullYear(), m = hoy.getMonth();
+      if (tipo === 'semana') {
+        const ini = new Date(hoy); ini.setDate(hoy.getDate() - 6);
+        this.desde = this._fmt(ini); this.hasta = this._fmt(hoy);
+      } else if (tipo === 'q1') {
+        this.desde = this._fmt(new Date(y, m, 1));
+        this.hasta = this._fmt(new Date(y, m, 15));
+      } else if (tipo === 'q2') {
+        this.desde = this._fmt(new Date(y, m, 16));
+        this.hasta = this._fmt(new Date(y, m + 1, 0)); // ultimo dia del mes
+      } else if (tipo === 'mes') {
+        this.desde = this._fmt(new Date(y, m, 1));
+        this.hasta = this._fmt(new Date(y, m + 1, 0));
+      }
+      this.cargar();
     },
 
     async cargar() {
-      const r = await fetch('/api/asistencia/quincena?fecha_inicio=' + this.fechaInicio);
-      this.data = await r.json();
-      const p = this.data.periodo || {};
-      if (p.inicio) {
-        this.periodoLabel = `${p.inicio} a ${p.fin}`;
+      this.loading = true;
+      this.periodoLabel = `${this.desde} a ${this.hasta}`;
+      try {
+        const params = new URLSearchParams();
+        if (this.empleadoId) params.set('empleado_id', this.empleadoId);
+        params.set('desde', this.desde);
+        params.set('hasta', this.hasta);
+        const r = await fetch('/api/asistencia/resumen-diario?' + params);
+        const j = await r.json();
+        this.agrupar(j.items || []);
+      } catch (e) { console.error(e); }
+      this.loading = false;
+    },
+
+    agrupar(items) {
+      // Agrupar los dias por empleado
+      const map = {};
+      for (const it of items) {
+        const id = it.empleado_id;
+        if (!map[id]) {
+          map[id] = {
+            empleado_id: id,
+            nombre: it.empleado_nombre,
+            valor_hora: it.valor_hora_ord || 0,
+            sin_salario: !it.salario_mensual,
+            dias: 0,
+            horas_ord: 0,
+            horas_extras: 0,
+            pago_ord: 0,
+            pago_extras: 0,
+            pago_total: 0,
+          };
+        }
+        const g = map[id];
+        g.dias += 1;
+        g.horas_ord += (it.horas || 0);
+        g.horas_extras += (it.horas_extras || 0);
+        g.pago_ord += (it.pago_ord || 0);
+        g.pago_extras += (it.pago_extras || 0);
+        g.pago_total += (it.pago_total || 0);
       }
+      this.filas = Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    },
+
+    get totalPago() {
+      return this.filas.reduce((s, f) => s + (f.pago_total || 0), 0);
+    },
+    get totalHorasOrd() {
+      return this.filas.reduce((s, f) => s + (f.horas_ord || 0), 0);
+    },
+    get totalHorasExtras() {
+      return this.filas.reduce((s, f) => s + (f.horas_extras || 0), 0);
     },
 
     exportarCSV() {
-      const rows = this.data.resumen || [];
-      if (!rows.length) return;
-      const header = ['Empleado', 'Dias', 'Ord_Diurna', 'Ord_Nocturna', 'Extra_Diurna', 'Extra_Nocturna', 'DomFest_Ord', 'DomFest_Extra', 'Minutos_Tarde', 'A_pagar_COP'];
-      const lines = [header.join(',')];
-      for (const r of rows) {
-        lines.push([
-          '"' + r.nombre.replace(/"/g, '""') + '"',
-          r.dias_marcados, r.ord_diurna, r.ord_nocturna,
-          r.extra_diurna, r.extra_nocturna,
-          r.dom_fest_ord, r.dom_fest_extra,
-          r.minutos_tarde, r.pago_estimado
+      if (!this.filas.length) return;
+      const headers = ['Empleado', 'Dias', 'Horas_ordinarias', 'Horas_extras', 'Valor_hora', 'Pago_ordinario', 'Pago_extras', 'Total'];
+      const rows = [headers.join(',')];
+      for (const f of this.filas) {
+        rows.push([
+          '"' + f.nombre.replace(/"/g, '""') + '"',
+          f.dias,
+          f.horas_ord.toFixed(2),
+          f.horas_extras.toFixed(2),
+          f.valor_hora,
+          Math.round(f.pago_ord),
+          Math.round(f.pago_extras),
+          Math.round(f.pago_total),
         ].join(','));
       }
-      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = `quincena_${this.data.periodo.inicio}_${this.data.periodo.fin}.csv`;
+      a.href = url;
+      a.download = `pago_${this.desde}_${this.hasta}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-    },
-
-    fmtMoney(v) {
-      if (!v) return '$0';
-      return '$' + Math.round(v).toLocaleString('es-CO');
     }
   };
 }

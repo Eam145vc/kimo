@@ -44,7 +44,6 @@
             <th class="text-left px-4 py-3 font-medium">Cedula</th>
             <th class="text-left px-4 py-3 font-medium">Cargo</th>
             <th class="text-left px-4 py-3 font-medium">Hik #</th>
-            <th class="text-left px-4 py-3 font-medium">Plantilla</th>
             <th class="text-right px-4 py-3 font-medium">Salario</th>
             <th class="text-right px-4 py-3 font-medium">$/hora</th>
             <th class="text-right px-4 py-3 font-medium">Marcajes</th>
@@ -54,7 +53,7 @@
         </thead>
         <tbody class="divide-y divide-border/40">
           <template x-if="!items.length">
-            <tr><td colspan="10" class="text-center py-10 text-text-muted">Sin empleados</td></tr>
+            <tr><td colspan="9" class="text-center py-10 text-text-muted">Sin empleados</td></tr>
           </template>
           <template x-for="e in items" :key="e.id">
             <tr class="hover:bg-surface-2/30" :class="{ 'opacity-50': !e.activo }">
@@ -62,7 +61,6 @@
               <td class="px-4 py-3 text-text-muted" x-text="e.cedula || '-'"></td>
               <td class="px-4 py-3 text-text-muted" x-text="e.cargo || '-'"></td>
               <td class="px-4 py-3 text-text-muted tabular" x-text="e.hik_employee_no || '-'"></td>
-              <td class="px-4 py-3 text-xs" :class="e.plantilla_id ? 'text-text' : 'text-warning'" x-text="plantillaNombre(e.plantilla_id)"></td>
               <td class="px-4 py-3 text-right tabular" :class="e.salario_mensual ? '' : 'text-warning'" x-text="e.salario_mensual ? fmtMoney(e.salario_mensual) : 'falta'"></td>
               <td class="px-4 py-3 text-right tabular text-text-muted" x-text="fmtMoney(e.valor_hora_ord)"></td>
               <td class="px-4 py-3 text-right tabular text-text-muted" x-text="e.total_marcajes"></td>
@@ -108,20 +106,8 @@
         </div>
         <div>
           <label class="block text-xs text-text-muted mb-1">Salario mensual (COP) *</label>
-          <input x-model.number="form.salario_mensual" type="number" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular" placeholder="ej: 1500000">
+          <input x-model.number="form.salario_mensual" type="number" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular" placeholder="ej: 2000000">
           <p class="text-[10px] text-text-muted mt-1">Obligatorio para calcular nómina. Valor/hora se calcula automático sobre 230 h/mes.</p>
-        </div>
-        <div>
-          <label class="block text-xs text-text-muted mb-1">Plantilla de horario *</label>
-          <select x-model.number="form.plantilla_id" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
-            <option :value="null">— Sin plantilla (sin cálculo de horas extra) —</option>
-            <template x-for="p in plantillas" :key="p.id">
-              <option :value="p.id" x-text="`${p.nombre}  ·  ${p.hora_entrada}-${p.hora_salida}`"></option>
-            </template>
-          </select>
-          <p class="text-[10px] text-text-muted mt-1">
-            <a href="/plantillas" class="text-accent hover:underline">Gestionar plantillas →</a>
-          </p>
         </div>
         <div>
           <label class="block text-xs text-text-muted mb-1">Fecha ingreso</label>
@@ -266,10 +252,9 @@
 function empleadosPage() {
   return {
     items: [],
-    plantillas: [],
     modalOpen: false,
     syncModalOpen: false,
-    form: { id: null, nombre: '', cedula: '', cargo: '', hik_employee_no: '', salario_mensual: null, fecha_ingreso: '', telegram_chat_id: '', plantilla_id: null },
+    form: { id: null, nombre: '', cedula: '', cargo: '', hik_employee_no: '', salario_mensual: null, fecha_ingreso: '', telegram_chat_id: '' },
     sync: {
       ip: localStorage.getItem('hik_local_ip') || '192.168.128.32',
       user: localStorage.getItem('hik_local_user') || 'admin',
@@ -290,7 +275,7 @@ function empleadosPage() {
     },
 
     async init() {
-      await Promise.all([this.cargar(), this.cargarPlantillas()]);
+      await this.cargar();
     },
 
     async cargar() {
@@ -299,20 +284,8 @@ function empleadosPage() {
       this.items = j.items || [];
     },
 
-    async cargarPlantillas() {
-      const r = await fetch('/api/plantillas');
-      const j = await r.json();
-      this.plantillas = (j.items || []).filter(p => p.activa);
-    },
-
-    plantillaNombre(plantilla_id) {
-      if (!plantilla_id) return '—';
-      const p = this.plantillas.find(x => x.id === plantilla_id);
-      return p ? p.nombre : `#${plantilla_id}`;
-    },
-
     openCreate() {
-      this.form = { id: null, nombre: '', cedula: '', cargo: '', hik_employee_no: '', salario_mensual: null, fecha_ingreso: '', telegram_chat_id: '', plantilla_id: null };
+      this.form = { id: null, nombre: '', cedula: '', cargo: '', hik_employee_no: '', salario_mensual: null, fecha_ingreso: '', telegram_chat_id: '' };
       this.modalOpen = true;
     },
 
@@ -320,8 +293,7 @@ function empleadosPage() {
       this.form = {
         id: e.id, nombre: e.nombre || '', cedula: e.cedula || '', cargo: e.cargo || '',
         hik_employee_no: e.hik_employee_no || '', salario_mensual: e.salario_mensual,
-        fecha_ingreso: e.fecha_ingreso || '', telegram_chat_id: e.telegram_chat_id || '',
-        plantilla_id: e.plantilla_id || null
+        fecha_ingreso: e.fecha_ingreso || '', telegram_chat_id: e.telegram_chat_id || ''
       };
       this.modalOpen = true;
     },
