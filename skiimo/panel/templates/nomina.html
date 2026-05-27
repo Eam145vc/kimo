@@ -193,7 +193,7 @@ function nominaPage() {
       this.loading = true;
       this.periodoLabel = `${this.desde} a ${this.hasta}`;
       try {
-        const cargo = this.modo === 'semanal' ? 'Operario' : 'Administrativo';
+        const cargo = this.modo === 'semanal' ? 'Operario,Coordinador' : 'Administrativo';
         const params = new URLSearchParams();
         params.set('desde', this.desde);
         params.set('hasta', this.hasta);

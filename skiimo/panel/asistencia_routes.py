@@ -178,9 +178,11 @@ async def api_resumen_diario(
     if hasta:
         where.append("m.fecha <= ?")
         params.append(hasta)
-    if cargo:
-        where.append("LOWER(e.cargo) = LOWER(?)")
-        params.append(cargo)
+    cargos_list = [c.strip() for c in (cargo or "").split(",") if c.strip()]
+    if cargos_list:
+        placeholders = ",".join("?" * len(cargos_list))
+        where.append(f"LOWER(e.cargo) IN ({placeholders})")
+        params.extend(c.lower() for c in cargos_list)
 
     # Traemos timestamps + tipo + datos salariales del empleado
     sql = f"""
@@ -214,6 +216,12 @@ async def api_resumen_diario(
     conn = get_conn()
     try:
         rows = conn.execute(sql, tuple(params)).fetchall()
+        cargo_filter_sql = ""
+        cargo_filter_params: list[Any] = []
+        if cargos_list:
+            ph = ",".join("?" * len(cargos_list))
+            cargo_filter_sql = f"AND LOWER(e.cargo) IN ({ph})"
+            cargo_filter_params = [c.lower() for c in cargos_list]
         excep_rows = conn.execute(
             f"""SELECT x.*, e.nombre AS empleado_nombre, e.cargo,
                        e.valor_hora_ord, e.salario_mensual
@@ -221,8 +229,8 @@ async def api_resumen_diario(
                 JOIN empleados e ON e.id = x.empleado_id
                 WHERE {' AND '.join(excep_where)}
                   AND e.activo = 1
-                  {"AND LOWER(e.cargo) = LOWER(?)" if cargo else ""}""",
-            (*excep_params, *([cargo] if cargo else [])),
+                  {cargo_filter_sql}""",
+            (*excep_params, *cargo_filter_params),
         ).fetchall()
     finally:
         conn.close()

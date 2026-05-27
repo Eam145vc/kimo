@@ -98,6 +98,7 @@
             <label class="block text-xs text-text-muted mb-1">Cargo *</label>
             <select x-model="form.cargo" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
               <option value="Operario">Operario (pago semanal)</option>
+              <option value="Coordinador">Coordinador (pago semanal)</option>
               <option value="Administrativo">Administrativo (pago quincenal)</option>
             </select>
           </div>
@@ -296,7 +297,7 @@ function empleadosPage() {
       // Normalizar cargo a uno de los dos validos (los auto-creados traen
       // 'Pendiente configuracion' o 'Operario')
       let cargo = e.cargo || 'Operario';
-      if (cargo !== 'Operario' && cargo !== 'Administrativo') cargo = 'Operario';
+      if (!['Operario', 'Coordinador', 'Administrativo'].includes(cargo)) cargo = 'Operario';
       this.form = {
         id: e.id, nombre: e.nombre || '', cedula: e.cedula || '', cargo: cargo,
         hik_employee_no: e.hik_employee_no || '', salario_mensual: e.salario_mensual,
