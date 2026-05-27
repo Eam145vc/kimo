@@ -396,33 +396,35 @@ async def api_resumen_diario(
         #
         # Para cada hito devolvemos la hora a usar en el calculo:
 
+        tol = timedelta(minutes=TOLERANCIA_MIN)
+
         if tipo == "entrada":
             # Antes de oficial: oficial (no gana)
             # Hasta +tol: oficial (tolerancia)
-            # Despues: hora real (pierde)
+            # Despues: hora real - tol (la tolerancia siempre se respeta; solo pierde el exceso)
             if delta_min <= TOLERANCIA_MIN:
                 return oficial
-            return ts
+            return ts - tol
 
         if tipo == "almuerzo_out":
-            # Antes de oficial-tol: hora real (pierde, salio antes a almorzar)
+            # Antes de oficial-tol: hora real + tol (salio antes a almorzar; pierde solo el exceso)
             # Entre -tol y +infinito: oficial (no gana por salir tarde a almorzar)
             if delta_min < -TOLERANCIA_MIN:
-                return ts
+                return ts + tol
             return oficial
 
         if tipo == "almuerzo_in":
             # Hasta +tol: oficial (no gana por volver antes)
-            # Despues: hora real (pierde, llego tarde de almorzar)
+            # Despues: hora real - tol (llego tarde de almorzar; pierde solo el exceso)
             if delta_min <= TOLERANCIA_MIN:
                 return oficial
-            return ts
+            return ts - tol
 
         if tipo == "salida":
-            # Antes de oficial-tol: hora real (pierde, se va antes)
+            # Antes de oficial-tol: hora real + tol (se va antes; pierde solo el exceso)
             # Entre -tol y +infinito: oficial (no gana por quedarse mas tiempo)
             if delta_min < -TOLERANCIA_MIN:
-                return ts
+                return ts + tol
             return oficial
 
         return ts
