@@ -383,6 +383,29 @@ async def api_resumen_diario(
         primer_extra_in_ts = min(extra_in_ts) if extra_in_ts else None
         ultimo_extra_out_ts = max(extra_out_ts) if extra_out_ts else None
 
+        # Lista de marcajes ya DEDUPLICADOS con su rol FINAL (el mismo que usa
+        # el calculo). El modal de detalle usa esto en vez de re-clasificar,
+        # asi no aparecen "3 regreso almuerzo" ni duplicados.
+        _rol_por_ts = {}
+        if primera_entrada_ts:
+            _rol_por_ts[primera_entrada_ts] = "Entrada"
+        if almuerzo_out_ts:
+            _rol_por_ts[almuerzo_out_ts] = "Salida almuerzo"
+        if almuerzo_in_ts:
+            _rol_por_ts[almuerzo_in_ts] = "Regreso almuerzo"
+        if ultima_salida_ts:
+            _rol_por_ts[ultima_salida_ts] = "Salida"
+        if primer_extra_in_ts:
+            _rol_por_ts[primer_extra_in_ts] = "Inicio extras"
+        if ultimo_extra_out_ts:
+            _rol_por_ts[ultimo_extra_out_ts] = "Fin extras"
+        for t in marcas_anomalas_ts:
+            _rol_por_ts[t] = "Marca anómala"
+        marcajes_clasificados = [
+            {"ts": m["ts"], "etiqueta": _rol_por_ts.get(m["ts"], "Otra marca")}
+            for m in sorted(g["marcajes"], key=lambda x: x["ts"])
+        ]
+
         items.append({
             "empleado_id": g["empleado_id"],
             "empleado_nombre": g["empleado_nombre"],
@@ -402,6 +425,7 @@ async def api_resumen_diario(
             "extra_out": _fmt(ultimo_extra_out_ts),
             "extra_out_ts": ultimo_extra_out_ts,
             "marcas_anomalas": [_fmt(t) for t in marcas_anomalas_ts],
+            "marcajes_clasificados": marcajes_clasificados,
             "cantidad_marcajes": n,
         })
 
@@ -631,6 +655,11 @@ async def api_resumen_diario(
             bruto -= descuento_almuerzo
             horas = round(bruto, 2)
             item["pausa_almuerzo_h"] = round(descuento_almuerzo, 2)
+            # Separar: cuanto es almuerzo estandar (1h) y cuanto es EXTRA
+            # descontado por tardanza/salida-temprana al almuerzo. Esto ultimo
+            # es lo que de verdad "le cuesta" al empleado.
+            item["almuerzo_estandar_h"] = round(pausa_oficial_h, 2)
+            item["almuerzo_perdido_h"] = round(max(0.0, descuento_almuerzo - pausa_oficial_h), 2)
 
         # Horas extras: cuentan cuando hay extra_in Y extra_out (marca de inicio
         # y de cierre). Sin cierre = no se pagan extras.
@@ -736,6 +765,8 @@ async def api_resumen_diario(
             "horas": horas,
             "horas_extras": horas_extras,
             "pausa_almuerzo_h": item.get("pausa_almuerzo_h", 0),
+            "almuerzo_estandar_h": item.get("almuerzo_estandar_h", 0),
+            "almuerzo_perdido_h": item.get("almuerzo_perdido_h", 0),
             "valor_hora_aplicado": item.get("valor_hora_ord_aplicado", 0),
             "valor_hora_extra": valor_hora_extra,
             "pago_ord": item.get("pago_ord", 0),

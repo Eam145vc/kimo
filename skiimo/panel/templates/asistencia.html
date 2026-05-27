@@ -287,9 +287,15 @@
             <span class="tabular" x-text="fmtMoney(detalle.calculo?.valor_hora_aplicado)"></span>
           </div>
           <div class="flex justify-between">
-            <span class="text-text-muted">Almuerzo descontado</span>
-            <span class="tabular" x-text="(detalle.calculo?.pausa_almuerzo_h ?? 0) + ' h'"></span>
+            <span class="text-text-muted">Almuerzo</span>
+            <span class="tabular" x-text="(detalle.calculo?.almuerzo_estandar_h ?? 1) + ' h'"></span>
           </div>
+          <template x-if="(detalle.calculo?.almuerzo_perdido_h ?? 0) > 0">
+            <div class="flex justify-between">
+              <span class="text-text-muted">Tarde de almuerzo</span>
+              <span class="tabular text-warning" x-text="'-' + detalle.calculo.almuerzo_perdido_h + ' h'"></span>
+            </div>
+          </template>
           <div class="flex justify-between">
             <span class="text-text-muted">Pago ordinario</span>
             <span class="tabular" x-text="fmtMoney(detalle.calculo?.pago_ord)"></span>
@@ -326,26 +332,32 @@
         </template>
       </div>
 
-      <!-- ===== Línea de tiempo de la jornada ===== -->
+      <!-- ===== Línea de tiempo de la jornada (bloques sólidos) ===== -->
       <div x-show="(detalle.calculo?.hitos || []).length" class="mb-4">
         <div class="flex items-center justify-between mb-1.5">
           <span class="text-xs text-text-muted uppercase tracking-wide">Línea de tiempo</span>
-          <span class="text-[10px] text-text-muted">7:00 → 17:00</span>
         </div>
-        <div class="relative h-8 rounded bg-surface-2 ring-1 ring-border overflow-hidden">
-          <!-- bloque almuerzo (12-13 = 50%-60% de la jornada 7-17) -->
-          <div class="absolute inset-y-0 bg-border/60" style="left:50%; width:10%" title="Almuerzo 12:00–13:00"></div>
-          <!-- marcadores de hitos -->
-          <template x-for="(h, i) in detalle.calculo?.hitos || []" :key="i">
-            <div class="absolute inset-y-0 flex items-center" :style="'left:' + timelinePct(h.real) + '%'">
-              <div class="w-0.5 h-full" :class="h.perdidos > 0 ? 'bg-warning' : 'bg-success'"></div>
-            </div>
+        <div class="relative h-9 rounded-lg bg-surface-2 ring-1 ring-border overflow-hidden">
+          <!-- tramos trabajados rellenos -->
+          <template x-for="(t, i) in tramosTimeline()" :key="i">
+            <div class="absolute inset-y-1 rounded transition-all duration-300"
+                 :class="{
+                   'bg-success/70': t.tipo === 'trabajo',
+                   'bg-border/70': t.tipo === 'almuerzo',
+                   'bg-warning/70': t.tipo === 'extra'
+                 }"
+                 :style="'left:' + t.ini + '%; width:' + (t.fin - t.ini) + '%'"
+                 :title="t.label"></div>
           </template>
         </div>
+        <!-- escala de horas -->
+        <div class="flex justify-between mt-1 text-[10px] text-text-muted tabular">
+          <span>7:00</span><span>10:00</span><span>12:00</span><span>13:00</span><span>15:00</span><span>17:00</span>
+        </div>
         <div class="flex items-center gap-3 mt-1.5 text-[10px] text-text-muted">
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-success inline-block"></span>puntual</span>
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-warning inline-block"></span>perdió tiempo</span>
-          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-border inline-block"></span>almuerzo</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-success/70 inline-block"></span>trabajado</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-border/70 inline-block"></span>almuerzo</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-warning/70 inline-block"></span>extras</span>
         </div>
       </div>
 
@@ -353,7 +365,7 @@
       <p class="text-xs text-text-muted uppercase tracking-wide mb-1.5">Marcajes</p>
       <ul class="space-y-2">
         <template x-for="m in detalle.marcajes || []" :key="m.id">
-          <li class="bg-surface-2 rounded px-3 py-2" :class="m.ignorar_nomina ? 'opacity-50' : ''">
+          <li class="bg-surface-2 rounded px-3 py-2" :class="(m.ignorar_nomina || m.es_duplicado) ? 'opacity-50' : ''">
             <div class="flex items-center justify-between gap-3">
               <div class="flex items-center gap-2 min-w-0 flex-wrap">
                 <span class="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0"
@@ -667,6 +679,28 @@ function marcajesPage() {
       return Math.max(0, Math.min(100, pct));
     },
 
+    // Construye los tramos de color de la línea de tiempo a partir de los
+    // hitos del cálculo: mañana (entrada→salida almuerzo), almuerzo (12-13),
+    // tarde (regreso→salida) y extras (17:30→fin extras).
+    tramosTimeline() {
+      const c = this.detalle?.calculo;
+      if (!c) return [];
+      const hitos = {};
+      for (const h of (c.hitos || [])) hitos[h.hito] = h.ajustada || h.real;
+      const pct = (hh) => this.timelinePct(hh);
+      const tramos = [];
+      const ent = hitos['Entrada'], almOut = hitos['Salida almuerzo'];
+      const almIn = hitos['Regreso almuerzo'], sal = hitos['Salida'];
+      // Mañana: entrada -> salida almuerzo (o hasta 12:00 si no marcó)
+      if (ent) tramos.push({ tipo: 'trabajo', ini: pct(ent), fin: pct(almOut || '12:00'), label: 'Mañana' });
+      // Almuerzo 12:00–13:00
+      tramos.push({ tipo: 'almuerzo', ini: pct('12:00'), fin: pct('13:00'), label: 'Almuerzo' });
+      // Tarde: regreso -> salida
+      if (sal) tramos.push({ tipo: 'trabajo', ini: pct(almIn || '13:00'), fin: pct(sal), label: 'Tarde' });
+      // Extras: desde 17:30 (no se ven en barra 7-17, se omiten salvo que entren)
+      return tramos;
+    },
+
     // Busca el hito del cálculo que corresponde a un marcaje (por tipo/hora)
     // para mostrar la hora ajustada y los minutos perdidos en la lista.
     hitoDe(m) {
@@ -687,8 +721,16 @@ function marcajesPage() {
         const resp = await fetch('/api/asistencia/marcajes?' + params);
         const j = await resp.json();
         const sorted = (j.items || []).sort((a, b) => a.ts.localeCompare(b.ts));
-        // Etiquetar cada marcaje segun su posicion en el dia
-        this.detalle.marcajes = this.etiquetarMarcajes(sorted);
+        // Usar la clasificacion FINAL del backend (dedup + roles reales) en
+        // vez de re-clasificar en el front. Cada marcaje toma su etiqueta del
+        // backend por ts; los que el backend dedujo como duplicados se marcan.
+        const porTs = {};
+        for (const c of (r.marcajes_clasificados || [])) porTs[c.ts] = c.etiqueta;
+        this.detalle.marcajes = sorted.map(m => ({
+          ...m,
+          etiqueta: porTs[m.ts] || 'Duplicado',
+          es_duplicado: !porTs[m.ts],
+        }));
       } catch (e) {}
       this.detalleOpen = true;
     },
@@ -789,6 +831,8 @@ function marcajesPage() {
         'Regreso almuerzo': 'bg-accent/15 text-accent',
         'Inicio extras': 'bg-warning/15 text-warning',
         'Fin extras': 'bg-warning/15 text-warning',
+        'Marca anómala': 'bg-danger/15 text-danger',
+        'Duplicado': 'bg-text-muted/10 text-text-muted',
         'Marca extra': 'bg-text-muted/15 text-text-muted',
       }[et] || 'bg-text-muted/15 text-text-muted';
     },
