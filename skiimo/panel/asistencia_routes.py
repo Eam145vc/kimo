@@ -256,6 +256,26 @@ async def api_resumen_diario(
         except Exception:
             return None
 
+    # Hora de salida oficial en minutos, para detectar marcajes de tarde
+    # mal clasificados como "almuerzo_in" (ver mas abajo).
+    def _hhmm_a_min(s: str, fb: int) -> int:
+        try:
+            h, m = str(s).split(":")[:2]
+            return int(h) * 60 + int(m)
+        except Exception:
+            return fb
+    _salida_min_oficial = _hhmm_a_min(get_conf("jornada_salida_hora") or "17:00", 17 * 60)
+    # Umbral: un almuerzo_in que cae despues de (salida - 90 min) es en realidad
+    # la salida del dia, no un regreso de almuerzo.
+    _umbral_salida_min = _salida_min_oficial - 90
+
+    def _min_del_dia(ts_iso: str) -> int:
+        try:
+            d = datetime.fromisoformat(ts_iso)
+            return d.hour * 60 + d.minute
+        except Exception:
+            return -1
+
     items = []
     for (eid, fecha), g in grupos.items():
         marcajes = g["marcajes"]
@@ -277,6 +297,18 @@ async def api_resumen_diario(
         salidas_ts = [m["ts"] for m in marcajes if m["tipo"] == "salida"]
         outs_ts = [m["ts"] for m in marcajes if m["tipo"] == "almuerzo_out"]
         ins_ts = [m["ts"] for m in marcajes if m["tipo"] == "almuerzo_in"]
+
+        # Correccion: un "almuerzo_in" que ocurre cerca/despues de la hora de
+        # salida es en realidad la SALIDA del dia (marcajes viejos clasificados
+        # con una ventana de almuerzo demasiado amplia). Lo movemos a salida.
+        ins_reales, salida_desde_in = [], []
+        for ts in ins_ts:
+            if _min_del_dia(ts) >= _umbral_salida_min:
+                salida_desde_in.append(ts)
+            else:
+                ins_reales.append(ts)
+        ins_ts = ins_reales
+        salidas_ts = salidas_ts + salida_desde_in
         extra_in_ts = [m["ts"] for m in marcajes if m["tipo"] == "extra_in"]
         extra_out_ts = [m["ts"] for m in marcajes if m["tipo"] == "extra_out"]
 
