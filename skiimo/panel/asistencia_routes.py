@@ -663,20 +663,30 @@ async def api_resumen_diario(
 
         # Horas extras: cuentan cuando hay extra_in Y extra_out (marca de inicio
         # y de cierre). Sin cierre = no se pagan extras.
-        # Las extras SOLO se pagan desde la hora oficial de inicio de extras
-        # (salida + margen = 17:30 fijas), aunque el extra_in se haya marcado
-        # antes (gente que se queda en la fabrica y marca a las 17:24). Asi
-        # "nunca gana tiempo": los minutos antes de las 17:30 no se pagan.
+        # El inicio EFECTIVO de las extras aplica la misma regla que la entrada
+        # ("nunca gana tiempo, solo pierde el exceso de la tolerancia"):
+        #   - marca antes de 17:30 -> cuenta desde 17:30 (no gana)
+        #   - marca dentro de 17:30 + tolerancia (ej. hasta 17:35) -> 17:30 (puntual)
+        #   - marca despues (ej. 17:37) -> marca - tolerancia (17:32): pierde
+        #     solo el exceso sobre los 5 min de gracia, no todo.
         item["extras_en_curso"] = False
         item["extra_sin_cierre"] = False
         try:
             if item["extra_in_ts"]:
-                t_ex_in = datetime.fromisoformat(item["extra_in_ts"])
-                # Piso: hora oficial de inicio de extras (17:30 por defecto)
+                t_ex_in = datetime.fromisoformat(item["extra_in_ts"]).replace(
+                    second=0, microsecond=0
+                )
+                # Hora oficial de inicio de extras (17:30 por defecto)
                 inicio_extras_oficial = t_ex_in.replace(
                     hour=salida_h, minute=salida_m, second=0, microsecond=0
                 ) + timedelta(minutes=margen_extras_min)
-                t_ex_in_efectivo = max(t_ex_in, inicio_extras_oficial)
+                tol = timedelta(minutes=TOLERANCIA_MIN)
+                if t_ex_in <= inicio_extras_oficial + tol:
+                    # Antes o dentro de tolerancia -> cuenta desde el oficial
+                    t_ex_in_efectivo = inicio_extras_oficial
+                else:
+                    # Tarde -> pierde solo el exceso sobre la tolerancia
+                    t_ex_in_efectivo = t_ex_in - tol
 
                 if item["extra_out_ts"]:
                     # Caso normal: hay cierre -> extras de 17:30 al cierre
