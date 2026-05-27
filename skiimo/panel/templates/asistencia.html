@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Marcajes · Esskimo{% endblock %}
+{% block title %}Asistencia · Esskimo{% endblock %}
 
 {% block content %}
 <div x-data="marcajesPage()" x-init="init()">
@@ -7,7 +7,7 @@
   <!-- Header -->
   <div class="flex items-center justify-between mb-4">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight">Marcajes</h1>
+      <h1 class="text-xl font-semibold tracking-tight">Asistencia</h1>
       <p class="text-xs text-text-muted mt-0.5">
         Entradas y salidas registradas. Filtrá por empleado o rango de fechas.
       </p>
@@ -409,7 +409,7 @@ function marcajesPage() {
     },
 
     async init() {
-      this.setRango('semana');
+      this.setRango('hoy');
       await Promise.all([
         this.cargarEmpleados(),
         this.cargarEquipoStatus()
