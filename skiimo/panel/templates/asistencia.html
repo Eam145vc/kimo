@@ -204,32 +204,32 @@
               <template x-if="!r.es_excepcion">
                 <td class="px-3 py-3 tabular" :class="statusColor(r.status_entrada)"
                     :title="statusLabel(r.status_entrada)"
-                    x-text="r.primera_entrada || (esAusencia(r) ? 'AUSENTE' : '—')"></td>
+                    x-text="r.primera_entrada ? h12(r.primera_entrada) : (esAusencia(r) ? 'AUSENTE' : '—')"></td>
               </template>
               <template x-if="!r.es_excepcion">
                 <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_out)"
                     :title="statusLabel(r.status_almuerzo_out)"
-                    x-text="r.almuerzo_out || '—'"></td>
+                    x-text="r.almuerzo_out ? h12(r.almuerzo_out) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
                 <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_in)"
                     :title="statusLabel(r.status_almuerzo_in)"
-                    x-text="r.almuerzo_in || '—'"></td>
+                    x-text="r.almuerzo_in ? h12(r.almuerzo_in) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
                 <td class="px-3 py-3 tabular" :class="statusColor(r.status_salida)"
                     :title="statusLabel(r.status_salida)"
-                    x-text="r.ultima_salida || '—'"></td>
+                    x-text="r.ultima_salida ? h12(r.ultima_salida) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
                 <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_in)"
                     :title="statusExtraLabel(r.status_extra_in)"
-                    x-text="r.extra_in || '—'"></td>
+                    x-text="r.extra_in ? h12(r.extra_in) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
                 <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_out)"
                     :title="statusExtraLabel(r.status_extra_out)"
-                    x-text="r.extra_out || '—'"></td>
+                    x-text="r.extra_out ? h12(r.extra_out) : '—'"></td>
               </template>
               <td class="px-3 py-3 text-right tabular">
                 <span x-show="r.horas != null"
@@ -352,7 +352,7 @@
         </div>
         <!-- escala de horas -->
         <div class="flex justify-between mt-1 text-[10px] text-text-muted tabular">
-          <span>7:00</span><span>10:00</span><span>12:00</span><span>13:00</span><span>15:00</span><span>17:00</span>
+          <span>7 a.m.</span><span>10 a.m.</span><span>12 m.</span><span>1 p.m.</span><span>3 p.m.</span><span>5 p.m.</span>
         </div>
         <div class="flex items-center gap-3 mt-1.5 text-[10px] text-text-muted">
           <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-success/70 inline-block"></span>trabajado</span>
@@ -374,8 +374,8 @@
                 <!-- hora ajustada si difiere de la real -->
                 <template x-if="hitoDe(m)?.perdidos > 0">
                   <span class="text-[10px] px-1.5 py-0.5 rounded bg-warning/15 text-warning tabular"
-                        :title="'Contó como ' + hitoDe(m).ajustada">
-                    <span x-text="'→ ' + hitoDe(m).ajustada"></span>
+                        :title="'Contó como ' + h12(hitoDe(m).ajustada)">
+                    <span x-text="'→ ' + h12(hitoDe(m).ajustada)"></span>
                     <span x-text="'(-' + hitoDe(m).perdidos + ' min)'"></span>
                   </span>
                 </template>
@@ -647,18 +647,30 @@ function marcajesPage() {
       } catch { return ''; }
     },
 
+    // Convierte "HH:MM" o "HH:MM:SS" (24h) a 12h con a.m./p.m.
+    // Ej: "17:01:14" -> "5:01 p. m.", "07:00:00" -> "7:00 a. m."
+    h12(hms) {
+      if (!hms) return '';
+      const m = String(hms).match(/(\d{1,2}):(\d{2})/);
+      if (!m) return hms;
+      let h = parseInt(m[1], 10);
+      const min = m[2];
+      const ampm = h < 12 ? 'a. m.' : 'p. m.';
+      h = h % 12; if (h === 0) h = 12;
+      return `${h}:${min} ${ampm}`;
+    },
+
     formatTime(iso) {
-      // Extraer la hora directo del string ISO (ya viene en tz -05:00 Bogotá).
-      // NO usar new Date() porque convierte a la tz del navegador y puede desfasarse.
+      // Extraer la hora directo del string ISO (ya viene en tz -05:00 Bogotá)
+      // y mostrarla en 12h. NO usar new Date() (convierte a tz del navegador).
       if (!iso) return '';
       // ISO format: 2026-05-27T12:55:01-05:00 -> 12:55:01
       const match = String(iso).match(/T(\d{2}:\d{2}:\d{2})/);
-      if (match) return match[1];
-      // Fallback (algun otro formato)
+      if (match) return this.h12(match[1]);
       try {
         const d = new Date(iso);
         return d.toLocaleTimeString('es-CO', {
-          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour: 'numeric', minute: '2-digit', hour12: true,
           timeZone: 'America/Bogota'
         });
       } catch { return iso; }
