@@ -112,6 +112,8 @@
             <th class="text-left px-3 py-3 font-medium">Almuerzo</th>
             <th class="text-left px-3 py-3 font-medium">Regreso</th>
             <th class="text-left px-3 py-3 font-medium">Salida</th>
+            <th class="text-left px-3 py-3 font-medium">Extra in</th>
+            <th class="text-left px-3 py-3 font-medium">Extra out</th>
             <th class="text-right px-3 py-3 font-medium">Horas</th>
             <th class="text-right px-3 py-3 font-medium">Extras</th>
             <th class="text-left px-4 py-3 font-medium">Detalle</th>
@@ -119,10 +121,10 @@
         </thead>
         <tbody class="divide-y divide-border/40">
           <template x-if="loading">
-            <tr><td colspan="10" class="text-center py-10 text-text-muted">Cargando…</td></tr>
+            <tr><td colspan="12" class="text-center py-10 text-text-muted">Cargando…</td></tr>
           </template>
           <template x-if="!loading && !resumen.length">
-            <tr><td colspan="10" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
+            <tr><td colspan="12" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
           </template>
           <template x-for="r in resumen" :key="r.fecha + '_' + r.empleado_id">
             <tr class="hover:bg-surface-2/30">
@@ -141,6 +143,12 @@
               <td class="px-3 py-3 tabular" :class="statusColor(r.status_salida)"
                   :title="statusLabel(r.status_salida)"
                   x-text="r.ultima_salida || '—'"></td>
+              <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_in)"
+                  :title="statusExtraLabel(r.status_extra_in)"
+                  x-text="r.extra_in || '—'"></td>
+              <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_out)"
+                  :title="statusExtraLabel(r.status_extra_out)"
+                  x-text="r.extra_out || '—'"></td>
               <td class="px-3 py-3 text-right tabular" x-text="r.horas != null ? r.horas.toFixed(2) : '—'"></td>
               <td class="px-3 py-3 text-right tabular"
                   :class="r.horas_extras > 0 ? 'text-warning font-medium' : 'text-text-muted'"
@@ -531,6 +539,23 @@ function marcajesPage() {
         'tarde': 'Marcaje fuera de tolerancia (tarde)',
         'temprano': 'Marcaje fuera de tolerancia (temprano)',
         'falta': 'Sin marcaje',
+      }[status] || '';
+    },
+
+    statusExtraColor(status) {
+      // Para extra_in/out: si hay extras pero no marco -> rojo. Si no hay extras -> gris.
+      if (!status || status === 'no_aplica') return 'text-text-muted';
+      return {
+        'ok': 'text-success',
+        'falta': 'text-danger',
+      }[status] || 'text-text-muted';
+    },
+
+    statusExtraLabel(status) {
+      return {
+        'ok': 'Marcaje de extras registrado',
+        'falta': 'Hizo extras pero no marco Extra in/out',
+        'no_aplica': 'No hizo horas extras',
       }[status] || '';
     },
 

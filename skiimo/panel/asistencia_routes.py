@@ -247,61 +247,38 @@ async def api_resumen_diario(
         ]
         usar_tipos = len(tipos_claros) > 0
 
-        primera_entrada = None
-        ultima_salida = None
-        almuerzo_out = None
-        almuerzo_in = None
+        # Tomamos el primero/ultimo de cada tipo REAL (no inferimos).
+        # Si no hay un marcaje tipo X, la celda queda vacia.
+        entradas_ts = [m["ts"] for m in marcajes if m["tipo"] == "entrada"]
+        salidas_ts = [m["ts"] for m in marcajes if m["tipo"] == "salida"]
+        outs_ts = [m["ts"] for m in marcajes if m["tipo"] == "almuerzo_out"]
+        ins_ts = [m["ts"] for m in marcajes if m["tipo"] == "almuerzo_in"]
+        extra_in_ts = [m["ts"] for m in marcajes if m["tipo"] == "extra_in"]
+        extra_out_ts = [m["ts"] for m in marcajes if m["tipo"] == "extra_out"]
 
-        if usar_tipos:
-            # Tomamos el primero/ultimo de cada tipo
-            entradas = [m["ts"] for m in marcajes if m["tipo"] == "entrada"]
-            salidas = [m["ts"] for m in marcajes if m["tipo"] == "salida"]
-            outs = [m["ts"] for m in marcajes if m["tipo"] == "almuerzo_out"]
-            ins = [m["ts"] for m in marcajes if m["tipo"] == "almuerzo_in"]
-            if entradas:
-                primera_entrada = _fmt(min(entradas))
-            if salidas:
-                ultima_salida = _fmt(max(salidas))
-            if outs:
-                almuerzo_out = _fmt(min(outs))
-            if ins:
-                almuerzo_in = _fmt(max(ins))
-            # Si NO hay entrada/salida explicita pero hay marcajes, usar primer/ultimo
-            if primera_entrada is None and ts_list:
-                primera_entrada = _fmt(ts_list[0])
-            if ultima_salida is None and n >= 2:
-                # Solo si no era la misma que primera
-                if ts_list[-1] != ts_list[0]:
-                    ultima_salida = _fmt(ts_list[-1])
-        else:
-            # Sin clasificacion del equipo: inferir por orden cronologico
-            primera_entrada = _fmt(ts_list[0]) if n >= 1 else None
-            ultima_salida = _fmt(ts_list[-1]) if n >= 2 else None
-            if n == 3:
-                almuerzo_out = _fmt(ts_list[1])
-                almuerzo_in = _fmt(ts_list[2])
-                ultima_salida = None
-            elif n == 4:
-                almuerzo_out = _fmt(ts_list[1])
-                almuerzo_in = _fmt(ts_list[2])
-                ultima_salida = _fmt(ts_list[3])
-            elif n >= 5:
-                almuerzo_out = _fmt(ts_list[1])
-                almuerzo_in = _fmt(ts_list[2])
-                ultima_salida = _fmt(ts_list[-1])
+        primera_entrada_ts = min(entradas_ts) if entradas_ts else None
+        ultima_salida_ts = max(salidas_ts) if salidas_ts else None
+        almuerzo_out_ts = min(outs_ts) if outs_ts else None
+        almuerzo_in_ts = max(ins_ts) if ins_ts else None
+        primer_extra_in_ts = min(extra_in_ts) if extra_in_ts else None
+        ultimo_extra_out_ts = max(extra_out_ts) if extra_out_ts else None
 
         items.append({
             "empleado_id": g["empleado_id"],
             "empleado_nombre": g["empleado_nombre"],
             "fecha": fecha,
-            "primera_entrada": primera_entrada,
-            "primera_entrada_ts": min((m["ts"] for m in marcajes if m["tipo"] == "entrada"), default=None) if usar_tipos else (ts_list[0] if ts_list else None),
-            "almuerzo_out": almuerzo_out,
-            "almuerzo_out_ts": min((m["ts"] for m in marcajes if m["tipo"] == "almuerzo_out"), default=None),
-            "almuerzo_in": almuerzo_in,
-            "almuerzo_in_ts": max((m["ts"] for m in marcajes if m["tipo"] == "almuerzo_in"), default=None),
-            "ultima_salida": ultima_salida,
-            "ultima_salida_ts": max((m["ts"] for m in marcajes if m["tipo"] == "salida"), default=None),
+            "primera_entrada": _fmt(primera_entrada_ts),
+            "primera_entrada_ts": primera_entrada_ts,
+            "almuerzo_out": _fmt(almuerzo_out_ts),
+            "almuerzo_out_ts": almuerzo_out_ts,
+            "almuerzo_in": _fmt(almuerzo_in_ts),
+            "almuerzo_in_ts": almuerzo_in_ts,
+            "ultima_salida": _fmt(ultima_salida_ts),
+            "ultima_salida_ts": ultima_salida_ts,
+            "extra_in": _fmt(primer_extra_in_ts),
+            "extra_in_ts": primer_extra_in_ts,
+            "extra_out": _fmt(ultimo_extra_out_ts),
+            "extra_out_ts": ultimo_extra_out_ts,
             "cantidad_marcajes": n,
         })
 
@@ -409,25 +386,39 @@ async def api_resumen_diario(
 
             horas = round(bruto, 2)
 
-            # Calcular horas extras: lo que excede salida_oficial + margen_extras_min
-            try:
+        # Calcular horas extras: prioridad al par (extra_in, extra_out) si vino del equipo.
+        # Sino fallback: lo que excede salida_oficial + margen_extras_min.
+        try:
+            if item["extra_in_ts"] and item["extra_out_ts"]:
+                t_ex_in = datetime.fromisoformat(item["extra_in_ts"])
+                t_ex_out = datetime.fromisoformat(item["extra_out_ts"])
+                if t_ex_out > t_ex_in:
+                    horas_extras = round(
+                        (t_ex_out - t_ex_in).total_seconds() / 3600.0, 2
+                    )
+            elif item["ultima_salida_ts"]:
                 ts_out_real = datetime.fromisoformat(item["ultima_salida_ts"])
                 salida_oficial_dt = ts_out_real.replace(
                     hour=salida_h, minute=salida_m, second=0, microsecond=0
                 )
                 inicio_extras = salida_oficial_dt + timedelta(minutes=margen_extras_min)
                 if ts_out_real > inicio_extras:
-                    # Las extras se cuentan desde la salida oficial (17:00), no desde 17:30
                     horas_extras = round(
                         (ts_out_real - salida_oficial_dt).total_seconds() / 3600.0, 2
                     )
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         item["horas"] = horas
         item["horas_extras"] = horas_extras
+
+        # Status de extras
+        item["status_extra_in"] = "ok" if item["extra_in_ts"] else ("falta" if horas_extras > 0 else "no_aplica")
+        item["status_extra_out"] = "ok" if item["extra_out_ts"] else ("falta" if horas_extras > 0 else "no_aplica")
+
         # No exponer los ts crudos al frontend
-        for k in ("primera_entrada_ts", "almuerzo_out_ts", "almuerzo_in_ts", "ultima_salida_ts"):
+        for k in ("primera_entrada_ts", "almuerzo_out_ts", "almuerzo_in_ts",
+                  "ultima_salida_ts", "extra_in_ts", "extra_out_ts"):
             item.pop(k, None)
 
     # Orden: fecha desc, nombre asc
