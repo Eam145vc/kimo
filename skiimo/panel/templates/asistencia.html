@@ -202,32 +202,32 @@
                 </td>
               </template>
               <template x-if="!r.es_excepcion">
-                <td class="px-3 py-3 tabular" :class="statusColor(r.status_entrada)"
+                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusColor(r.status_entrada)"
                     :title="statusLabel(r.status_entrada)"
                     x-text="r.primera_entrada ? h12(r.primera_entrada) : (esAusencia(r) ? 'AUSENTE' : '—')"></td>
               </template>
               <template x-if="!r.es_excepcion">
-                <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_out)"
+                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusColor(r.status_almuerzo_out)"
                     :title="statusLabel(r.status_almuerzo_out)"
                     x-text="r.almuerzo_out ? h12(r.almuerzo_out) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
-                <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_in)"
+                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusColor(r.status_almuerzo_in)"
                     :title="statusLabel(r.status_almuerzo_in)"
                     x-text="r.almuerzo_in ? h12(r.almuerzo_in) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
-                <td class="px-3 py-3 tabular" :class="statusColor(r.status_salida)"
+                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusColor(r.status_salida)"
                     :title="statusLabel(r.status_salida)"
                     x-text="r.ultima_salida ? h12(r.ultima_salida) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
-                <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_in)"
+                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusExtraColor(r.status_extra_in)"
                     :title="statusExtraLabel(r.status_extra_in)"
                     x-text="r.extra_in ? h12(r.extra_in) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
-                <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_out)"
+                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusExtraColor(r.status_extra_out)"
                     :title="statusExtraLabel(r.status_extra_out)"
                     x-text="r.extra_out ? h12(r.extra_out) : '—'"></td>
               </template>
