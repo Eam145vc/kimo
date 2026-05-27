@@ -58,23 +58,54 @@
     </div>
   </div>
 
-  <!-- KPIs rapidos -->
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+  <!-- KPIs del DIA DE HOY -->
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
     <div class="rounded-xl bg-surface ring-1 ring-border p-3">
-      <p class="text-[11px] text-text-muted">Empleados activos</p>
-      <p class="text-xl font-semibold mt-0.5 tabular" x-text="empleados.length"></p>
+      <p class="text-[11px] text-text-muted">Activos</p>
+      <p class="text-xl font-semibold mt-0.5 tabular" x-text="kpis.empleados_activos || 0"></p>
     </div>
     <div class="rounded-xl bg-surface ring-1 ring-border p-3">
-      <p class="text-[11px] text-text-muted">Días con marcajes</p>
-      <p class="text-xl font-semibold mt-0.5 tabular" x-text="resumen.length"></p>
+      <p class="text-[11px] text-text-muted">Marcaron hoy</p>
+      <p class="text-xl font-semibold mt-0.5 tabular text-success" x-text="kpis.marcaron_hoy || 0"></p>
+    </div>
+    <div class="rounded-xl bg-accent/10 ring-1 ring-accent/30 p-3" :class="kpis.en_curso_hoy ? '' : 'opacity-50'">
+      <p class="text-[11px] text-accent">En curso ahora</p>
+      <p class="text-xl font-semibold mt-0.5 tabular text-accent" x-text="kpis.en_curso_hoy || 0"></p>
+    </div>
+    <div class="rounded-xl p-3 ring-1"
+         :class="(kpis.llegadas_tarde_hoy || 0) > 0 ? 'bg-danger/10 ring-danger/30' : 'bg-surface ring-border opacity-70'">
+      <p class="text-[11px]" :class="(kpis.llegadas_tarde_hoy || 0) > 0 ? 'text-danger' : 'text-text-muted'">Llegadas tarde</p>
+      <p class="text-xl font-semibold mt-0.5 tabular"
+         :class="(kpis.llegadas_tarde_hoy || 0) > 0 ? 'text-danger' : ''"
+         x-text="kpis.llegadas_tarde_hoy || 0"></p>
+    </div>
+    <div class="rounded-xl p-3 ring-1"
+         :class="(kpis.ausentes_hoy?.length || 0) > 0 ? 'bg-danger/10 ring-danger/30' : 'bg-surface ring-border opacity-70'"
+         @click="(kpis.ausentes_hoy?.length || 0) > 0 && (mostrarAusentes = !mostrarAusentes)"
+         :style="(kpis.ausentes_hoy?.length || 0) > 0 ? 'cursor:pointer' : ''">
+      <p class="text-[11px]" :class="(kpis.ausentes_hoy?.length || 0) > 0 ? 'text-danger' : 'text-text-muted'">Ausentes</p>
+      <p class="text-xl font-semibold mt-0.5 tabular"
+         :class="(kpis.ausentes_hoy?.length || 0) > 0 ? 'text-danger' : ''"
+         x-text="kpis.ausentes_hoy?.length || 0"></p>
     </div>
     <div class="rounded-xl bg-surface ring-1 ring-border p-3">
-      <p class="text-[11px] text-text-muted">Total marcajes</p>
-      <p class="text-xl font-semibold mt-0.5 tabular" x-text="totalMarcajes"></p>
-    </div>
-    <div class="rounded-xl bg-surface ring-1 ring-border p-3">
-      <p class="text-[11px] text-text-muted">Horas totales</p>
+      <p class="text-[11px] text-text-muted">Horas hoy</p>
       <p class="text-xl font-semibold mt-0.5 tabular" x-text="totalHoras.toFixed(1) + ' h'"></p>
+    </div>
+  </div>
+
+  <!-- Lista de ausentes (toggleable) -->
+  <div x-show="mostrarAusentes && kpis.ausentes_hoy?.length > 0"
+       x-transition.opacity
+       class="rounded-xl bg-danger/5 ring-1 ring-danger/20 p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h4 class="text-sm font-semibold text-danger">Empleados ausentes hoy</h4>
+      <button @click="mostrarAusentes = false" class="text-xs text-text-muted">cerrar</button>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+      <template x-for="a in kpis.ausentes_hoy" :key="a.id">
+        <div class="text-sm bg-surface-2 rounded px-2 py-1" x-text="a.nombre"></div>
+      </template>
     </div>
   </div>
 
@@ -149,7 +180,13 @@
               <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_out)"
                   :title="statusExtraLabel(r.status_extra_out)"
                   x-text="r.extra_out || '—'"></td>
-              <td class="px-3 py-3 text-right tabular" x-text="r.horas != null ? r.horas.toFixed(2) : '—'"></td>
+              <td class="px-3 py-3 text-right tabular">
+                <span x-show="r.horas != null"
+                      :class="r.en_curso ? 'text-accent' : ''"
+                      :title="r.en_curso ? 'En curso - calculado hasta ahora' : ''"
+                      x-text="(r.horas != null ? r.horas.toFixed(2) : '—') + (r.en_curso ? ' ⏵' : '')"></span>
+                <span x-show="r.horas == null" class="text-text-muted">—</span>
+              </td>
               <td class="px-3 py-3 text-right tabular"
                   :class="r.horas_extras > 0 ? 'text-warning font-medium' : 'text-text-muted'"
                   x-text="r.horas_extras != null ? r.horas_extras.toFixed(2) : '—'"></td>
@@ -331,6 +368,8 @@ function marcajesPage() {
     equipo: { online: false },
     empleados: [],
     resumen: [],
+    kpis: {},
+    mostrarAusentes: false,
     salidaOficial: '17:00',
     margenGracia: 15,
     detalleOpen: false,
@@ -361,7 +400,10 @@ function marcajesPage() {
         this.cargarEmpleados(),
         this.cargarEquipoStatus()
       ]);
-      // cargar() se llama desde setRango()
+      // Auto-refresh cada 60s para actualizar horas en curso
+      setInterval(() => {
+        if (!document.hidden) this.cargar();
+      }, 60_000);
     },
 
     async cargarEmpleados() {
@@ -388,8 +430,9 @@ function marcajesPage() {
         const r = await fetch('/api/asistencia/resumen-diario?' + params);
         const j = await r.json();
         this.resumen = j.items || [];
-        if (j.salida_oficial) this.salidaOficial = j.salida_oficial;
-        if (j.margen_gracia_extras_min != null) this.margenGracia = j.margen_gracia_extras_min;
+        this.kpis = j.kpis || {};
+        if (j.jornada?.salida) this.salidaOficial = j.jornada.salida;
+        if (j.jornada?.margen_extras_min != null) this.margenGracia = j.jornada.margen_extras_min;
       } catch (e) { console.error(e); }
       this.loading = false;
     },

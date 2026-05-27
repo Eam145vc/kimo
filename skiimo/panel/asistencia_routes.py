@@ -355,6 +355,10 @@ async def api_resumen_diario(
             return oficial
         return ts
 
+    # Hora actual (Bogota) para calcular horas "en curso" cuando no hay salida.
+    ahora_bogota = datetime.now(TZ_BOGOTA)
+    hoy_str = ahora_bogota.date().isoformat()
+
     for item in items:
         # Evaluar status de cada hito
         item["status_entrada"] = _evaluar_marcaje(item["primera_entrada_ts"], entrada_h, entrada_m)
@@ -365,6 +369,20 @@ async def api_resumen_diario(
         # Calcular horas trabajadas: ajustar marcajes a hora oficial con tolerancia
         t_in_ajust = _ajustar_a_oficial(item["primera_entrada_ts"], entrada_h, entrada_m, "entrada")
         t_out_ajust = _ajustar_a_oficial(item["ultima_salida_ts"], salida_h, salida_m, "salida")
+
+        # En curso: si el dia es HOY y NO marco salida pero tiene entrada
+        # -> usamos la hora actual como salida estimada
+        en_curso = False
+        if (
+            t_in_ajust is not None
+            and t_out_ajust is None
+            and item["fecha"] == hoy_str
+        ):
+            # Solo si tiene entrada (sino no esta trabajando)
+            t_out_ajust = ahora_bogota
+            en_curso = True
+
+        item["en_curso"] = en_curso
 
         horas = None
         horas_extras = 0.0
@@ -386,26 +404,27 @@ async def api_resumen_diario(
 
             horas = round(bruto, 2)
 
-        # Calcular horas extras: prioridad al par (extra_in, extra_out) si vino del equipo.
-        # Sino fallback: lo que excede salida_oficial + margen_extras_min.
+        # Calcular horas extras: solo si NO esta en curso (ya marco salida).
+        # Prioridad al par (extra_in, extra_out) si vino del equipo.
         try:
-            if item["extra_in_ts"] and item["extra_out_ts"]:
-                t_ex_in = datetime.fromisoformat(item["extra_in_ts"])
-                t_ex_out = datetime.fromisoformat(item["extra_out_ts"])
-                if t_ex_out > t_ex_in:
-                    horas_extras = round(
-                        (t_ex_out - t_ex_in).total_seconds() / 3600.0, 2
+            if not en_curso:
+                if item["extra_in_ts"] and item["extra_out_ts"]:
+                    t_ex_in = datetime.fromisoformat(item["extra_in_ts"])
+                    t_ex_out = datetime.fromisoformat(item["extra_out_ts"])
+                    if t_ex_out > t_ex_in:
+                        horas_extras = round(
+                            (t_ex_out - t_ex_in).total_seconds() / 3600.0, 2
+                        )
+                elif item["ultima_salida_ts"]:
+                    ts_out_real = datetime.fromisoformat(item["ultima_salida_ts"])
+                    salida_oficial_dt = ts_out_real.replace(
+                        hour=salida_h, minute=salida_m, second=0, microsecond=0
                     )
-            elif item["ultima_salida_ts"]:
-                ts_out_real = datetime.fromisoformat(item["ultima_salida_ts"])
-                salida_oficial_dt = ts_out_real.replace(
-                    hour=salida_h, minute=salida_m, second=0, microsecond=0
-                )
-                inicio_extras = salida_oficial_dt + timedelta(minutes=margen_extras_min)
-                if ts_out_real > inicio_extras:
-                    horas_extras = round(
-                        (ts_out_real - salida_oficial_dt).total_seconds() / 3600.0, 2
-                    )
+                    inicio_extras = salida_oficial_dt + timedelta(minutes=margen_extras_min)
+                    if ts_out_real > inicio_extras:
+                        horas_extras = round(
+                            (ts_out_real - salida_oficial_dt).total_seconds() / 3600.0, 2
+                        )
         except Exception:
             pass
 
@@ -425,6 +444,33 @@ async def api_resumen_diario(
     items.sort(key=lambda x: (x["fecha"], x["empleado_nombre"]), reverse=False)
     items.sort(key=lambda x: x["fecha"], reverse=True)
 
+    # ===========================================================================
+    # KPIs del rango filtrado (sirven para mostrar arriba en la tabla)
+    # ===========================================================================
+    # Sumario solo del DIA DE HOY si esta en el rango (mas accionable).
+    items_hoy = [i for i in items if i["fecha"] == hoy_str]
+    llegadas_tarde_hoy = sum(1 for i in items_hoy if i["status_entrada"] == "tarde")
+    sin_salida_hoy = sum(
+        1 for i in items_hoy
+        if i["status_entrada"] in ("ok", "tarde", "temprano") and i["status_salida"] == "falta"
+    )
+    en_curso_hoy = sum(1 for i in items_hoy if i.get("en_curso"))
+
+    # Empleados activos que no marcaron HOY (ausentes)
+    conn2 = get_conn()
+    try:
+        emp_activos = conn2.execute(
+            "SELECT id, nombre FROM empleados WHERE activo = 1"
+        ).fetchall()
+    finally:
+        conn2.close()
+    ids_que_marcaron_hoy = {i["empleado_id"] for i in items_hoy}
+    ausentes_hoy = [
+        {"id": e["id"], "nombre": e["nombre"]}
+        for e in emp_activos
+        if e["id"] not in ids_que_marcaron_hoy
+    ]
+
     return {
         "items": items,
         "jornada": {
@@ -434,6 +480,15 @@ async def api_resumen_diario(
             "salida": f"{salida_h:02d}:{salida_m:02d}",
             "tolerancia_min": TOLERANCIA_MIN,
             "margen_extras_min": margen_extras_min,
+        },
+        "kpis": {
+            "fecha_hoy": hoy_str,
+            "empleados_activos": len(emp_activos),
+            "marcaron_hoy": len(items_hoy),
+            "en_curso_hoy": en_curso_hoy,
+            "llegadas_tarde_hoy": llegadas_tarde_hoy,
+            "sin_salida_hoy": sin_salida_hoy,
+            "ausentes_hoy": ausentes_hoy,
         },
     }
 
