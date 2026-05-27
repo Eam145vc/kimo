@@ -260,6 +260,29 @@ async def api_resumen_diario(
             }
         grupos[key]["marcajes"].append({"ts": r["ts"], "tipo": r["tipo"]})
 
+    # ----- Deduplicar marcas muy cercanas (doble-toque) -----
+    # El equipo a veces registra la misma cara 2+ veces en pocos segundos, o la
+    # persona marca dos veces seguidas. Esas marcas falsas generan salidas/extras
+    # fantasma. Se fusionan los marcajes del mismo dia que esten a menos de
+    # DEDUP_MIN minutos del anterior conservado, quedandonos con el PRIMERO.
+    DEDUP_MIN = 10
+    _dedup_seg = DEDUP_MIN * 60
+    for g in grupos.values():
+        ms = sorted(g["marcajes"], key=lambda x: x["ts"])
+        limpios = []
+        ultimo_dt = None
+        for m in ms:
+            try:
+                dt = datetime.fromisoformat(m["ts"])
+            except Exception:
+                limpios.append(m)
+                continue
+            if ultimo_dt is not None and (dt - ultimo_dt).total_seconds() < _dedup_seg:
+                continue  # duplicado: se descarta, se conserva el primero
+            limpios.append(m)
+            ultimo_dt = dt
+        g["marcajes"] = limpios
+
     def _fmt(ts_iso: str) -> str | None:
         try:
             return datetime.fromisoformat(ts_iso).strftime("%H:%M:%S")
