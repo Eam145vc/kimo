@@ -299,11 +299,14 @@ async def api_resumen_diario(
     alm_fin_h, alm_fin_m = _parse_hhmm(get_conf("jornada_almuerzo_fin") or "13:00", 13)
     salida_h, salida_m = _parse_hhmm(get_conf("jornada_salida_hora") or "17:00", 17)
 
-    TOLERANCIA_MIN = 5  # tolerancia universal de 5 min en cada hito
     try:
-        margen_extras_min = int(get_conf("margen_gracia_extras_min") or 30)
+        TOLERANCIA_MIN = int(get_conf("tolerancia_min") or 5)
     except Exception:
-        margen_extras_min = 30  # 17:00 + 30 = 17:30 inicio de extras
+        TOLERANCIA_MIN = 5
+    try:
+        margen_extras_min = int(get_conf("margen_gracia_extras_min") or 15)
+    except Exception:
+        margen_extras_min = 15
 
     def _evaluar_marcaje(ts_iso: str | None, hora_oficial_h: int, hora_oficial_m: int) -> str:
         """Devuelve 'ok' si esta dentro de +/- 5 min del hito, 'temprano' si antes,

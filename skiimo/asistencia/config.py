@@ -57,10 +57,10 @@ DEFAULTS: dict[str, Any] = {
     "jornada_almuerzo_fin": "13:00",        # hora oficial de fin almuerzo
     "jornada_salida_hora": "17:00",         # hora oficial de salida
 
-    # Ventana de tolerancia para entrada: si marcan ANTES de entrada-tolerancia
-    # o DESPUES de almuerzo_inicio - 15 min, no es entrada (sera otra cosa).
-    "tolerancia_entrada_horas": 3,          # 3 horas antes/despues de entrada cuenta como entrada
-    "tolerancia_salida_horas": 6,           # 6 horas despues de salida cuenta como salida
+    # Tolerancia universal para clasificar marcajes como "ok" en cada hito
+    # (entrada, salida almuerzo, regreso almuerzo, salida). Si el marcaje cae
+    # dentro de +/- tolerancia_min del hito oficial, se considera "puntual".
+    "tolerancia_min": 5,                    # 5 min de tolerancia por defecto
 
     # Margen de gracia para horas extras: marcajes hasta N minutos despues de la
     # salida oficial NO cuentan como extras. Util para evitar contar 1-15 min

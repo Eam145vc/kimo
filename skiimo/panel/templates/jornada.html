@@ -9,8 +9,8 @@
     <div>
       <h1 class="text-xl font-semibold tracking-tight">Configuración de jornada</h1>
       <p class="text-xs text-text-muted mt-0.5">
-        Define el horario oficial de la fábrica. El sistema usa estas horas para
-        clasificar automáticamente cada marcaje como entrada, almuerzo o salida.
+        Define el horario oficial. El sistema clasifica cada marcaje según estas horas
+        y aplica la tolerancia para determinar si está "puntual" o "fuera de tiempo".
       </p>
     </div>
     <button @click="guardar()" :disabled="saving"
@@ -47,27 +47,18 @@
     </div>
   </div>
 
-  <!-- Tolerancias -->
+  <!-- Tolerancia y extras -->
   <div class="rounded-xl bg-surface ring-1 ring-border p-5 mb-4">
-    <h3 class="text-sm font-semibold mb-3">Tolerancias</h3>
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <h3 class="text-sm font-semibold mb-3">Tolerancia y horas extras</h3>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div>
-        <label class="block text-xs text-text-muted mb-1">Horas antes de entrada</label>
-        <input type="number" min="0" max="6" step="1"
-               x-model.number="cfg.tolerancia_entrada_horas"
+        <label class="block text-xs text-text-muted mb-1">Tolerancia (minutos)</label>
+        <input type="number" min="0" max="30" step="1"
+               x-model.number="cfg.tolerancia_min"
                class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
         <p class="text-[10px] text-text-muted mt-1">
-          Cuántas horas antes del horario oficial de entrada aceptamos
-          marcajes como "entrada".
-        </p>
-      </div>
-      <div>
-        <label class="block text-xs text-text-muted mb-1">Horas después de salida</label>
-        <input type="number" min="0" max="12" step="1"
-               x-model.number="cfg.tolerancia_salida_horas"
-               class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
-        <p class="text-[10px] text-text-muted mt-1">
-          Hasta cuántas horas después aceptamos marcajes como "salida".
+          Margen de ±N minutos en cada hito (entrada, almuerzos, salida).
+          Si el marcaje cae dentro de este rango, se considera <span class="text-success">puntual</span>.
         </p>
       </div>
       <div>
@@ -77,56 +68,62 @@
                class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
         <p class="text-[10px] text-text-muted mt-1">
           Minutos después de la salida oficial que NO cuentan como extra
-          (ej. 15 min para lavarse las manos antes de salir).
+          (ej. lavarse las manos antes de salir).
         </p>
       </div>
     </div>
   </div>
 
-  <!-- Preview de extras -->
-  <div class="rounded-xl bg-warning/5 ring-1 ring-warning/20 p-4 mb-4">
-    <h3 class="text-sm font-semibold mb-2">⏰ Horas extras</h3>
-    <p class="text-xs text-text-muted">
-      Cualquier salida que ocurra después de
-      <strong x-text="cfg.jornada_salida_hora"></strong>
-      + <strong x-text="(cfg.margen_gracia_extras_min || 0) + ' min'"></strong>
-      de gracia cuenta como hora extra. Las extras se calculan desde la salida oficial.
-    </p>
-    <p class="text-[11px] text-text-muted mt-2">
-      Ejemplo: salida 17:00, gracia 15 min, marca a las 17:30 → cuenta como 30 min de extras.
-      Si marca a las 17:10 → 0 extras (dentro del margen).
-    </p>
-  </div>
+  <!-- Preview en vivo -->
+  <div class="rounded-xl bg-accent/5 ring-1 ring-accent/20 p-5 mb-4">
+    <h3 class="text-sm font-semibold mb-3">Vista previa con tu configuración</h3>
 
-  <!-- Vista previa de las ventanas -->
-  <div class="rounded-xl bg-accent/5 ring-1 ring-accent/20 p-5">
-    <h3 class="text-sm font-semibold mb-3">Vista previa de clasificación</h3>
-    <p class="text-xs text-text-muted mb-3">
-      Con esta configuración, cada marcaje se clasifica según la hora a la que pase:
-    </p>
-    <div class="space-y-2">
-      <template x-for="v in ventanas" :key="v.tipo">
-        <div class="flex items-center gap-3 text-sm">
-          <span class="text-xs px-2 py-0.5 rounded-full font-medium tabular flex-shrink-0 w-44"
-                :class="v.color" x-text="v.label"></span>
-          <span class="text-text-muted tabular text-xs">
-            <span x-text="v.ini"></span> a <span x-text="v.fin"></span>
-          </span>
+    <div class="space-y-3 text-sm">
+      <!-- Entrada -->
+      <div class="bg-surface-2 rounded p-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-medium">🟢 Entrada (oficial <span class="tabular" x-text="cfg.jornada_entrada_hora"></span>)</span>
         </div>
-      </template>
+        <ul class="text-xs space-y-0.5">
+          <li><span class="text-text-muted">Antes de</span> <span class="tabular" x-text="restarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span> <span class="text-text-muted">→ no aplica (no se cuenta para horas trabajadas)</span></li>
+          <li class="text-success"><span class="tabular">[<span x-text="restarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span> - <span x-text="sumarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span>]</span> Puntual ✓</li>
+          <li class="text-danger"><span class="text-text-muted">Después de</span> <span class="tabular" x-text="sumarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span> <span class="text-text-muted">→</span> Tarde ✗</li>
+        </ul>
+      </div>
+
+      <!-- Almuerzo -->
+      <div class="bg-surface-2 rounded p-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-medium">🔵 Almuerzo (oficial <span class="tabular" x-text="cfg.jornada_almuerzo_inicio"></span> - <span class="tabular" x-text="cfg.jornada_almuerzo_fin"></span>)</span>
+        </div>
+        <ul class="text-xs space-y-0.5">
+          <li class="text-success">Salida almuerzo puntual: <span class="tabular">[<span x-text="restarMin(cfg.jornada_almuerzo_inicio, cfg.tolerancia_min)"></span> - <span x-text="sumarMin(cfg.jornada_almuerzo_inicio, cfg.tolerancia_min)"></span>]</span></li>
+          <li class="text-success">Regreso almuerzo puntual: <span class="tabular">[<span x-text="restarMin(cfg.jornada_almuerzo_fin, cfg.tolerancia_min)"></span> - <span x-text="sumarMin(cfg.jornada_almuerzo_fin, cfg.tolerancia_min)"></span>]</span></li>
+          <li class="text-text-muted">La hora del almuerzo (<span class="tabular" x-text="cfg.jornada_almuerzo_inicio"></span> - <span class="tabular" x-text="cfg.jornada_almuerzo_fin"></span>) <strong>siempre se descuenta</strong> de las horas trabajadas, marcaron o no.</li>
+        </ul>
+      </div>
+
+      <!-- Salida -->
+      <div class="bg-surface-2 rounded p-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-medium">🟠 Salida (oficial <span class="tabular" x-text="cfg.jornada_salida_hora"></span>)</span>
+        </div>
+        <ul class="text-xs space-y-0.5">
+          <li class="text-warning"><span class="text-text-muted">Antes de</span> <span class="tabular" x-text="restarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span> <span class="text-text-muted">→</span> Salida temprana (sale antes)</li>
+          <li class="text-success"><span class="tabular">[<span x-text="restarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span> - <span x-text="sumarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span>]</span> Puntual ✓</li>
+          <li><span class="text-text-muted">Entre</span> <span class="tabular" x-text="sumarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span> <span class="text-text-muted">y</span> <span class="tabular" x-text="sumarMin(cfg.jornada_salida_hora, cfg.margen_gracia_extras_min)"></span> <span class="text-text-muted">→ no es extra (margen de gracia)</span></li>
+          <li class="text-warning"><span class="text-text-muted">Después de</span> <span class="tabular" x-text="sumarMin(cfg.jornada_salida_hora, cfg.margen_gracia_extras_min)"></span> <span class="text-text-muted">→</span> Hora extra (se cuenta desde <span class="tabular" x-text="cfg.jornada_salida_hora"></span>)</li>
+        </ul>
+      </div>
     </div>
-    <p class="text-[10px] text-text-muted mt-3">
-      Si alguien marca dos veces en la misma franja (ej. dos marcajes en la
-      ventana de entrada), el primero queda como entrada y el segundo como "extra".
-    </p>
   </div>
 
   <!-- Reclasificar -->
-  <div class="rounded-xl bg-surface ring-1 ring-border p-5 mt-4">
+  <div class="rounded-xl bg-surface ring-1 ring-border p-5">
     <h3 class="text-sm font-semibold mb-2">Aplicar a marcajes existentes</h3>
     <p class="text-xs text-text-muted mb-3">
-      Re-clasifica todos los marcajes ya registrados usando las nuevas ventanas.
-      No toca los que fueron editados manualmente.
+      Re-clasifica los marcajes ya registrados usando la jornada y tolerancia actuales.
+      No toca los que fueron editados manualmente desde el panel.
     </p>
     <button @click="reclasificar()" :disabled="reclasificando"
             class="text-sm bg-surface-2 hover:bg-border text-text px-4 py-2 rounded-lg disabled:opacity-50">
@@ -146,8 +143,7 @@ function jornadaPage() {
       jornada_almuerzo_inicio: '12:00',
       jornada_almuerzo_fin: '13:00',
       jornada_salida_hora: '17:00',
-      tolerancia_entrada_horas: 3,
-      tolerancia_salida_horas: 6,
+      tolerancia_min: 5,
       margen_gracia_extras_min: 15,
     },
     saving: false,
@@ -166,35 +162,23 @@ function jornadaPage() {
       }
     },
 
-    get ventanas() {
-      // Replica la logica del backend para mostrar preview en vivo
-      const toMin = s => {
-        const [h, m] = (s || '00:00').split(':').map(Number);
-        return h * 60 + m;
-      };
-      const fromMin = m => {
-        const h = Math.floor(m / 60), mn = m % 60;
-        return `${String(h).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;
-      };
-      const entrada = toMin(this.cfg.jornada_entrada_hora);
-      const alm_ini = toMin(this.cfg.jornada_almuerzo_inicio);
-      const alm_fin = toMin(this.cfg.jornada_almuerzo_fin);
-      const salida = toMin(this.cfg.jornada_salida_hora);
-      const tol_ent = Number(this.cfg.tolerancia_entrada_horas) || 3;
-      const tol_sal = Number(this.cfg.tolerancia_salida_horas) || 6;
+    _toMin(s) {
+      const [h, m] = (s || '00:00').split(':').map(Number);
+      return h * 60 + m;
+    },
 
-      const ini_entrada = Math.max(0, entrada - tol_ent * 60);
-      const fin_entrada = alm_ini - 30 > entrada ? alm_ini - 30 : Math.floor((entrada + alm_ini) / 2);
-      const medio_almuerzo = Math.floor((alm_ini + alm_fin) / 2);
-      const fin_almuerzo_in = alm_fin + 90 < salida ? alm_fin + 90 : Math.floor((alm_fin + salida) / 2);
-      const fin_salida = Math.min(salida + tol_sal * 60, 23 * 60 + 59);
+    _fromMin(m) {
+      m = ((m % 1440) + 1440) % 1440;  // wrap a 0-1439
+      const h = Math.floor(m / 60), mn = m % 60;
+      return `${String(h).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;
+    },
 
-      return [
-        { tipo: 'entrada', label: '🟢 Entrada', ini: fromMin(ini_entrada), fin: fromMin(fin_entrada), color: 'bg-success/15 text-success' },
-        { tipo: 'almuerzo_out', label: '🔵 Salida almuerzo', ini: fromMin(fin_entrada), fin: fromMin(medio_almuerzo), color: 'bg-accent/15 text-accent' },
-        { tipo: 'almuerzo_in', label: '🔵 Regreso almuerzo', ini: fromMin(medio_almuerzo), fin: fromMin(fin_almuerzo_in), color: 'bg-accent/15 text-accent' },
-        { tipo: 'salida', label: '🟠 Salida', ini: fromMin(fin_almuerzo_in), fin: fromMin(fin_salida), color: 'bg-warning/15 text-warning' },
-      ];
+    sumarMin(hora, minutos) {
+      return this._fromMin(this._toMin(hora) + (Number(minutos) || 0));
+    },
+
+    restarMin(hora, minutos) {
+      return this._fromMin(this._toMin(hora) - (Number(minutos) || 0));
     },
 
     async guardar() {
