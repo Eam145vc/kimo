@@ -47,9 +47,9 @@
     </div>
   </div>
 
-  <!-- Tolerancia y extras -->
+  <!-- Tolerancia -->
   <div class="rounded-xl bg-surface ring-1 ring-border p-5 mb-4">
-    <h3 class="text-sm font-semibold mb-3">Tolerancia y horas extras</h3>
+    <h3 class="text-sm font-semibold mb-3">Tolerancia</h3>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div>
         <label class="block text-xs text-text-muted mb-1">Tolerancia (minutos)</label>
@@ -57,63 +57,81 @@
                x-model.number="cfg.tolerancia_min"
                class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
         <p class="text-[10px] text-text-muted mt-1">
-          Margen de ±N minutos en cada hito (entrada, almuerzos, salida).
-          Si el marcaje cae dentro de este rango, se considera <span class="text-success">puntual</span>.
+          Margen de ±N minutos en cada hito. Si el marcaje cae dentro de este rango,
+          se considera <span class="text-success">puntual</span> y el cálculo usa la hora oficial.
         </p>
       </div>
       <div>
-        <label class="block text-xs text-text-muted mb-1">Margen gracia extras (min)</label>
+        <label class="block text-xs text-text-muted mb-1">Margen extras (min) — solo para alerta</label>
         <input type="number" min="0" max="60" step="5"
                x-model.number="cfg.margen_gracia_extras_min"
                class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
         <p class="text-[10px] text-text-muted mt-1">
-          Minutos después de la salida oficial cuando las extras
-          empiezan a contar. Ej: salida 17:00 + 30 = extras desde las 17:30.
+          Define a qué hora empiezan oficialmente las extras (ej. salida 17:00 + 30 = 17:30).
+          <strong>Solo se usa para el KPI "Tarde extras"</strong>. El cálculo real usa los marcajes extra_in/extra_out.
         </p>
       </div>
     </div>
   </div>
 
-  <!-- Preview en vivo -->
+  <!-- Reglas de cálculo -->
   <div class="rounded-xl bg-accent/5 ring-1 ring-accent/20 p-5 mb-4">
-    <h3 class="text-sm font-semibold mb-3">Vista previa con tu configuración</h3>
+    <h3 class="text-sm font-semibold mb-3">Cómo se cuentan las horas</h3>
+    <p class="text-xs text-text-muted mb-3">
+      <strong>Regla universal:</strong> el empleado nunca gana tiempo extra,
+      solo puede perder por llegar tarde o irse temprano.
+      Las horas extras se calculan aparte con marcajes explícitos.
+    </p>
 
     <div class="space-y-3 text-sm">
       <!-- Entrada -->
       <div class="bg-surface-2 rounded p-3">
-        <div class="flex items-center justify-between mb-1">
-          <span class="font-medium">🟢 Entrada (oficial <span class="tabular" x-text="cfg.jornada_entrada_hora"></span>)</span>
-        </div>
+        <p class="font-medium mb-1">🟢 Entrada (oficial <span class="tabular" x-text="cfg.jornada_entrada_hora"></span>)</p>
         <ul class="text-xs space-y-0.5">
-          <li><span class="text-text-muted">Antes de</span> <span class="tabular" x-text="restarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span> <span class="text-text-muted">→ no aplica (no se cuenta para horas trabajadas)</span></li>
-          <li class="text-success"><span class="tabular">[<span x-text="restarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span> - <span x-text="sumarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span>]</span> Puntual ✓</li>
-          <li class="text-danger"><span class="text-text-muted">Después de</span> <span class="tabular" x-text="sumarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span> <span class="text-text-muted">→</span> Tarde ✗</li>
+          <li><span class="text-success">Antes de</span> <span class="tabular" x-text="sumarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span>: cuenta como <span class="tabular" x-text="cfg.jornada_entrada_hora"></span> (no gana tiempo)</li>
+          <li><span class="text-danger">Después de</span> <span class="tabular" x-text="sumarMin(cfg.jornada_entrada_hora, cfg.tolerancia_min)"></span>: hora real (pierde el exceso)</li>
         </ul>
       </div>
 
-      <!-- Almuerzo -->
+      <!-- Salida almuerzo -->
       <div class="bg-surface-2 rounded p-3">
-        <div class="flex items-center justify-between mb-1">
-          <span class="font-medium">🔵 Almuerzo (oficial <span class="tabular" x-text="cfg.jornada_almuerzo_inicio"></span> - <span class="tabular" x-text="cfg.jornada_almuerzo_fin"></span>)</span>
-        </div>
+        <p class="font-medium mb-1">🔵 Salida almuerzo (oficial <span class="tabular" x-text="cfg.jornada_almuerzo_inicio"></span>)</p>
         <ul class="text-xs space-y-0.5">
-          <li class="text-success">Salida almuerzo puntual: <span class="tabular">[<span x-text="restarMin(cfg.jornada_almuerzo_inicio, cfg.tolerancia_min)"></span> - <span x-text="sumarMin(cfg.jornada_almuerzo_inicio, cfg.tolerancia_min)"></span>]</span></li>
-          <li class="text-success">Regreso almuerzo puntual: <span class="tabular">[<span x-text="restarMin(cfg.jornada_almuerzo_fin, cfg.tolerancia_min)"></span> - <span x-text="sumarMin(cfg.jornada_almuerzo_fin, cfg.tolerancia_min)"></span>]</span></li>
-          <li class="text-text-muted">La hora del almuerzo (<span class="tabular" x-text="cfg.jornada_almuerzo_inicio"></span> - <span class="tabular" x-text="cfg.jornada_almuerzo_fin"></span>) <strong>siempre se descuenta</strong> de las horas trabajadas, marcaron o no.</li>
+          <li><span class="text-danger">Antes de</span> <span class="tabular" x-text="restarMin(cfg.jornada_almuerzo_inicio, cfg.tolerancia_min)"></span>: hora real (pierde tiempo de trabajo)</li>
+          <li><span class="text-success">Después de</span> <span class="tabular" x-text="restarMin(cfg.jornada_almuerzo_inicio, cfg.tolerancia_min)"></span>: cuenta como <span class="tabular" x-text="cfg.jornada_almuerzo_inicio"></span> (no gana tiempo)</li>
+        </ul>
+      </div>
+
+      <!-- Regreso almuerzo -->
+      <div class="bg-surface-2 rounded p-3">
+        <p class="font-medium mb-1">🔵 Regreso almuerzo (oficial <span class="tabular" x-text="cfg.jornada_almuerzo_fin"></span>)</p>
+        <ul class="text-xs space-y-0.5">
+          <li><span class="text-success">Antes de</span> <span class="tabular" x-text="sumarMin(cfg.jornada_almuerzo_fin, cfg.tolerancia_min)"></span>: cuenta como <span class="tabular" x-text="cfg.jornada_almuerzo_fin"></span> (no gana tiempo)</li>
+          <li><span class="text-danger">Después de</span> <span class="tabular" x-text="sumarMin(cfg.jornada_almuerzo_fin, cfg.tolerancia_min)"></span>: hora real (pierde por llegar tarde)</li>
         </ul>
       </div>
 
       <!-- Salida -->
       <div class="bg-surface-2 rounded p-3">
-        <div class="flex items-center justify-between mb-1">
-          <span class="font-medium">🟠 Salida (oficial <span class="tabular" x-text="cfg.jornada_salida_hora"></span>)</span>
-        </div>
+        <p class="font-medium mb-1">🟠 Salida (oficial <span class="tabular" x-text="cfg.jornada_salida_hora"></span>)</p>
         <ul class="text-xs space-y-0.5">
-          <li class="text-warning"><span class="text-text-muted">Antes de</span> <span class="tabular" x-text="restarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span> <span class="text-text-muted">→</span> Salida temprana (sale antes)</li>
-          <li class="text-success"><span class="tabular">[<span x-text="restarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span> - <span x-text="sumarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span>]</span> Puntual ✓</li>
-          <li><span class="text-text-muted">Entre</span> <span class="tabular" x-text="sumarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span> <span class="text-text-muted">y</span> <span class="tabular" x-text="sumarMin(cfg.jornada_salida_hora, cfg.margen_gracia_extras_min)"></span> <span class="text-text-muted">→ no es extra (margen de gracia)</span></li>
-          <li class="text-warning"><span class="text-text-muted">Después de</span> <span class="tabular" x-text="sumarMin(cfg.jornada_salida_hora, cfg.margen_gracia_extras_min)"></span> <span class="text-text-muted">→</span> Hora extra (se cuenta desde <span class="tabular" x-text="cfg.jornada_salida_hora"></span>)</li>
+          <li><span class="text-danger">Antes de</span> <span class="tabular" x-text="restarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span>: hora real (pierde, se va temprano)</li>
+          <li><span class="text-success">Después de</span> <span class="tabular" x-text="restarMin(cfg.jornada_salida_hora, cfg.tolerancia_min)"></span>: cuenta como <span class="tabular" x-text="cfg.jornada_salida_hora"></span> (no gana, aunque se quede más)</li>
         </ul>
+      </div>
+
+      <!-- Extras -->
+      <div class="bg-warning/10 ring-1 ring-warning/30 rounded p-3">
+        <p class="font-medium mb-1">⏰ Horas extras</p>
+        <p class="text-xs text-text-muted">
+          <strong>Solo se cuentan si el empleado marca</strong> <code class="text-warning">extra_in</code>
+          y <code class="text-warning">extra_out</code> después de la salida.
+          El tiempo extra = <span class="tabular">extra_out − extra_in</span>.
+        </p>
+        <p class="text-[11px] text-text-muted mt-2">
+          Si el empleado se queda hasta las 19:00 pero no marca extras, no gana horas extras.
+          Quedarse después de la hora sin marcar = no pago adicional.
+        </p>
       </div>
     </div>
   </div>
