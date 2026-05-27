@@ -89,17 +89,17 @@
          x-text="kpis.tarde_entrada_hoy || 0"></p>
     </div>
     <div class="rounded-xl p-3 ring-1"
-         :class="(kpis.tarde_regreso_hoy || 0) > 0 ? 'bg-danger/10 ring-danger/30' : 'bg-surface ring-border opacity-70'">
-      <p class="text-[11px]" :class="(kpis.tarde_regreso_hoy || 0) > 0 ? 'text-danger' : 'text-text-muted'">Tarde regreso</p>
+         :class="(kpis.tarde_almuerzo_hoy || 0) > 0 ? 'bg-danger/10 ring-danger/30' : 'bg-surface ring-border opacity-70'">
+      <p class="text-[11px]" :class="(kpis.tarde_almuerzo_hoy || 0) > 0 ? 'text-danger' : 'text-text-muted'">Tarde almuerzo</p>
       <p class="text-xl font-semibold mt-0.5 tabular"
-         :class="(kpis.tarde_regreso_hoy || 0) > 0 ? 'text-danger' : ''"
-         x-text="kpis.tarde_regreso_hoy || 0"></p>
+         :class="(kpis.tarde_almuerzo_hoy || 0) > 0 ? 'text-danger' : ''"
+         x-text="kpis.tarde_almuerzo_hoy || 0"></p>
     </div>
     <div class="rounded-xl p-3 ring-1"
-         :class="(kpis.tarde_extras_hoy || 0) > 0 ? 'bg-warning/10 ring-warning/30' : 'bg-surface ring-border opacity-70'">
-      <p class="text-[11px]" :class="(kpis.tarde_extras_hoy || 0) > 0 ? 'text-warning' : 'text-text-muted'">Sin marca extra</p>
+         :class="(kpis.tarde_extras_hoy || 0) > 0 ? 'bg-danger/10 ring-danger/30' : 'bg-surface ring-border opacity-70'">
+      <p class="text-[11px]" :class="(kpis.tarde_extras_hoy || 0) > 0 ? 'text-danger' : 'text-text-muted'">Tarde extras</p>
       <p class="text-xl font-semibold mt-0.5 tabular"
-         :class="(kpis.tarde_extras_hoy || 0) > 0 ? 'text-warning' : ''"
+         :class="(kpis.tarde_extras_hoy || 0) > 0 ? 'text-danger' : ''"
          x-text="kpis.tarde_extras_hoy || 0"></p>
     </div>
     <div class="rounded-xl bg-surface ring-1 ring-border p-3">

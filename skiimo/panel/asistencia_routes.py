@@ -328,11 +328,15 @@ async def api_resumen_diario(
                             tipo: str) -> datetime | None:
         """Aplica reglas de tolerancia para calculo de horas trabajadas.
 
+        Trunca los segundos al minuto inferior (13:06:54 -> 13:06:00) para
+        que el calculo de minutos perdidos sea exacto.
+
         - Entrada: si marca antes de la oficial -> oficial. Si dentro de tolerancia -> oficial.
-                   Si despues de tolerancia -> hora real (llego tarde).
-        - Salida: si marca despues de la oficial Y dentro de tolerancia -> oficial.
-                  Antes de tolerancia -> hora real (sale temprano).
-        - Almuerzo: dentro de tolerancia -> hora oficial; sino -> hora real.
+                   Si despues de tolerancia -> hora real - tolerancia (los 5 min se respetan).
+        - Salida: si marca dentro o despues de tolerancia -> oficial.
+                  Antes de tolerancia -> hora real + tolerancia.
+        - Almuerzo_out: igual que salida (al reves para el calculo).
+        - Almuerzo_in: igual que entrada.
         """
         if not ts_iso:
             return None
@@ -340,6 +344,8 @@ async def api_resumen_diario(
             ts = datetime.fromisoformat(ts_iso)
         except Exception:
             return None
+        # Truncar segundos para redondear hacia abajo
+        ts = ts.replace(second=0, microsecond=0)
         oficial = ts.replace(hour=hora_oficial_h, minute=hora_oficial_m,
                               second=0, microsecond=0)
         delta_min = (ts - oficial).total_seconds() / 60.0
@@ -431,24 +437,33 @@ async def api_resumen_diario(
                 except Exception:
                     pass
 
-            # Si marcaron almuerzo, ajustar cada marcaje a la hora oficial con
-            # tolerancia (igual que entrada/salida). Asi descontamos SOLO lo
-            # que excede la tolerancia, no el tiempo total.
+            # Calculo de pausa de almuerzo:
+            #  - Si tiene salida_out y regreso_in: usar ambos ajustados con tolerancia
+            #  - Si solo tiene UNO de los dos: asumir oficial para el faltante,
+            #    aplicar tolerancia al que SI tiene
+            #  - Si no tiene ninguno pero el rango cruza 12-13: descontar 1h oficial
             descuento_almuerzo = 0.0
-            if t_alm_out_real and t_alm_in_real and t_alm_in_real > t_alm_out_real:
-                # Ajustar salida_almuerzo a hora oficial con tolerancia
-                t_out_ajust_alm = _ajustar_a_oficial(
-                    item["almuerzo_out_ts"], alm_ini_h, alm_ini_m, "almuerzo_out"
-                )
-                # Ajustar regreso_almuerzo a hora oficial con tolerancia
-                t_in_ajust_alm = _ajustar_a_oficial(
-                    item["almuerzo_in_ts"], alm_fin_h, alm_fin_m, "almuerzo_in"
-                )
-                if t_out_ajust_alm and t_in_ajust_alm and t_in_ajust_alm > t_out_ajust_alm:
+
+            t_out_ajust_alm = _ajustar_a_oficial(
+                item["almuerzo_out_ts"], alm_ini_h, alm_ini_m, "almuerzo_out"
+            )
+            t_in_ajust_alm = _ajustar_a_oficial(
+                item["almuerzo_in_ts"], alm_fin_h, alm_fin_m, "almuerzo_in"
+            )
+
+            tiene_alguno = t_out_ajust_alm or t_in_ajust_alm
+            cruza_almuerzo = t_in_ajust < alm_fin_oficial and t_out_ajust > alm_inicio_oficial
+
+            if tiene_alguno:
+                # Si falta uno de los dos, asumimos oficial
+                if t_out_ajust_alm is None:
+                    t_out_ajust_alm = alm_inicio_oficial
+                if t_in_ajust_alm is None:
+                    t_in_ajust_alm = alm_fin_oficial
+                if t_in_ajust_alm > t_out_ajust_alm:
                     descuento_almuerzo = (t_in_ajust_alm - t_out_ajust_alm).total_seconds() / 3600.0
-            elif t_in_ajust < alm_fin_oficial and t_out_ajust > alm_inicio_oficial:
-                # No marcaron almuerzo pero el rango trabajado cruza el horario:
-                # descontar 1h oficial (en proporción si solo cruza parcialmente)
+            elif cruza_almuerzo:
+                # No marcaron nada pero trabajan cruzando almuerzo: descontar oficial
                 inicio = max(t_in_ajust, alm_inicio_oficial)
                 fin = min(t_out_ajust, alm_fin_oficial)
                 if fin > inicio:
@@ -504,10 +519,26 @@ async def api_resumen_diario(
     # Sumario solo del DIA DE HOY si esta en el rango (mas accionable).
     items_hoy = [i for i in items if i["fecha"] == hoy_str]
     tarde_entrada_hoy = sum(1 for i in items_hoy if i["status_entrada"] == "tarde")
-    tarde_regreso_hoy = sum(1 for i in items_hoy if i["status_almuerzo_in"] == "tarde")
-    tarde_extras_hoy = sum(
-        1 for i in items_hoy if i.get("horas_extras", 0) > 0 and i["status_extra_in"] == "falta"
-    )
+    tarde_almuerzo_hoy = sum(1 for i in items_hoy if i["status_almuerzo_in"] == "tarde")
+
+    # Tarde extras: marco extra_in DESPUES de (salida_oficial + margen_extras + tolerancia)
+    # Ej: salida 17:00 + 30 min margen + 5 min tolerancia = 17:35
+    limite_extras_tarde = datetime.combine(
+        ahora_bogota.date(),
+        datetime.min.replace(hour=salida_h, minute=salida_m).time(),
+    ).replace(tzinfo=TZ_BOGOTA) + timedelta(minutes=margen_extras_min + TOLERANCIA_MIN)
+
+    def _es_tarde_extra(i: dict) -> bool:
+        if not i.get("extra_in"):
+            return False
+        try:
+            ts = datetime.fromisoformat(f"{i['fecha']}T{i['extra_in']}-05:00")
+            return ts > limite_extras_tarde
+        except Exception:
+            return False
+
+    tarde_extras_hoy = sum(1 for i in items_hoy if _es_tarde_extra(i))
+
     sin_salida_hoy = sum(
         1 for i in items_hoy
         if i["status_entrada"] in ("ok", "tarde", "temprano") and i["status_salida"] == "falta"
@@ -545,7 +576,7 @@ async def api_resumen_diario(
             "marcaron_hoy": len(items_hoy),
             "en_curso_hoy": en_curso_hoy,
             "tarde_entrada_hoy": tarde_entrada_hoy,
-            "tarde_regreso_hoy": tarde_regreso_hoy,
+            "tarde_almuerzo_hoy": tarde_almuerzo_hoy,
             "tarde_extras_hoy": tarde_extras_hoy,
             "sin_salida_hoy": sin_salida_hoy,
             "ausentes_hoy": ausentes_hoy,
