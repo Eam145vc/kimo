@@ -616,6 +616,66 @@ async def api_resumen_diario(
         item["status_extra_in"] = "ok" if item["extra_in_ts"] else ("falta" if horas_extras > 0 else "no_aplica")
         item["status_extra_out"] = "ok" if item["extra_out_ts"] else ("falta" if horas_extras > 0 else "no_aplica")
 
+        # ----- Desglose por hito: hora real vs hora que conto (ajustada) -----
+        # Permite que el panel explique POR QUE cada marcaje pierde o no minutos.
+        def _hito(ts_iso, h, m, tipo, label):
+            if not ts_iso:
+                return None
+            ajust = _ajustar_a_oficial(ts_iso, h, m, tipo)
+            try:
+                real = datetime.fromisoformat(ts_iso).replace(second=0, microsecond=0)
+            except Exception:
+                return None
+            delta_min = 0
+            if ajust is not None:
+                delta_min = round((ajust - real).total_seconds() / 60.0)
+            return {
+                "hito": label,
+                "real": real.strftime("%H:%M"),
+                "ajustada": ajust.strftime("%H:%M") if ajust else None,
+                # minutos perdidos: cuanto se le recorto frente a la hora real
+                # (entrada/almuerzo_in pierden si ajustada > real; salida/almuerzo_out
+                #  pierden si ajustada < real). Normalizamos a "minutos perdidos" positivos.
+                "perdidos": abs(delta_min) if delta_min != 0 else 0,
+            }
+
+        item["calculo"] = {
+            "horas": horas,
+            "horas_extras": horas_extras,
+            "pausa_almuerzo_h": item.get("pausa_almuerzo_h", 0),
+            "valor_hora_aplicado": item.get("valor_hora_ord_aplicado", 0),
+            "valor_hora_extra": valor_hora_extra,
+            "pago_ord": item.get("pago_ord", 0),
+            "pago_extras": item.get("pago_extras", 0),
+            "pago_total": item.get("pago_total", 0),
+            "es_finde": es_finde,
+            "en_curso": item.get("en_curso", False),
+            "hitos": [h for h in (
+                _hito(item["primera_entrada_ts"], entrada_h, entrada_m, "entrada", "Entrada"),
+                _hito(item["almuerzo_out_ts"], alm_ini_h, alm_ini_m, "almuerzo_out", "Salida almuerzo"),
+                _hito(item["almuerzo_in_ts"], alm_fin_h, alm_fin_m, "almuerzo_in", "Regreso almuerzo"),
+                _hito(item["ultima_salida_ts"], salida_h, salida_m, "salida", "Salida"),
+            ) if h is not None],
+        }
+
+        # ----- Alertas del dia: que debe revisar la dueña -----
+        alertas = []
+        if item.get("primera_entrada_ts") and not item.get("ultima_salida_ts") and not item.get("en_curso"):
+            alertas.append({"nivel": "warning", "texto": "Falta marca de salida"})
+        if not item.get("primera_entrada_ts"):
+            alertas.append({"nivel": "danger", "texto": "Sin marca de entrada"})
+        for hh in item["calculo"]["hitos"]:
+            if hh["perdidos"] > 0:
+                alertas.append({
+                    "nivel": "warning",
+                    "texto": f"{hh['hito']}: perdió {hh['perdidos']} min (tarde/temprano)",
+                })
+        if item.get("status_almuerzo_out") and not item.get("almuerzo_in_ts") and item.get("almuerzo_out_ts"):
+            alertas.append({"nivel": "warning", "texto": "Salió a almuerzo pero no marcó regreso"})
+        if item.get("en_curso"):
+            alertas.append({"nivel": "info", "texto": "Jornada en curso (sin salida aún)"})
+        item["alertas"] = alertas
+
         # No exponer los ts crudos al frontend
         for k in ("primera_entrada_ts", "almuerzo_out_ts", "almuerzo_in_ts",
                   "ultima_salida_ts", "extra_in_ts", "extra_out_ts"):

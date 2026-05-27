@@ -266,11 +266,91 @@
           <h3 class="text-base font-semibold" x-text="detalle.empleado_nombre"></h3>
           <p class="text-xs text-text-muted" x-text="detalle.fecha + ' · ' + diaSemana(detalle.fecha)"></p>
         </div>
-        <button @click="agregarParaDia()" class="text-xs bg-accent/15 text-accent hover:bg-accent/30 px-2 py-1 rounded">
+        <button @click="agregarParaDia()" class="text-xs bg-accent/15 text-accent hover:bg-accent/30 px-2 py-1 rounded transition-colors duration-200">
           + Agregar marcaje
         </button>
       </div>
 
+      <!-- ===== Desglose del pago del día ===== -->
+      <div x-show="detalle.calculo" class="rounded-lg bg-surface-2 ring-1 ring-border p-4 mb-4">
+        <div class="flex items-baseline justify-between mb-3">
+          <span class="text-xs text-text-muted uppercase tracking-wide">A pagar este día</span>
+          <span class="text-2xl font-semibold tabular text-success" x-text="fmtMoney(detalle.pago_total)"></span>
+        </div>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+          <div class="flex justify-between">
+            <span class="text-text-muted">Horas trabajadas</span>
+            <span class="tabular" x-text="(detalle.calculo?.horas ?? 0) + ' h'"></span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Valor hora</span>
+            <span class="tabular" x-text="fmtMoney(detalle.calculo?.valor_hora_aplicado)"></span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Almuerzo descontado</span>
+            <span class="tabular" x-text="(detalle.calculo?.pausa_almuerzo_h ?? 0) + ' h'"></span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-muted">Pago ordinario</span>
+            <span class="tabular" x-text="fmtMoney(detalle.calculo?.pago_ord)"></span>
+          </div>
+          <template x-if="(detalle.calculo?.horas_extras ?? 0) > 0">
+            <div class="flex justify-between">
+              <span class="text-text-muted" x-text="'Extras (' + detalle.calculo.horas_extras + ' h)'"></span>
+              <span class="tabular text-warning" x-text="fmtMoney(detalle.calculo?.pago_extras)"></span>
+            </div>
+          </template>
+          <template x-if="detalle.calculo?.es_finde">
+            <div class="col-span-2 flex items-center gap-1.5 text-accent mt-0.5">
+              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+              <span>Día de fin de semana (base $100.000)</span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ===== Alertas del día ===== -->
+      <div x-show="(detalle.alertas || []).length" class="space-y-1.5 mb-4">
+        <template x-for="(a, i) in detalle.alertas || []" :key="i">
+          <div class="flex items-start gap-2 text-xs rounded-md px-3 py-2 ring-1"
+               :class="{
+                 'bg-danger/10 ring-danger/30 text-danger': a.nivel === 'danger',
+                 'bg-warning/10 ring-warning/30 text-warning': a.nivel === 'warning',
+                 'bg-accent/10 ring-accent/30 text-accent': a.nivel === 'info'
+               }">
+            <svg class="h-4 w-4 flex-shrink-0 mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <span x-text="a.texto"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- ===== Línea de tiempo de la jornada ===== -->
+      <div x-show="(detalle.calculo?.hitos || []).length" class="mb-4">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-xs text-text-muted uppercase tracking-wide">Línea de tiempo</span>
+          <span class="text-[10px] text-text-muted">7:00 → 17:00</span>
+        </div>
+        <div class="relative h-8 rounded bg-surface-2 ring-1 ring-border overflow-hidden">
+          <!-- bloque almuerzo (12-13 = 50%-60% de la jornada 7-17) -->
+          <div class="absolute inset-y-0 bg-border/60" style="left:50%; width:10%" title="Almuerzo 12:00–13:00"></div>
+          <!-- marcadores de hitos -->
+          <template x-for="(h, i) in detalle.calculo?.hitos || []" :key="i">
+            <div class="absolute inset-y-0 flex items-center" :style="'left:' + timelinePct(h.real) + '%'">
+              <div class="w-0.5 h-full" :class="h.perdidos > 0 ? 'bg-warning' : 'bg-success'"></div>
+            </div>
+          </template>
+        </div>
+        <div class="flex items-center gap-3 mt-1.5 text-[10px] text-text-muted">
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-success inline-block"></span>puntual</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-warning inline-block"></span>perdió tiempo</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 bg-border inline-block"></span>almuerzo</span>
+        </div>
+      </div>
+
+      <!-- ===== Lista de marcajes (real vs ajustada) ===== -->
+      <p class="text-xs text-text-muted uppercase tracking-wide mb-1.5">Marcajes</p>
       <ul class="space-y-2">
         <template x-for="m in detalle.marcajes || []" :key="m.id">
           <li class="bg-surface-2 rounded px-3 py-2" :class="m.ignorar_nomina ? 'opacity-50' : ''">
@@ -279,6 +359,14 @@
                 <span class="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0"
                       :class="etiquetaColor(m.etiqueta)" x-text="m.etiqueta"></span>
                 <span class="tabular text-sm" x-text="formatTime(m.ts)"></span>
+                <!-- hora ajustada si difiere de la real -->
+                <template x-if="hitoDe(m)?.perdidos > 0">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-warning/15 text-warning tabular"
+                        :title="'Contó como ' + hitoDe(m).ajustada">
+                    <span x-text="'→ ' + hitoDe(m).ajustada"></span>
+                    <span x-text="'(-' + hitoDe(m).perdidos + ' min)'"></span>
+                  </span>
+                </template>
                 <template x-if="m.editado">
                   <span class="text-[10px] px-1.5 py-0.5 rounded bg-warning/20 text-warning" title="Editado por admin">editado</span>
                 </template>
@@ -292,24 +380,24 @@
               <div class="flex items-center gap-2 flex-shrink-0">
                 <span class="text-[11px] text-text-muted" x-text="metodoLabel(m)"></span>
                 <button x-show="fotoUrl(m)" @click="fotoZoom = fotoUrl(m)"
-                        class="text-text-muted hover:text-accent" title="Ver foto">
+                        class="text-text-muted hover:text-accent transition-colors duration-200" title="Ver foto" aria-label="Ver foto del marcaje">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                   </svg>
                 </button>
-                <button @click="editarMarcaje(m)" class="text-text-muted hover:text-accent" title="Editar">
+                <button @click="editarMarcaje(m)" class="text-text-muted hover:text-accent transition-colors duration-200" title="Editar" aria-label="Editar marcaje">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
                   </svg>
                 </button>
-                <button @click="borrarMarcaje(m)" class="text-text-muted hover:text-danger" title="Borrar">
+                <button @click="borrarMarcaje(m)" class="text-text-muted hover:text-danger transition-colors duration-200" title="Borrar" aria-label="Borrar marcaje">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a2 2 0 012-2h2a2 2 0 012 2v3"/>
                   </svg>
                 </button>
               </div>
             </div>
-            <p x-show="m.nota_admin" class="text-[10px] text-text-muted mt-1 italic" x-text="'📝 ' + m.nota_admin"></p>
+            <p x-show="m.nota_admin" class="text-[10px] text-text-muted mt-1 italic" x-text="'Nota: ' + m.nota_admin"></p>
           </li>
         </template>
       </ul>
@@ -561,6 +649,31 @@ function marcajesPage() {
           timeZone: 'America/Bogota'
         });
       } catch { return iso; }
+    },
+
+    // Formato de dinero en pesos colombianos (tabular para columnas).
+    fmtMoney(v) {
+      const n = Number(v) || 0;
+      return '$' + n.toLocaleString('es-CO', { maximumFractionDigits: 0 });
+    },
+
+    // Posición % de una hora "HH:MM" en la barra de jornada 7:00–17:00.
+    timelinePct(hhmm) {
+      if (!hhmm) return 0;
+      const [h, m] = String(hhmm).split(':').map(Number);
+      const min = h * 60 + m;
+      const ini = 7 * 60, fin = 17 * 60;
+      const pct = ((min - ini) / (fin - ini)) * 100;
+      return Math.max(0, Math.min(100, pct));
+    },
+
+    // Busca el hito del cálculo que corresponde a un marcaje (por tipo/hora)
+    // para mostrar la hora ajustada y los minutos perdidos en la lista.
+    hitoDe(m) {
+      const hitos = this.detalle?.calculo?.hitos || [];
+      if (!hitos.length) return null;
+      const real = this.formatTime(m.ts)?.slice(0, 5);  // HH:MM
+      return hitos.find(h => h.real === real) || null;
     },
 
     async verDetalle(r) {
