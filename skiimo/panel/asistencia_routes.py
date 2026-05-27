@@ -350,18 +350,31 @@ async def api_resumen_diario(
         almuerzo_out_ts = min(outs_ts) if outs_ts else None
         almuerzo_in_ts = max(ins_ts) if ins_ts else None
 
-        # ----- Salida vs Extras -----
-        # Regla: la PRIMERA marca de la franja de salida es la Salida del dia.
-        # Si hay marcas POSTERIORES (la persona se quedo a hacer extras y volvio
-        # a marcar), la primera posterior = extra_in y la ultima = extra_out,
-        # sin importar la hora. Las extras pagadas se calculan aparte (desde las
-        # 17:30 fijas). Sin marca de cierre (una sola marca extra) NO hay extras.
-        # Si el equipo YA mando extra_in/extra_out explicitos, esos mandan.
+        # ----- Salida vs Extras vs marcas anomalas -----
+        # Regla: entre las marcas de la franja de salida, la SALIDA del dia es la
+        # MAS CERCANA a la hora oficial (17:00). Asi una marca anomala temprana
+        # (ej. 16:09, casi 1h antes) no se confunde con la salida real (17:01).
+        #   - Marcas ANTES de la salida elegida y lejanas (>ANOMALA_MIN antes de
+        #     la oficial) -> anomalas: se listan como novedad, no se usan.
+        #   - Marcas DESPUES de la salida -> extra_in (1ra) / extra_out (ultima).
+        # Las extras pagadas se calculan aparte (desde 17:30 fijas).
+        ANOMALA_MIN = 30  # min antes de la oficial para considerar una marca anomala
         ultima_salida_ts = None
+        marcas_anomalas_ts = []
         if salidas_ts:
             salidas_ord = sorted(salidas_ts)
-            ultima_salida_ts = salidas_ord[0]  # la primera marca = salida real
-            posteriores = salidas_ord[1:]      # marcas extra implicitas
+            # elegir la salida = la mas cercana a la hora oficial
+            def _dist_oficial(ts):
+                return abs(_min_del_dia(ts) - _salida_min_oficial)
+            ultima_salida_ts = min(salidas_ord, key=_dist_oficial)
+            idx = salidas_ord.index(ultima_salida_ts)
+            antes = salidas_ord[:idx]
+            posteriores = salidas_ord[idx + 1:]
+            # marcas anteriores y lejanas de la oficial = anomalas
+            for ts in antes:
+                if (_salida_min_oficial - _min_del_dia(ts)) > ANOMALA_MIN:
+                    marcas_anomalas_ts.append(ts)
+            # marcas posteriores = extras implicitas (si no hay tipo explicito)
             if posteriores and not extra_in_ts:
                 extra_in_ts = extra_in_ts + [posteriores[0]]
             if len(posteriores) >= 2 and not extra_out_ts:
@@ -388,6 +401,7 @@ async def api_resumen_diario(
             "extra_in_ts": primer_extra_in_ts,
             "extra_out": _fmt(ultimo_extra_out_ts),
             "extra_out_ts": ultimo_extra_out_ts,
+            "marcas_anomalas": [_fmt(t) for t in marcas_anomalas_ts],
             "cantidad_marcajes": n,
         })
 
@@ -624,19 +638,33 @@ async def api_resumen_diario(
         # (salida + margen = 17:30 fijas), aunque el extra_in se haya marcado
         # antes (gente que se queda en la fabrica y marca a las 17:24). Asi
         # "nunca gana tiempo": los minutos antes de las 17:30 no se pagan.
+        item["extras_en_curso"] = False
+        item["extra_sin_cierre"] = False
         try:
-            if not en_curso and item["extra_in_ts"] and item["extra_out_ts"]:
+            if item["extra_in_ts"]:
                 t_ex_in = datetime.fromisoformat(item["extra_in_ts"])
-                t_ex_out = datetime.fromisoformat(item["extra_out_ts"])
                 # Piso: hora oficial de inicio de extras (17:30 por defecto)
                 inicio_extras_oficial = t_ex_in.replace(
                     hour=salida_h, minute=salida_m, second=0, microsecond=0
                 ) + timedelta(minutes=margen_extras_min)
                 t_ex_in_efectivo = max(t_ex_in, inicio_extras_oficial)
-                if t_ex_out > t_ex_in_efectivo:
+
+                if item["extra_out_ts"]:
+                    # Caso normal: hay cierre -> extras de 17:30 al cierre
+                    t_ex_out = datetime.fromisoformat(item["extra_out_ts"])
+                    if t_ex_out > t_ex_in_efectivo:
+                        horas_extras = round(
+                            (t_ex_out - t_ex_in_efectivo).total_seconds() / 3600.0, 2
+                        )
+                elif item["fecha"] == hoy_str and ahora_bogota > t_ex_in_efectivo:
+                    # HOY y sin cierre aun -> contador EN VIVO desde 17:30
                     horas_extras = round(
-                        (t_ex_out - t_ex_in_efectivo).total_seconds() / 3600.0, 2
+                        (ahora_bogota - t_ex_in_efectivo).total_seconds() / 3600.0, 2
                     )
+                    item["extras_en_curso"] = True
+                else:
+                    # Dia pasado con extra_in pero SIN cierre -> no se paga, novedad
+                    item["extra_sin_cierre"] = True
         except Exception:
             pass
 
@@ -739,6 +767,14 @@ async def api_resumen_diario(
             alertas.append({"nivel": "warning", "texto": "Salió a almuerzo pero no marcó regreso"})
         if item.get("en_curso"):
             alertas.append({"nivel": "info", "texto": "Jornada en curso (sin salida aún)"})
+        # Marcas en horario anormal (ej. salida ~1h antes de lo esperado)
+        for ts in item.get("marcas_anomalas", []):
+            alertas.append({"nivel": "warning", "texto": f"Marca en horario anormal ({ts}) — revisar"})
+        # Extra sin cierre: marcó extra in pero nunca el extra out
+        if item.get("extra_sin_cierre"):
+            alertas.append({"nivel": "warning", "texto": "Extra sin cierre — no se paga, revisar"})
+        if item.get("extras_en_curso"):
+            alertas.append({"nivel": "info", "texto": "Horas extra en curso (sin cierre aún)"})
         item["alertas"] = alertas
 
         # No exponer los ts crudos al frontend
