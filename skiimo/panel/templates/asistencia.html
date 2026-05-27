@@ -420,11 +420,18 @@ function marcajesPage() {
     },
 
     formatTime(iso) {
+      // Extraer la hora directo del string ISO (ya viene en tz -05:00 Bogotá).
+      // NO usar new Date() porque convierte a la tz del navegador y puede desfasarse.
       if (!iso) return '';
+      // ISO format: 2026-05-27T12:55:01-05:00 -> 12:55:01
+      const match = String(iso).match(/T(\d{2}:\d{2}:\d{2})/);
+      if (match) return match[1];
+      // Fallback (algun otro formato)
       try {
         const d = new Date(iso);
         return d.toLocaleTimeString('es-CO', {
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          timeZone: 'America/Bogota'
         });
       } catch { return iso; }
     },
@@ -572,9 +579,14 @@ function marcajesPage() {
     },
 
     editarMarcaje(m) {
-      const ts = new Date(m.ts);
-      const fecha = ts.toISOString().slice(0, 10);
-      const hora = ts.toTimeString().slice(0, 8);
+      // Parsear fecha/hora directo del string ISO (que ya viene en tz -05:00).
+      // Asi no se mueve por la zona horaria del navegador.
+      let fecha = '';
+      let hora = '';
+      const matchFecha = String(m.ts).match(/^(\d{4}-\d{2}-\d{2})/);
+      const matchHora = String(m.ts).match(/T(\d{2}:\d{2}:\d{2})/);
+      if (matchFecha) fecha = matchFecha[1];
+      if (matchHora) hora = matchHora[1];
       this.marcajeForm = {
         id: m.id,
         empleado_id: m.empleado_id || this.detalle.empleado_id,
