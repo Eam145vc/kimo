@@ -629,14 +629,20 @@ async def api_resumen_diario(
             delta_min = 0
             if ajust is not None:
                 delta_min = round((ajust - real).total_seconds() / 60.0)
+            # "perdidos" = minutos de trabajo que se le recortaron de verdad.
+            # Solo cuenta cuando el ajuste va EN CONTRA del empleado:
+            #   entrada/almuerzo_in: llego tarde -> ajustada > real (delta > 0)
+            #   salida/almuerzo_out: se fue temprano -> ajustada < real (delta < 0)
+            # Quedarse de mas (salida tarde) o entrar antes NO es perdida (no gana).
+            if tipo in ("entrada", "almuerzo_in"):
+                perdidos = delta_min if delta_min > 0 else 0
+            else:  # salida, almuerzo_out
+                perdidos = -delta_min if delta_min < 0 else 0
             return {
                 "hito": label,
                 "real": real.strftime("%H:%M"),
                 "ajustada": ajust.strftime("%H:%M") if ajust else None,
-                # minutos perdidos: cuanto se le recorto frente a la hora real
-                # (entrada/almuerzo_in pierden si ajustada > real; salida/almuerzo_out
-                #  pierden si ajustada < real). Normalizamos a "minutos perdidos" positivos.
-                "perdidos": abs(delta_min) if delta_min != 0 else 0,
+                "perdidos": perdidos,
             }
 
         item["calculo"] = {
