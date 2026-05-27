@@ -177,6 +177,13 @@
                  placeholder="2000000">
         </div>
         <div>
+          <label class="block text-xs text-text-muted mb-1">Cargo (opcional)</label>
+          <input type="text" x-model="salarioMasivo.cargo"
+                 class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2"
+                 placeholder="ej: Operario">
+          <p class="text-[10px] text-text-muted mt-1">Si dejás vacío, no cambia el cargo de nadie.</p>
+        </div>
+        <div>
           <label class="block text-xs text-text-muted mb-1">Excluir empleados (nombres, separados por coma)</label>
           <input type="text" x-model="salarioMasivo.excluir"
                  class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2"
@@ -274,6 +281,7 @@ function empleadosPage() {
     salarioMasivoOpen: false,
     salarioMasivo: {
       monto: 2000000,
+      cargo: 'Operario',
       excluir: 'Yefri, Manuela',
       soloSinSalario: false,
       running: false,
@@ -482,7 +490,8 @@ function empleadosPage() {
         .map(s => s.trim())
         .filter(Boolean);
 
-      if (!confirm(`Aplicar salario $${this.salarioMasivo.monto.toLocaleString('es-CO')} a todos los empleados activos${excluir.length ? ' excepto: ' + excluir.join(', ') : ''}?`)) return;
+      const cargoMsg = this.salarioMasivo.cargo ? ` con cargo "${this.salarioMasivo.cargo}"` : '';
+      if (!confirm(`Aplicar salario $${this.salarioMasivo.monto.toLocaleString('es-CO')}${cargoMsg} a todos los empleados activos${excluir.length ? ' excepto: ' + excluir.join(', ') : ''}?`)) return;
 
       this.salarioMasivo.running = true;
       this.salarioMasivo.estado = '';
@@ -492,6 +501,7 @@ function empleadosPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             salario_mensual: this.salarioMasivo.monto,
+            cargo: this.salarioMasivo.cargo || null,
             excluir_nombres: excluir,
             solo_sin_salario: this.salarioMasivo.soloSinSalario,
           })

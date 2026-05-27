@@ -1261,7 +1261,8 @@ async def api_empleado_borrar(emp_id: int, session_token: str | None = Cookie(de
 class SalarioMasivoIn(BaseModel):
     """Body para POST /api/empleados/salario-masivo."""
     salario_mensual: float
-    excluir_ids: list[int] = []  # ids a excluir
+    cargo: str | None = None  # si viene, tambien actualiza el cargo
+    excluir_ids: list[int] = []
     excluir_nombres: list[str] = []  # nombres a excluir (parciales)
     solo_sin_salario: bool = False  # si True, solo a los que no tienen salario
 
@@ -1271,8 +1272,8 @@ async def api_empleados_salario_masivo(
     body: SalarioMasivoIn,
     session_token: str | None = Cookie(default=None),
 ):
-    """Aplica un salario mensual a todos los empleados activos (con
-    excepciones opcionales). Calcula valor_hora_ord automaticamente.
+    """Aplica salario (y opcionalmente cargo) a todos los empleados activos.
+    Calcula valor_hora_ord automaticamente.
     """
     _require_user(session_token)
     now = datetime.utcnow().isoformat()
@@ -1292,15 +1293,28 @@ async def api_empleados_salario_masivo(
     if body.solo_sin_salario:
         where.append("(salario_mensual IS NULL OR salario_mensual = 0)")
 
-    sql = f"UPDATE empleados SET salario_mensual = ?, valor_hora_ord = ?, updated_at = ? WHERE {' AND '.join(where)}"
+    # Construir SET dinamico (cargo opcional)
+    sets = ["salario_mensual = ?", "valor_hora_ord = ?", "updated_at = ?"]
+    set_params = [body.salario_mensual, valor_hora, now]
+    if body.cargo and body.cargo.strip():
+        sets.insert(2, "cargo = ?")
+        set_params.insert(2, body.cargo.strip())
+
+    sql = f"UPDATE empleados SET {', '.join(sets)} WHERE {' AND '.join(where)}"
     conn = get_conn()
     try:
-        cur = conn.execute(sql, (body.salario_mensual, valor_hora, now, *params))
+        cur = conn.execute(sql, (*set_params, *params))
         conn.commit()
         actualizados = cur.rowcount
     finally:
         conn.close()
-    return {"ok": True, "actualizados": actualizados, "salario": body.salario_mensual, "valor_hora_ord": valor_hora}
+    return {
+        "ok": True,
+        "actualizados": actualizados,
+        "salario": body.salario_mensual,
+        "valor_hora_ord": valor_hora,
+        "cargo": body.cargo,
+    }
 
 
 @router.delete("/api/empleados/{emp_id}/permanente")
