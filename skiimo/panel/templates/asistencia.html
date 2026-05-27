@@ -130,8 +130,20 @@
         <p class="text-xl font-semibold mt-0.5 tabular text-warning" x-text="totalExtras.toFixed(2) + ' h'"></p>
       </div>
       <p class="text-[10px] text-text-muted text-right">
-        Después de <span class="tabular" x-text="salidaOficial"></span><br>
-        + <span x-text="margenGracia"></span> min de gracia
+        Solo cuenta lo marcado entre<br>extra_in y extra_out
+      </p>
+    </div>
+  </div>
+
+  <div x-show="totalPago > 0" class="rounded-xl bg-success/10 ring-1 ring-success/30 p-3 mb-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <p class="text-[11px] text-success">💰 Total a pagar (período)</p>
+        <p class="text-2xl font-bold mt-0.5 tabular text-success" x-text="'$' + totalPago.toLocaleString('es-CO')"></p>
+      </div>
+      <p class="text-[10px] text-text-muted text-right">
+        Solo empleados con salario configurado.<br>
+        Horas extras a <span class="tabular" x-text="'$' + (14000).toLocaleString('es-CO')"></span>/h
       </p>
     </div>
   </div>
@@ -161,15 +173,16 @@
             <th class="text-left px-3 py-3 font-medium">Extra out</th>
             <th class="text-right px-3 py-3 font-medium">Horas</th>
             <th class="text-right px-3 py-3 font-medium">Extras</th>
+            <th class="text-right px-3 py-3 font-medium">A pagar</th>
             <th class="text-left px-4 py-3 font-medium">Detalle</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-border/40">
           <template x-if="loading">
-            <tr><td colspan="12" class="text-center py-10 text-text-muted">Cargando…</td></tr>
+            <tr><td colspan="13" class="text-center py-10 text-text-muted">Cargando…</td></tr>
           </template>
           <template x-if="!loading && !resumen.length">
-            <tr><td colspan="12" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
+            <tr><td colspan="13" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
           </template>
           <template x-for="r in resumen" :key="r.fecha + '_' + r.empleado_id">
             <tr class="hover:bg-surface-2/30">
@@ -204,6 +217,10 @@
               <td class="px-3 py-3 text-right tabular"
                   :class="r.horas_extras > 0 ? 'text-warning font-medium' : 'text-text-muted'"
                   x-text="r.horas_extras != null ? r.horas_extras.toFixed(2) : '—'"></td>
+              <td class="px-3 py-3 text-right tabular"
+                  :class="r.salario_mensual ? '' : 'text-warning'"
+                  :title="r.salario_mensual ? `Ordinarias: $${(r.pago_ord||0).toLocaleString('es-CO')}\nExtras: $${(r.pago_extras||0).toLocaleString('es-CO')}` : 'Falta configurar salario'"
+                  x-text="r.salario_mensual ? '$' + (r.pago_total || 0).toLocaleString('es-CO') : 'falta sal.'"></td>
               <td class="px-4 py-3">
                 <button @click="verDetalle(r)" class="text-xs text-accent hover:text-accent-hover" x-text="r.cantidad_marcajes + ' marcajes'"></button>
               </td>
@@ -490,6 +507,10 @@ function marcajesPage() {
 
     get totalExtras() {
       return this.resumen.reduce((s, r) => s + (r.horas_extras || 0), 0);
+    },
+
+    get totalPago() {
+      return this.resumen.reduce((s, r) => s + (r.pago_total || 0), 0);
     },
 
     diaSemana(iso) {

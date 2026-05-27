@@ -193,11 +193,13 @@ async def api_resumen_diario(
         where.append("m.fecha <= ?")
         params.append(hasta)
 
-    # Traemos timestamps + tipo para poder mostrar entrada/almuerzo/salida
+    # Traemos timestamps + tipo + datos salariales del empleado
     sql = f"""
         SELECT
             m.empleado_id,
             e.nombre AS empleado_nombre,
+            e.valor_hora_ord,
+            e.salario_mensual,
             m.fecha,
             m.ts,
             m.tipo
@@ -221,6 +223,8 @@ async def api_resumen_diario(
             grupos[key] = {
                 "empleado_id": r["empleado_id"],
                 "empleado_nombre": r["empleado_nombre"],
+                "valor_hora_ord": r["valor_hora_ord"],
+                "salario_mensual": r["salario_mensual"],
                 "fecha": r["fecha"],
                 "marcajes": [],
             }
@@ -266,6 +270,8 @@ async def api_resumen_diario(
         items.append({
             "empleado_id": g["empleado_id"],
             "empleado_nombre": g["empleado_nombre"],
+            "valor_hora_ord": g.get("valor_hora_ord"),
+            "salario_mensual": g.get("salario_mensual"),
             "fecha": fecha,
             "primera_entrada": _fmt(primera_entrada_ts),
             "primera_entrada_ts": primera_entrada_ts,
@@ -307,6 +313,10 @@ async def api_resumen_diario(
         margen_extras_min = int(get_conf("margen_gracia_extras_min") or 30)
     except Exception:
         margen_extras_min = 30
+    try:
+        valor_hora_extra = float(get_conf("valor_hora_extra") or 14000)
+    except Exception:
+        valor_hora_extra = 14000.0
 
     def _evaluar_marcaje(ts_iso: str | None, hora_oficial_h: int, hora_oficial_m: int) -> str:
         """Devuelve 'ok' si esta dentro de +/- 5 min del hito, 'temprano' si antes,
@@ -498,6 +508,17 @@ async def api_resumen_diario(
 
         item["horas"] = horas
         item["horas_extras"] = horas_extras
+
+        # Calculo de pago del dia
+        # - horas_pago_ord = horas * valor_hora_ord
+        # - horas_pago_extras = horas_extras * valor_hora_extra (configurable, global)
+        valor_h = item.get("valor_hora_ord") or 0
+        pago_ord = (horas or 0) * valor_h
+        pago_extras = (horas_extras or 0) * valor_hora_extra
+        item["pago_ord"] = round(pago_ord)
+        item["pago_extras"] = round(pago_extras)
+        item["pago_total"] = round(pago_ord + pago_extras)
+        item["valor_hora_extra"] = valor_hora_extra
 
         # Status de extras
         item["status_extra_in"] = "ok" if item["extra_in_ts"] else ("falta" if horas_extras > 0 else "no_aplica")
@@ -1235,6 +1256,51 @@ async def api_empleado_borrar(emp_id: int, session_token: str | None = Cookie(de
     finally:
         conn.close()
     return {"ok": True}
+
+
+class SalarioMasivoIn(BaseModel):
+    """Body para POST /api/empleados/salario-masivo."""
+    salario_mensual: float
+    excluir_ids: list[int] = []  # ids a excluir
+    excluir_nombres: list[str] = []  # nombres a excluir (parciales)
+    solo_sin_salario: bool = False  # si True, solo a los que no tienen salario
+
+
+@router.post("/api/empleados/salario-masivo")
+async def api_empleados_salario_masivo(
+    body: SalarioMasivoIn,
+    session_token: str | None = Cookie(default=None),
+):
+    """Aplica un salario mensual a todos los empleados activos (con
+    excepciones opcionales). Calcula valor_hora_ord automaticamente.
+    """
+    _require_user(session_token)
+    now = datetime.utcnow().isoformat()
+    horas_mes = DEFAULTS.get("horas_legales_mes", 230)
+    valor_hora = round(body.salario_mensual / horas_mes)
+
+    where = ["activo = 1"]
+    params: list[Any] = []
+    if body.excluir_ids:
+        placeholders = ",".join("?" * len(body.excluir_ids))
+        where.append(f"id NOT IN ({placeholders})")
+        params.extend(body.excluir_ids)
+    if body.excluir_nombres:
+        for nombre in body.excluir_nombres:
+            where.append("LOWER(nombre) NOT LIKE LOWER(?)")
+            params.append(f"%{nombre}%")
+    if body.solo_sin_salario:
+        where.append("(salario_mensual IS NULL OR salario_mensual = 0)")
+
+    sql = f"UPDATE empleados SET salario_mensual = ?, valor_hora_ord = ?, updated_at = ? WHERE {' AND '.join(where)}"
+    conn = get_conn()
+    try:
+        cur = conn.execute(sql, (body.salario_mensual, valor_hora, now, *params))
+        conn.commit()
+        actualizados = cur.rowcount
+    finally:
+        conn.close()
+    return {"ok": True, "actualizados": actualizados, "salario": body.salario_mensual, "valor_hora_ord": valor_hora}
 
 
 @router.delete("/api/empleados/{emp_id}/permanente")

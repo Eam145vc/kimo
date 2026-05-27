@@ -67,6 +67,9 @@ DEFAULTS: dict[str, Any] = {
     # extras. Util para casos donde la fabrica define que las extras
     # arrancan a una hora especifica (ej. 17:30 con salida 17:00).
     "margen_gracia_extras_min": 30,         # 30 min -> extras empiezan a las 17:30
+
+    # Valor fijo de la hora extra (COP). Aplica a todos los empleados.
+    "valor_hora_extra": 14000,
 }
 
 
