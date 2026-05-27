@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
@@ -487,11 +488,11 @@ async def api_resumen_diario(
 
     def _horas_truncadas(t_ini: datetime, t_fin: datetime) -> float:
         """Horas entre dos tiempos contando solo MINUTOS ENTEROS (los segundos
-        no suman: 13:06:54 cuenta como 13:06). Devuelve horas con 2 decimales.
-        Asume que los tiempos ya vienen con segundos en 0; por seguridad usa
-        division entera de segundos a minutos (floor)."""
+        no suman: 13:06:54 cuenta como 13:06) y redondeando SIEMPRE hacia abajo
+        en el 2do decimal (las horas pagadas nunca se inflan)."""
         total_min = int((t_fin - t_ini).total_seconds() // 60)
-        return round(total_min / 60.0, 2)
+        # floor a 2 decimales: 1.235h -> 1.23h
+        return math.floor(total_min / 60.0 * 100) / 100.0
 
     def _ajustar_a_oficial(ts_iso: str | None, hora_oficial_h: int, hora_oficial_m: int,
                             tipo: str) -> datetime | None:
