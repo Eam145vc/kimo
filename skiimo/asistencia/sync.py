@@ -175,23 +175,26 @@ def _ventanas_jornada() -> list[tuple[int, int, str]]:
     except Exception:
         tol_salida_h = 6
 
-    # Calcular bordes entre franjas (puntos medios)
-    medio_entrada_almuerzo = (entrada + alm_ini) // 2 + (alm_ini - entrada) // 2
-    # Mejor: la entrada va hasta ~30 min antes del almuerzo
-    fin_entrada = alm_ini - 30 if alm_ini - 30 > entrada else (entrada + alm_ini) // 2
-    # Almuerzo_out: desde fin_entrada hasta el punto medio entre alm_ini y alm_fin
-    medio_almuerzo = (alm_ini + alm_fin) // 2
-    # Almuerzo_in: desde medio_almuerzo hasta 30 min despues de alm_fin
-    fin_almuerzo_in = alm_fin + 90 if alm_fin + 90 < salida else (alm_fin + salida) // 2
-    # Salida: desde fin_almuerzo_in hasta tol_salida_h despues de salida
-    fin_salida = min(salida + tol_salida_h * 60, 23 * 60 + 59)
-
+    # ENTRADA: desde (entrada - tolerancia) hasta 30 min antes del almuerzo
     ini_entrada = max(0, entrada - tol_entrada_h * 60)
+    fin_entrada = max(entrada + 30, alm_ini - 30)
+
+    # ALMUERZO_OUT (salida almuerzo): los 30 min ANTES del almuerzo + los primeros
+    # 10 min DESPUES del inicio oficial (gente que sale puntual o ligeramente tarde)
+    fin_almuerzo_out = alm_ini + 10
+
+    # ALMUERZO_IN (regreso almuerzo): desde el final de almuerzo_out hasta
+    # ~30 min ANTES de la salida oficial. Captura tanto regresos puntuales
+    # (~13:00) como tardios (~14:00).
+    fin_almuerzo_in = max(alm_fin + 30, salida - 30)
+
+    # SALIDA: desde fin de almuerzo_in hasta tol_salida_h despues de salida
+    fin_salida = min(salida + tol_salida_h * 60, 23 * 60 + 59)
 
     return [
         (ini_entrada, fin_entrada, "entrada"),
-        (fin_entrada, medio_almuerzo, "almuerzo_out"),
-        (medio_almuerzo, fin_almuerzo_in, "almuerzo_in"),
+        (fin_entrada, fin_almuerzo_out, "almuerzo_out"),
+        (fin_almuerzo_out, fin_almuerzo_in, "almuerzo_in"),
         (fin_almuerzo_in, fin_salida, "salida"),
     ]
 
