@@ -91,6 +91,14 @@
     </div>
   </div>
 
+  <!-- Leyenda de colores -->
+  <div class="flex items-center gap-4 mb-3 text-[11px] text-text-muted flex-wrap">
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-success"></span> En tolerancia (±5 min)</span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-warning"></span> Temprano</span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-danger"></span> Tarde / falta</span>
+    <span class="text-danger font-medium">Nombre rojo</span><span>= ausencia total</span>
+  </div>
+
   <!-- Tabla principal: una fila por (empleado, dia) -->
   <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
     <div class="overflow-x-auto">
@@ -120,11 +128,19 @@
             <tr class="hover:bg-surface-2/30">
               <td class="px-4 py-3 tabular" x-text="r.fecha"></td>
               <td class="px-3 py-3 text-xs text-text-muted" x-text="diaSemana(r.fecha)"></td>
-              <td class="px-3 py-3" x-text="r.empleado_nombre"></td>
-              <td class="px-3 py-3 tabular text-success" x-text="r.primera_entrada || '—'"></td>
-              <td class="px-3 py-3 tabular text-text-muted" x-text="r.almuerzo_out || '—'"></td>
-              <td class="px-3 py-3 tabular text-text-muted" x-text="r.almuerzo_in || '—'"></td>
-              <td class="px-3 py-3 tabular text-warning" x-text="r.ultima_salida || '—'"></td>
+              <td class="px-3 py-3" :class="esAusencia(r) ? 'text-danger font-medium' : ''" x-text="r.empleado_nombre"></td>
+              <td class="px-3 py-3 tabular" :class="statusColor(r.status_entrada)"
+                  :title="statusLabel(r.status_entrada)"
+                  x-text="r.primera_entrada || (esAusencia(r) ? 'AUSENTE' : '—')"></td>
+              <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_out)"
+                  :title="statusLabel(r.status_almuerzo_out)"
+                  x-text="r.almuerzo_out || '—'"></td>
+              <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_in)"
+                  :title="statusLabel(r.status_almuerzo_in)"
+                  x-text="r.almuerzo_in || '—'"></td>
+              <td class="px-3 py-3 tabular" :class="statusColor(r.status_salida)"
+                  :title="statusLabel(r.status_salida)"
+                  x-text="r.ultima_salida || '—'"></td>
               <td class="px-3 py-3 text-right tabular" x-text="r.horas != null ? r.horas.toFixed(2) : '—'"></td>
               <td class="px-3 py-3 text-right tabular"
                   :class="r.horas_extras > 0 ? 'text-warning font-medium' : 'text-text-muted'"
@@ -495,6 +511,33 @@ function marcajesPage() {
         if (i === n - 1) return { ...m, etiqueta: 'Salida' };
         return { ...m, etiqueta: 'Marca extra' };
       });
+    },
+
+    statusColor(status) {
+      // Verde = ok (dentro de tolerancia). Rojo = falta o fuera de tolerancia.
+      // Naranja = tarde/temprano (fuera de tolerancia pero hay marcaje).
+      if (!status) return 'text-text-muted';
+      return {
+        'ok': 'text-success',
+        'tarde': 'text-danger',
+        'temprano': 'text-warning',
+        'falta': 'text-danger/60',
+      }[status] || 'text-text-muted';
+    },
+
+    statusLabel(status) {
+      return {
+        'ok': 'Marcaje en tolerancia (±5 min)',
+        'tarde': 'Marcaje fuera de tolerancia (tarde)',
+        'temprano': 'Marcaje fuera de tolerancia (temprano)',
+        'falta': 'Sin marcaje',
+      }[status] || '';
+    },
+
+    esAusencia(r) {
+      // Ausencia = no marco ningun hito principal del dia
+      return r.status_entrada === 'falta' && r.status_almuerzo_out === 'falta'
+          && r.status_almuerzo_in === 'falta' && r.status_salida === 'falta';
     },
 
     etiquetaColor(et) {

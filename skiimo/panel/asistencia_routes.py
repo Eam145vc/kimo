@@ -290,94 +290,145 @@ async def api_resumen_diario(
                 almuerzo_in = _fmt(ts_list[2])
                 ultima_salida = _fmt(ts_list[-1])
 
-        # Calculo de horas: usa primera_entrada / ultima_salida y descuenta almuerzo
-        horas = None
-        horas_almuerzo = None
-        horas_extras = None
-        t_out_real = None
-        try:
-            t_in = None
-            t_out = None
-            for m in marcajes:
-                if m["tipo"] == "entrada" and t_in is None:
-                    t_in = datetime.fromisoformat(m["ts"])
-                if m["tipo"] == "salida":
-                    t_out = datetime.fromisoformat(m["ts"])
-            # Fallback a primer/ultimo si no hay tipos
-            if t_in is None and ts_list:
-                t_in = datetime.fromisoformat(ts_list[0])
-            if t_out is None and n >= 2 and ts_list[-1] != ts_list[0]:
-                t_out = datetime.fromisoformat(ts_list[-1])
-
-            if t_in and t_out and t_out > t_in:
-                t_out_real = t_out
-                bruto = (t_out - t_in).total_seconds() / 3600.0
-                horas = round(bruto, 2)
-                # Descontar pausa de almuerzo si existe
-                t_alm_out = None
-                t_alm_in = None
-                for m in marcajes:
-                    if m["tipo"] == "almuerzo_out" and t_alm_out is None:
-                        t_alm_out = datetime.fromisoformat(m["ts"])
-                    if m["tipo"] == "almuerzo_in":
-                        t_alm_in = datetime.fromisoformat(m["ts"])
-                if t_alm_out is None and n >= 4 and not usar_tipos:
-                    t_alm_out = datetime.fromisoformat(ts_list[1])
-                    t_alm_in = datetime.fromisoformat(ts_list[2])
-                if t_alm_out and t_alm_in and t_alm_in > t_alm_out:
-                    pausa = (t_alm_in - t_alm_out).total_seconds() / 3600.0
-                    horas_almuerzo = round(pausa, 2)
-                    horas = round(bruto - pausa, 2)
-        except Exception:
-            pass
-
         items.append({
             "empleado_id": g["empleado_id"],
             "empleado_nombre": g["empleado_nombre"],
             "fecha": fecha,
             "primera_entrada": primera_entrada,
+            "primera_entrada_ts": min((m["ts"] for m in marcajes if m["tipo"] == "entrada"), default=None) if usar_tipos else (ts_list[0] if ts_list else None),
             "almuerzo_out": almuerzo_out,
+            "almuerzo_out_ts": min((m["ts"] for m in marcajes if m["tipo"] == "almuerzo_out"), default=None),
             "almuerzo_in": almuerzo_in,
+            "almuerzo_in_ts": max((m["ts"] for m in marcajes if m["tipo"] == "almuerzo_in"), default=None),
             "ultima_salida": ultima_salida,
-            "ultima_salida_ts": t_out_real.isoformat() if t_out_real else None,
-            "horas": horas,
-            "horas_almuerzo": horas_almuerzo,
+            "ultima_salida_ts": max((m["ts"] for m in marcajes if m["tipo"] == "salida"), default=None),
             "cantidad_marcajes": n,
         })
 
-    # Calcular horas extras: salida_real - (salida_oficial + margen_gracia)
+    # ===========================================================================
+    # Calcular horas trabajadas + status de cada marcaje con tolerancia.
+    # ===========================================================================
     from skiimo.asistencia.config import get_conf
-    salida_oficial_str = get_conf("jornada_salida_hora") or "17:00"
-    try:
-        sh, sm = salida_oficial_str.split(":")
-        salida_oficial_hora = int(sh)
-        salida_oficial_min = int(sm)
-    except Exception:
-        salida_oficial_hora, salida_oficial_min = 17, 0
 
+    def _parse_hhmm(s: str, fallback_h: int, fallback_m: int = 0) -> tuple[int, int]:
+        try:
+            h, m = s.split(":")
+            return int(h), int(m)
+        except Exception:
+            return fallback_h, fallback_m
+
+    entrada_h, entrada_m = _parse_hhmm(get_conf("jornada_entrada_hora") or "07:00", 7)
+    alm_ini_h, alm_ini_m = _parse_hhmm(get_conf("jornada_almuerzo_inicio") or "12:00", 12)
+    alm_fin_h, alm_fin_m = _parse_hhmm(get_conf("jornada_almuerzo_fin") or "13:00", 13)
+    salida_h, salida_m = _parse_hhmm(get_conf("jornada_salida_hora") or "17:00", 17)
+
+    TOLERANCIA_MIN = 5  # tolerancia universal de 5 min en cada hito
     try:
-        margen_min = int(get_conf("margen_gracia_extras_min") or 15)
+        margen_extras_min = int(get_conf("margen_gracia_extras_min") or 30)
     except Exception:
-        margen_min = 15
+        margen_extras_min = 30  # 17:00 + 30 = 17:30 inicio de extras
+
+    def _evaluar_marcaje(ts_iso: str | None, hora_oficial_h: int, hora_oficial_m: int) -> str:
+        """Devuelve 'ok' si esta dentro de +/- 5 min del hito, 'temprano' si antes,
+        'tarde' si despues, 'falta' si no hay marcaje."""
+        if not ts_iso:
+            return "falta"
+        try:
+            ts = datetime.fromisoformat(ts_iso)
+        except Exception:
+            return "falta"
+        oficial = ts.replace(hour=hora_oficial_h, minute=hora_oficial_m,
+                              second=0, microsecond=0)
+        delta_min = (ts - oficial).total_seconds() / 60.0
+        if abs(delta_min) <= TOLERANCIA_MIN:
+            return "ok"
+        return "temprano" if delta_min < 0 else "tarde"
+
+    def _ajustar_a_oficial(ts_iso: str | None, hora_oficial_h: int, hora_oficial_m: int,
+                            tipo: str) -> datetime | None:
+        """Aplica reglas de tolerancia para calculo de horas trabajadas.
+
+        - Entrada: si marca antes de la oficial -> oficial. Si dentro de tolerancia -> oficial.
+                   Si despues de tolerancia -> hora real (llego tarde).
+        - Salida: si marca despues de la oficial Y dentro de tolerancia -> oficial.
+                  Antes de tolerancia -> hora real (sale temprano).
+        - Almuerzo: dentro de tolerancia -> hora oficial; sino -> hora real.
+        """
+        if not ts_iso:
+            return None
+        try:
+            ts = datetime.fromisoformat(ts_iso)
+        except Exception:
+            return None
+        oficial = ts.replace(hour=hora_oficial_h, minute=hora_oficial_m,
+                              second=0, microsecond=0)
+        delta_min = (ts - oficial).total_seconds() / 60.0
+
+        if tipo == "entrada":
+            if delta_min <= TOLERANCIA_MIN:
+                return oficial  # antes o dentro -> 7:00
+            return ts  # llego tarde
+        if tipo == "salida":
+            if delta_min >= -TOLERANCIA_MIN:
+                # En tolerancia o despues -> 17:00 (las extras se cuentan aparte)
+                return oficial
+            return ts  # se fue temprano
+        # almuerzo_out / almuerzo_in
+        if abs(delta_min) <= TOLERANCIA_MIN:
+            return oficial
+        return ts
 
     for item in items:
-        if not item.get("ultima_salida_ts"):
-            continue
-        try:
-            t_out = datetime.fromisoformat(item["ultima_salida_ts"])
-            limite = t_out.replace(hour=salida_oficial_hora, minute=salida_oficial_min,
-                                    second=0, microsecond=0)
-            limite_con_gracia = limite + timedelta(minutes=margen_min)
-            if t_out > limite_con_gracia:
-                # Las extras se cuentan desde la salida oficial (no desde el margen),
-                # pero solo si el marcaje supera el margen de gracia.
-                diff = (t_out - limite).total_seconds() / 3600.0
-                item["horas_extras"] = round(diff, 2)
-            else:
-                item["horas_extras"] = 0.0
-        except Exception:
-            item["horas_extras"] = None
-        item.pop("ultima_salida_ts", None)
+        # Evaluar status de cada hito
+        item["status_entrada"] = _evaluar_marcaje(item["primera_entrada_ts"], entrada_h, entrada_m)
+        item["status_almuerzo_out"] = _evaluar_marcaje(item["almuerzo_out_ts"], alm_ini_h, alm_ini_m)
+        item["status_almuerzo_in"] = _evaluar_marcaje(item["almuerzo_in_ts"], alm_fin_h, alm_fin_m)
+        item["status_salida"] = _evaluar_marcaje(item["ultima_salida_ts"], salida_h, salida_m)
+
+        # Calcular horas trabajadas: ajustar marcajes a hora oficial con tolerancia
+        t_in_ajust = _ajustar_a_oficial(item["primera_entrada_ts"], entrada_h, entrada_m, "entrada")
+        t_out_ajust = _ajustar_a_oficial(item["ultima_salida_ts"], salida_h, salida_m, "salida")
+
+        horas = None
+        horas_extras = 0.0
+        if t_in_ajust and t_out_ajust and t_out_ajust > t_in_ajust:
+            # Total bruto trabajado (en horas)
+            bruto = (t_out_ajust - t_in_ajust).total_seconds() / 3600.0
+
+            # Descontar 1 hora de almuerzo SIEMPRE (12-13 es no laboral)
+            # solo si el rango trabajado cruza ese horario
+            alm_inicio = t_in_ajust.replace(hour=alm_ini_h, minute=alm_ini_m, second=0, microsecond=0)
+            alm_final = t_in_ajust.replace(hour=alm_fin_h, minute=alm_fin_m, second=0, microsecond=0)
+            if t_in_ajust < alm_final and t_out_ajust > alm_inicio:
+                # Cruza el almuerzo: descontar la pausa oficial
+                inicio_descuento = max(t_in_ajust, alm_inicio)
+                fin_descuento = min(t_out_ajust, alm_final)
+                if fin_descuento > inicio_descuento:
+                    descuento = (fin_descuento - inicio_descuento).total_seconds() / 3600.0
+                    bruto -= descuento
+
+            horas = round(bruto, 2)
+
+            # Calcular horas extras: lo que excede salida_oficial + margen_extras_min
+            try:
+                ts_out_real = datetime.fromisoformat(item["ultima_salida_ts"])
+                salida_oficial_dt = ts_out_real.replace(
+                    hour=salida_h, minute=salida_m, second=0, microsecond=0
+                )
+                inicio_extras = salida_oficial_dt + timedelta(minutes=margen_extras_min)
+                if ts_out_real > inicio_extras:
+                    # Las extras se cuentan desde la salida oficial (17:00), no desde 17:30
+                    horas_extras = round(
+                        (ts_out_real - salida_oficial_dt).total_seconds() / 3600.0, 2
+                    )
+            except Exception:
+                pass
+
+        item["horas"] = horas
+        item["horas_extras"] = horas_extras
+        # No exponer los ts crudos al frontend
+        for k in ("primera_entrada_ts", "almuerzo_out_ts", "almuerzo_in_ts", "ultima_salida_ts"):
+            item.pop(k, None)
 
     # Orden: fecha desc, nombre asc
     items.sort(key=lambda x: (x["fecha"], x["empleado_nombre"]), reverse=False)
@@ -385,8 +436,14 @@ async def api_resumen_diario(
 
     return {
         "items": items,
-        "salida_oficial": salida_oficial_str,
-        "margen_gracia_extras_min": margen_min,
+        "jornada": {
+            "entrada": f"{entrada_h:02d}:{entrada_m:02d}",
+            "almuerzo_inicio": f"{alm_ini_h:02d}:{alm_ini_m:02d}",
+            "almuerzo_fin": f"{alm_fin_h:02d}:{alm_fin_m:02d}",
+            "salida": f"{salida_h:02d}:{salida_m:02d}",
+            "tolerancia_min": TOLERANCIA_MIN,
+            "margen_extras_min": margen_extras_min,
+        },
     }
 
 
