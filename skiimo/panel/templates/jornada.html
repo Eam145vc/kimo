@@ -67,8 +67,8 @@
                x-model.number="cfg.margen_gracia_extras_min"
                class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
         <p class="text-[10px] text-text-muted mt-1">
-          Minutos después de la salida oficial que NO cuentan como extra
-          (ej. lavarse las manos antes de salir).
+          Minutos después de la salida oficial cuando las extras
+          empiezan a contar. Ej: salida 17:00 + 30 = extras desde las 17:30.
         </p>
       </div>
     </div>
@@ -144,7 +144,7 @@ function jornadaPage() {
       jornada_almuerzo_fin: '13:00',
       jornada_salida_hora: '17:00',
       tolerancia_min: 5,
-      margen_gracia_extras_min: 15,
+      margen_gracia_extras_min: 30,
     },
     saving: false,
     reclasificando: false,

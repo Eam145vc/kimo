@@ -59,7 +59,7 @@
   </div>
 
   <!-- KPIs del DIA DE HOY -->
-  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+  <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mb-4">
     <div class="rounded-xl bg-surface ring-1 ring-border p-3">
       <p class="text-[11px] text-text-muted">Activos</p>
       <p class="text-xl font-semibold mt-0.5 tabular" x-text="kpis.empleados_activos || 0"></p>
@@ -73,13 +73,6 @@
       <p class="text-xl font-semibold mt-0.5 tabular text-accent" x-text="kpis.en_curso_hoy || 0"></p>
     </div>
     <div class="rounded-xl p-3 ring-1"
-         :class="(kpis.llegadas_tarde_hoy || 0) > 0 ? 'bg-danger/10 ring-danger/30' : 'bg-surface ring-border opacity-70'">
-      <p class="text-[11px]" :class="(kpis.llegadas_tarde_hoy || 0) > 0 ? 'text-danger' : 'text-text-muted'">Llegadas tarde</p>
-      <p class="text-xl font-semibold mt-0.5 tabular"
-         :class="(kpis.llegadas_tarde_hoy || 0) > 0 ? 'text-danger' : ''"
-         x-text="kpis.llegadas_tarde_hoy || 0"></p>
-    </div>
-    <div class="rounded-xl p-3 ring-1"
          :class="(kpis.ausentes_hoy?.length || 0) > 0 ? 'bg-danger/10 ring-danger/30' : 'bg-surface ring-border opacity-70'"
          @click="(kpis.ausentes_hoy?.length || 0) > 0 && (mostrarAusentes = !mostrarAusentes)"
          :style="(kpis.ausentes_hoy?.length || 0) > 0 ? 'cursor:pointer' : ''">
@@ -87,6 +80,27 @@
       <p class="text-xl font-semibold mt-0.5 tabular"
          :class="(kpis.ausentes_hoy?.length || 0) > 0 ? 'text-danger' : ''"
          x-text="kpis.ausentes_hoy?.length || 0"></p>
+    </div>
+    <div class="rounded-xl p-3 ring-1"
+         :class="(kpis.tarde_entrada_hoy || 0) > 0 ? 'bg-danger/10 ring-danger/30' : 'bg-surface ring-border opacity-70'">
+      <p class="text-[11px]" :class="(kpis.tarde_entrada_hoy || 0) > 0 ? 'text-danger' : 'text-text-muted'">Tarde entrada</p>
+      <p class="text-xl font-semibold mt-0.5 tabular"
+         :class="(kpis.tarde_entrada_hoy || 0) > 0 ? 'text-danger' : ''"
+         x-text="kpis.tarde_entrada_hoy || 0"></p>
+    </div>
+    <div class="rounded-xl p-3 ring-1"
+         :class="(kpis.tarde_regreso_hoy || 0) > 0 ? 'bg-danger/10 ring-danger/30' : 'bg-surface ring-border opacity-70'">
+      <p class="text-[11px]" :class="(kpis.tarde_regreso_hoy || 0) > 0 ? 'text-danger' : 'text-text-muted'">Tarde regreso</p>
+      <p class="text-xl font-semibold mt-0.5 tabular"
+         :class="(kpis.tarde_regreso_hoy || 0) > 0 ? 'text-danger' : ''"
+         x-text="kpis.tarde_regreso_hoy || 0"></p>
+    </div>
+    <div class="rounded-xl p-3 ring-1"
+         :class="(kpis.tarde_extras_hoy || 0) > 0 ? 'bg-warning/10 ring-warning/30' : 'bg-surface ring-border opacity-70'">
+      <p class="text-[11px]" :class="(kpis.tarde_extras_hoy || 0) > 0 ? 'text-warning' : 'text-text-muted'">Sin marca extra</p>
+      <p class="text-xl font-semibold mt-0.5 tabular"
+         :class="(kpis.tarde_extras_hoy || 0) > 0 ? 'text-warning' : ''"
+         x-text="kpis.tarde_extras_hoy || 0"></p>
     </div>
     <div class="rounded-xl bg-surface ring-1 ring-border p-3">
       <p class="text-[11px] text-text-muted">Horas hoy</p>

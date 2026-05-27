@@ -304,9 +304,9 @@ async def api_resumen_diario(
     except Exception:
         TOLERANCIA_MIN = 5
     try:
-        margen_extras_min = int(get_conf("margen_gracia_extras_min") or 15)
+        margen_extras_min = int(get_conf("margen_gracia_extras_min") or 30)
     except Exception:
-        margen_extras_min = 15
+        margen_extras_min = 30
 
     def _evaluar_marcaje(ts_iso: str | None, hora_oficial_h: int, hora_oficial_m: int) -> str:
         """Devuelve 'ok' si esta dentro de +/- 5 min del hito, 'temprano' si antes,
@@ -345,17 +345,31 @@ async def api_resumen_diario(
         delta_min = (ts - oficial).total_seconds() / 60.0
 
         if tipo == "entrada":
+            # Si marca DENTRO o ANTES de la tolerancia -> cuenta como oficial
+            # Si marca DESPUES de la tolerancia -> hora real pero le restamos
+            #   la tolerancia (los 5 min de gracia se respetan).
             if delta_min <= TOLERANCIA_MIN:
-                return oficial  # antes o dentro -> 7:00
-            return ts  # llego tarde
-        if tipo == "salida":
-            if delta_min >= -TOLERANCIA_MIN:
-                # En tolerancia o despues -> 17:00 (las extras se cuentan aparte)
                 return oficial
-            return ts  # se fue temprano
-        # almuerzo_out / almuerzo_in
-        if abs(delta_min) <= TOLERANCIA_MIN:
-            return oficial
+            # tarde: hora real - tolerancia (los primeros 5 min ya se cuentan)
+            return ts - timedelta(minutes=TOLERANCIA_MIN)
+        if tipo == "salida":
+            # Si marca DENTRO o DESPUES de tolerancia -> oficial
+            # Si marca ANTES -> hora real + tolerancia (los 5 min se respetan)
+            if delta_min >= -TOLERANCIA_MIN:
+                return oficial
+            return ts + timedelta(minutes=TOLERANCIA_MIN)
+        if tipo == "almuerzo_out":
+            # Salida a almuerzo. Si sale ANTES de tolerancia -> hora real + tolerancia
+            # Si sale en tolerancia o despues -> oficial (la tolerancia favorece al empleado)
+            if delta_min >= -TOLERANCIA_MIN:
+                return oficial
+            return ts + timedelta(minutes=TOLERANCIA_MIN)
+        if tipo == "almuerzo_in":
+            # Regreso de almuerzo. Si regresa en tolerancia o antes -> oficial
+            # Si regresa tarde -> hora real - tolerancia
+            if delta_min <= TOLERANCIA_MIN:
+                return oficial
+            return ts - timedelta(minutes=TOLERANCIA_MIN)
         return ts
 
     # Hora actual (Bogota) para calcular horas "en curso" cuando no hay salida.
@@ -393,19 +407,56 @@ async def api_resumen_diario(
             # Total bruto trabajado (en horas)
             bruto = (t_out_ajust - t_in_ajust).total_seconds() / 3600.0
 
-            # Descontar 1 hora de almuerzo SIEMPRE (12-13 es no laboral)
-            # solo si el rango trabajado cruza ese horario
-            alm_inicio = t_in_ajust.replace(hour=alm_ini_h, minute=alm_ini_m, second=0, microsecond=0)
-            alm_final = t_in_ajust.replace(hour=alm_fin_h, minute=alm_fin_m, second=0, microsecond=0)
-            if t_in_ajust < alm_final and t_out_ajust > alm_inicio:
-                # Cruza el almuerzo: descontar la pausa oficial
-                inicio_descuento = max(t_in_ajust, alm_inicio)
-                fin_descuento = min(t_out_ajust, alm_final)
-                if fin_descuento > inicio_descuento:
-                    descuento = (fin_descuento - inicio_descuento).total_seconds() / 3600.0
-                    bruto -= descuento
+            # ----- Descuento de almuerzo -----
+            # Lógica:
+            #  - Si NO marcaron almuerzo: descontar 1h oficial (12-13).
+            #  - Si SI marcaron (tienen almuerzo_out + almuerzo_in):
+            #      Tiempo de almuerzo = (regreso_real - salida_real)
+            #      Si ambos están dentro de tolerancia -> descontar 1h oficial
+            #      Si uno o ambos están fuera -> descontar el tiempo real
+            alm_inicio_oficial = t_in_ajust.replace(hour=alm_ini_h, minute=alm_ini_m, second=0, microsecond=0)
+            alm_fin_oficial = t_in_ajust.replace(hour=alm_fin_h, minute=alm_fin_m, second=0, microsecond=0)
+            pausa_oficial_h = (alm_fin_oficial - alm_inicio_oficial).total_seconds() / 3600.0
 
+            t_alm_out_real = None
+            t_alm_in_real = None
+            if item["almuerzo_out_ts"]:
+                try:
+                    t_alm_out_real = datetime.fromisoformat(item["almuerzo_out_ts"])
+                except Exception:
+                    pass
+            if item["almuerzo_in_ts"]:
+                try:
+                    t_alm_in_real = datetime.fromisoformat(item["almuerzo_in_ts"])
+                except Exception:
+                    pass
+
+            # Si marcaron almuerzo, ajustar cada marcaje a la hora oficial con
+            # tolerancia (igual que entrada/salida). Asi descontamos SOLO lo
+            # que excede la tolerancia, no el tiempo total.
+            descuento_almuerzo = 0.0
+            if t_alm_out_real and t_alm_in_real and t_alm_in_real > t_alm_out_real:
+                # Ajustar salida_almuerzo a hora oficial con tolerancia
+                t_out_ajust_alm = _ajustar_a_oficial(
+                    item["almuerzo_out_ts"], alm_ini_h, alm_ini_m, "almuerzo_out"
+                )
+                # Ajustar regreso_almuerzo a hora oficial con tolerancia
+                t_in_ajust_alm = _ajustar_a_oficial(
+                    item["almuerzo_in_ts"], alm_fin_h, alm_fin_m, "almuerzo_in"
+                )
+                if t_out_ajust_alm and t_in_ajust_alm and t_in_ajust_alm > t_out_ajust_alm:
+                    descuento_almuerzo = (t_in_ajust_alm - t_out_ajust_alm).total_seconds() / 3600.0
+            elif t_in_ajust < alm_fin_oficial and t_out_ajust > alm_inicio_oficial:
+                # No marcaron almuerzo pero el rango trabajado cruza el horario:
+                # descontar 1h oficial (en proporción si solo cruza parcialmente)
+                inicio = max(t_in_ajust, alm_inicio_oficial)
+                fin = min(t_out_ajust, alm_fin_oficial)
+                if fin > inicio:
+                    descuento_almuerzo = (fin - inicio).total_seconds() / 3600.0
+
+            bruto -= descuento_almuerzo
             horas = round(bruto, 2)
+            item["pausa_almuerzo_h"] = round(descuento_almuerzo, 2)
 
         # Calcular horas extras: solo si NO esta en curso (ya marco salida).
         # Prioridad al par (extra_in, extra_out) si vino del equipo.
@@ -452,7 +503,11 @@ async def api_resumen_diario(
     # ===========================================================================
     # Sumario solo del DIA DE HOY si esta en el rango (mas accionable).
     items_hoy = [i for i in items if i["fecha"] == hoy_str]
-    llegadas_tarde_hoy = sum(1 for i in items_hoy if i["status_entrada"] == "tarde")
+    tarde_entrada_hoy = sum(1 for i in items_hoy if i["status_entrada"] == "tarde")
+    tarde_regreso_hoy = sum(1 for i in items_hoy if i["status_almuerzo_in"] == "tarde")
+    tarde_extras_hoy = sum(
+        1 for i in items_hoy if i.get("horas_extras", 0) > 0 and i["status_extra_in"] == "falta"
+    )
     sin_salida_hoy = sum(
         1 for i in items_hoy
         if i["status_entrada"] in ("ok", "tarde", "temprano") and i["status_salida"] == "falta"
@@ -489,7 +544,9 @@ async def api_resumen_diario(
             "empleados_activos": len(emp_activos),
             "marcaron_hoy": len(items_hoy),
             "en_curso_hoy": en_curso_hoy,
-            "llegadas_tarde_hoy": llegadas_tarde_hoy,
+            "tarde_entrada_hoy": tarde_entrada_hoy,
+            "tarde_regreso_hoy": tarde_regreso_hoy,
+            "tarde_extras_hoy": tarde_extras_hoy,
             "sin_salida_hoy": sin_salida_hoy,
             "ausentes_hoy": ausentes_hoy,
         },

@@ -62,10 +62,11 @@ DEFAULTS: dict[str, Any] = {
     # dentro de +/- tolerancia_min del hito oficial, se considera "puntual".
     "tolerancia_min": 5,                    # 5 min de tolerancia por defecto
 
-    # Margen de gracia para horas extras: marcajes hasta N minutos despues de la
-    # salida oficial NO cuentan como extras. Util para evitar contar 1-15 min
-    # por casos triviales (lavarse las manos, baño antes de salir, etc).
-    "margen_gracia_extras_min": 15,         # 15 min de gracia despues de salida
+    # Margen de gracia antes de empezar a contar horas extras: marcajes
+    # entre la salida oficial y (salida_oficial + N min) NO cuentan como
+    # extras. Util para casos donde la fabrica define que las extras
+    # arrancan a una hora especifica (ej. 17:30 con salida 17:00).
+    "margen_gracia_extras_min": 30,         # 30 min -> extras empiezan a las 17:30
 }
 
 
