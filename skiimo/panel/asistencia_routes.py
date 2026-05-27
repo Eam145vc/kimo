@@ -258,6 +258,7 @@ async def api_resumen_diario(
 
     # Hora de salida oficial en minutos, para detectar marcajes de tarde
     # mal clasificados como "almuerzo_in" (ver mas abajo).
+    from skiimo.asistencia.config import get_conf
     def _hhmm_a_min(s: str, fb: int) -> int:
         try:
             h, m = str(s).split(":")[:2]
