@@ -198,9 +198,32 @@ async def api_resumen_diario(
         ORDER BY m.empleado_id, m.fecha, m.ts
     """
 
+    # Excepciones (incapacidades, permisos) que se solapan con el rango
+    excep_where = ["1=1"]
+    excep_params: list[Any] = []
+    if empleado_id:
+        excep_where.append("x.empleado_id = ?")
+        excep_params.append(empleado_id)
+    if desde:
+        excep_where.append("x.fecha_hasta >= ?")
+        excep_params.append(desde)
+    if hasta:
+        excep_where.append("x.fecha_desde <= ?")
+        excep_params.append(hasta)
+
     conn = get_conn()
     try:
         rows = conn.execute(sql, tuple(params)).fetchall()
+        excep_rows = conn.execute(
+            f"""SELECT x.*, e.nombre AS empleado_nombre, e.cargo,
+                       e.valor_hora_ord, e.salario_mensual
+                FROM excepciones_asistencia x
+                JOIN empleados e ON e.id = x.empleado_id
+                WHERE {' AND '.join(excep_where)}
+                  AND e.activo = 1
+                  {"AND LOWER(e.cargo) = LOWER(?)" if cargo else ""}""",
+            (*excep_params, *([cargo] if cargo else [])),
+        ).fetchall()
     finally:
         conn.close()
 
@@ -306,6 +329,16 @@ async def api_resumen_diario(
         valor_hora_extra = float(get_conf("valor_hora_extra") or 14000)
     except Exception:
         valor_hora_extra = 14000.0
+    try:
+        valor_dia_finde = float(get_conf("valor_dia_finde") or 100000)
+    except Exception:
+        valor_dia_finde = 100000.0
+
+    # Jornada en horas (para prorratear el dia finde y la incapacidad)
+    _ent_min = entrada_h * 60 + entrada_m
+    _sal_min = salida_h * 60 + salida_m
+    _alm_min = (alm_fin_h * 60 + alm_fin_m) - (alm_ini_h * 60 + alm_ini_m)
+    jornada_horas = max(1.0, (_sal_min - _ent_min - _alm_min) / 60.0)  # ej. 9h
 
     def _evaluar_marcaje(ts_iso: str | None, hora_oficial_h: int, hora_oficial_m: int) -> str:
         """Devuelve 'ok' si esta dentro de +/- 5 min del hito, 'temprano' si antes,
@@ -498,12 +531,28 @@ async def api_resumen_diario(
         item["horas"] = horas
         item["horas_extras"] = horas_extras
 
+        # ¿Es sabado o domingo? (weekday 5=sab, 6=dom)
+        try:
+            es_finde = date.fromisoformat(fecha).weekday() >= 5
+        except Exception:
+            es_finde = False
+        item["es_finde"] = es_finde
+
         # Calculo de pago del dia
-        # - horas_pago_ord = horas * valor_hora_ord
-        # - horas_pago_extras = horas_extras * valor_hora_extra (configurable, global)
-        valor_h = item.get("valor_hora_ord") or 0
-        pago_ord = (horas or 0) * valor_h
-        pago_extras = (horas_extras or 0) * valor_hora_extra
+        if es_finde and horas:
+            # Dia finde: base $100k prorrateado por las horas efectivamente
+            # trabajadas sobre la jornada estandar. Asi se aplican los mismos
+            # descuentos por tardanza/salida temprana.
+            valor_h_finde = valor_dia_finde / jornada_horas
+            pago_ord = (horas or 0) * valor_h_finde
+            pago_extras = (horas_extras or 0) * valor_hora_extra
+            item["valor_hora_ord_aplicado"] = round(valor_h_finde)
+        else:
+            valor_h = item.get("valor_hora_ord") or 0
+            pago_ord = (horas or 0) * valor_h
+            pago_extras = (horas_extras or 0) * valor_hora_extra
+            item["valor_hora_ord_aplicado"] = round(valor_h)
+
         item["pago_ord"] = round(pago_ord)
         item["pago_extras"] = round(pago_extras)
         item["pago_total"] = round(pago_ord + pago_extras)
@@ -517,6 +566,94 @@ async def api_resumen_diario(
         for k in ("primera_entrada_ts", "almuerzo_out_ts", "almuerzo_in_ts",
                   "ultima_salida_ts", "extra_in_ts", "extra_out_ts"):
             item.pop(k, None)
+
+    # ===========================================================================
+    # Excepciones: agregar dias de incapacidad/permiso pagados que NO tienen marcaje
+    # ===========================================================================
+    # Set de (empleado_id, fecha) ya presentes para no duplicar
+    presentes = {(i["empleado_id"], i["fecha"]) for i in items}
+
+    # Limitar el rango efectivo
+    rango_desde = date.fromisoformat(desde) if desde else None
+    rango_hasta = date.fromisoformat(hasta) if hasta else None
+
+    for ex in excep_rows:
+        try:
+            ex_desde = date.fromisoformat(ex["fecha_desde"])
+            ex_hasta = date.fromisoformat(ex["fecha_hasta"])
+        except Exception:
+            continue
+        # Recorrer cada dia del rango de la excepcion
+        d = ex_desde
+        while d <= ex_hasta:
+            dia_str = d.isoformat()
+            # Solo dentro del rango filtrado
+            in_rango = (
+                (rango_desde is None or d >= rango_desde)
+                and (rango_hasta is None or d <= rango_hasta)
+            )
+            key = (ex["empleado_id"], dia_str)
+            if in_rango and key not in presentes:
+                # Pagar segun tipo
+                tipo_ex = ex["tipo"]
+                paga = bool(ex["paga"])
+                valor_h = ex["valor_hora_ord"] or 0
+                horas_pagadas = 0.0
+                pago = 0.0
+                if paga and tipo_ex in ("incapacidad", "permiso", "vacaciones",
+                                          "ausencia_justificada"):
+                    horas_pagadas = jornada_horas
+                    pago = horas_pagadas * valor_h
+                # Sumar ajuste manual de horas si lo tiene
+                if ex["horas_ajuste"]:
+                    horas_pagadas += ex["horas_ajuste"]
+                    pago += ex["horas_ajuste"] * valor_h
+
+                items.append({
+                    "empleado_id": ex["empleado_id"],
+                    "empleado_nombre": ex["empleado_nombre"],
+                    "valor_hora_ord": valor_h,
+                    "salario_mensual": ex["salario_mensual"],
+                    "fecha": dia_str,
+                    "primera_entrada": None, "almuerzo_out": None,
+                    "almuerzo_in": None, "ultima_salida": None,
+                    "extra_in": None, "extra_out": None,
+                    "cantidad_marcajes": 0,
+                    "horas": round(horas_pagadas, 2) if paga else 0,
+                    "horas_extras": 0,
+                    "pago_ord": round(pago), "pago_extras": 0,
+                    "pago_total": round(pago),
+                    "es_excepcion": True,
+                    "tipo_excepcion": tipo_ex,
+                    "excepcion_motivo": ex["motivo"],
+                    "status_entrada": "excepcion",
+                    "status_almuerzo_out": "excepcion",
+                    "status_almuerzo_in": "excepcion",
+                    "status_salida": "excepcion",
+                    "status_extra_in": "no_aplica",
+                    "status_extra_out": "no_aplica",
+                    "es_finde": False,
+                })
+                presentes.add(key)
+            d += timedelta(days=1)
+
+    # Marcar items normales que ademas tienen una excepcion ese dia (para la columna)
+    excep_por_dia = {}
+    for ex in excep_rows:
+        try:
+            ex_desde = date.fromisoformat(ex["fecha_desde"])
+            ex_hasta = date.fromisoformat(ex["fecha_hasta"])
+        except Exception:
+            continue
+        d = ex_desde
+        while d <= ex_hasta:
+            excep_por_dia[(ex["empleado_id"], d.isoformat())] = ex["tipo"]
+            d += timedelta(days=1)
+    for it in items:
+        if not it.get("es_excepcion"):
+            tipo_ex = excep_por_dia.get((it["empleado_id"], it["fecha"]))
+            if tipo_ex:
+                it["tipo_excepcion"] = tipo_ex
 
     # Orden: fecha desc, nombre asc
     items.sort(key=lambda x: (x["fecha"], x["empleado_nombre"]), reverse=False)

@@ -70,6 +70,12 @@ DEFAULTS: dict[str, Any] = {
 
     # Valor fijo de la hora extra (COP). Aplica a todos los empleados.
     "valor_hora_extra": 14000,
+
+    # Valor del dia trabajado en sabado o domingo (COP). Es un dia base
+    # distinto: en vez del salario prorrateado, el dia vale esta cifra.
+    # Se aplican los mismos descuentos por tardanza/salida temprana
+    # (proporcionales sobre este valor). Solo operarios.
+    "valor_dia_finde": 100000,
 }
 
 

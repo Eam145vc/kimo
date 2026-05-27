@@ -185,28 +185,52 @@
             <tr><td colspan="13" class="text-center py-10 text-text-muted">Sin marcajes en el rango seleccionado</td></tr>
           </template>
           <template x-for="r in resumen" :key="r.fecha + '_' + r.empleado_id">
-            <tr class="hover:bg-surface-2/30">
-              <td class="px-4 py-3 tabular" x-text="r.fecha"></td>
-              <td class="px-3 py-3 text-xs text-text-muted" x-text="diaSemana(r.fecha)"></td>
-              <td class="px-3 py-3" :class="esAusencia(r) ? 'text-danger font-medium' : ''" x-text="r.empleado_nombre"></td>
-              <td class="px-3 py-3 tabular" :class="statusColor(r.status_entrada)"
-                  :title="statusLabel(r.status_entrada)"
-                  x-text="r.primera_entrada || (esAusencia(r) ? 'AUSENTE' : '—')"></td>
-              <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_out)"
-                  :title="statusLabel(r.status_almuerzo_out)"
-                  x-text="r.almuerzo_out || '—'"></td>
-              <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_in)"
-                  :title="statusLabel(r.status_almuerzo_in)"
-                  x-text="r.almuerzo_in || '—'"></td>
-              <td class="px-3 py-3 tabular" :class="statusColor(r.status_salida)"
-                  :title="statusLabel(r.status_salida)"
-                  x-text="r.ultima_salida || '—'"></td>
-              <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_in)"
-                  :title="statusExtraLabel(r.status_extra_in)"
-                  x-text="r.extra_in || '—'"></td>
-              <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_out)"
-                  :title="statusExtraLabel(r.status_extra_out)"
-                  x-text="r.extra_out || '—'"></td>
+            <tr class="hover:bg-surface-2/30" :class="r.es_finde ? 'bg-accent/5' : ''">
+              <td class="px-4 py-3 tabular">
+                <span x-text="r.fecha"></span>
+              </td>
+              <td class="px-3 py-3 text-xs" :class="r.es_finde ? 'text-accent font-medium' : 'text-text-muted'" x-text="diaSemana(r.fecha)"></td>
+              <td class="px-3 py-3" :class="esAusencia(r) ? 'text-danger font-medium' : ''">
+                <span x-text="r.empleado_nombre"></span>
+                <span x-show="r.tipo_excepcion" class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-accent/20 text-accent" x-text="r.tipo_excepcion"></span>
+              </td>
+              <!-- Si es excepcion (incapacidad/permiso), mostrar etiqueta en lugar de marcajes -->
+              <template x-if="r.es_excepcion">
+                <td colspan="6" class="px-3 py-3 text-center text-accent text-sm">
+                  <span x-text="'⚕ ' + (r.tipo_excepcion || 'excepción')"></span>
+                  <span x-show="r.excepcion_motivo" class="text-text-muted text-xs" x-text="'· ' + r.excepcion_motivo"></span>
+                </td>
+              </template>
+              <template x-if="!r.es_excepcion">
+                <td class="px-3 py-3 tabular" :class="statusColor(r.status_entrada)"
+                    :title="statusLabel(r.status_entrada)"
+                    x-text="r.primera_entrada || (esAusencia(r) ? 'AUSENTE' : '—')"></td>
+              </template>
+              <template x-if="!r.es_excepcion">
+                <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_out)"
+                    :title="statusLabel(r.status_almuerzo_out)"
+                    x-text="r.almuerzo_out || '—'"></td>
+              </template>
+              <template x-if="!r.es_excepcion">
+                <td class="px-3 py-3 tabular" :class="statusColor(r.status_almuerzo_in)"
+                    :title="statusLabel(r.status_almuerzo_in)"
+                    x-text="r.almuerzo_in || '—'"></td>
+              </template>
+              <template x-if="!r.es_excepcion">
+                <td class="px-3 py-3 tabular" :class="statusColor(r.status_salida)"
+                    :title="statusLabel(r.status_salida)"
+                    x-text="r.ultima_salida || '—'"></td>
+              </template>
+              <template x-if="!r.es_excepcion">
+                <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_in)"
+                    :title="statusExtraLabel(r.status_extra_in)"
+                    x-text="r.extra_in || '—'"></td>
+              </template>
+              <template x-if="!r.es_excepcion">
+                <td class="px-3 py-3 tabular" :class="statusExtraColor(r.status_extra_out)"
+                    :title="statusExtraLabel(r.status_extra_out)"
+                    x-text="r.extra_out || '—'"></td>
+              </template>
               <td class="px-3 py-3 text-right tabular">
                 <span x-show="r.horas != null"
                       :class="r.en_curso ? 'text-accent' : ''"
@@ -216,13 +240,14 @@
               </td>
               <td class="px-3 py-3 text-right tabular"
                   :class="r.horas_extras > 0 ? 'text-warning font-medium' : 'text-text-muted'"
-                  x-text="r.horas_extras != null ? r.horas_extras.toFixed(2) : '—'"></td>
+                  x-text="r.horas_extras != null && r.horas_extras > 0 ? r.horas_extras.toFixed(2) : '—'"></td>
               <td class="px-3 py-3 text-right tabular"
                   :class="r.salario_mensual ? '' : 'text-warning'"
-                  :title="r.salario_mensual ? `Ordinarias: $${(r.pago_ord||0).toLocaleString('es-CO')}\nExtras: $${(r.pago_extras||0).toLocaleString('es-CO')}` : 'Falta configurar salario'"
+                  :title="r.es_finde ? 'Día fin de semana: base $100.000' : (r.salario_mensual ? `Ordinarias: $${(r.pago_ord||0).toLocaleString('es-CO')}` : 'Falta configurar salario')"
                   x-text="r.salario_mensual ? '$' + (r.pago_total || 0).toLocaleString('es-CO') : 'falta sal.'"></td>
               <td class="px-4 py-3">
-                <button @click="verDetalle(r)" class="text-xs text-accent hover:text-accent-hover" x-text="r.cantidad_marcajes + ' marcajes'"></button>
+                <button x-show="!r.es_excepcion" @click="verDetalle(r)" class="text-xs text-accent hover:text-accent-hover" x-text="r.cantidad_marcajes + ' marcajes'"></button>
+                <span x-show="r.es_excepcion" class="text-xs text-text-muted">—</span>
               </td>
             </tr>
           </template>
