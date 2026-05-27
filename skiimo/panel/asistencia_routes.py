@@ -86,6 +86,16 @@ def register_pages(app, templates) -> None:
             context={"user": user["username"], "page": "empleados"},
         )
 
+    @app.get("/empleados/{emp_id}", response_class=HTMLResponse)
+    async def page_empleado_detalle(emp_id: int, request: Request, session_token: str | None = Cookie(default=None)):
+        user = validar_sesion(session_token)
+        if not user:
+            return RedirectResponse(url="/login", status_code=303)
+        return templates.TemplateResponse(
+            request=request, name="empleado_detalle.html",
+            context={"user": user["username"], "page": "empleados", "emp_id": emp_id},
+        )
+
     @app.get("/nomina", response_class=HTMLResponse)
     async def page_nomina(request: Request, session_token: str | None = Cookie(default=None)):
         user = validar_sesion(session_token)
@@ -1001,6 +1011,111 @@ async def api_empleados_list(session_token: str | None = Cookie(default=None)):
     finally:
         conn.close()
     return {"items": [dict(r) for r in rows]}
+
+
+@router.get("/api/empleados/{emp_id}/perfil")
+async def api_empleado_perfil(
+    emp_id: int,
+    desde: str = "",
+    hasta: str = "",
+    session_token: str | None = Cookie(default=None),
+):
+    """Ficha de RR.HH. de un empleado: datos + KPIs sobre un rango.
+
+    KPIs:
+      - Asistencia/puntualidad: % asistencia, dias trabajados/esperados,
+        llegadas tarde, salidas tempranas, promedio min tarde.
+      - Ausentismo/incapacidades: % ausentismo, dias incapacidad, findes.
+      - Horas/pago: horas ord, horas extra, $ acumulado.
+      - Tendencia: serie de horas por dia.
+    """
+    _require_user(session_token)
+
+    # Rango por defecto: ultimos 30 dias
+    hoy = _now_bogota().date()
+    if not hasta:
+        hasta = hoy.isoformat()
+    if not desde:
+        desde = (hoy - timedelta(days=29)).isoformat()
+
+    # Datos del empleado
+    conn = get_conn()
+    try:
+        emp = conn.execute("SELECT * FROM empleados WHERE id = ?", (emp_id,)).fetchone()
+    finally:
+        conn.close()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    empleado = dict(emp)
+
+    # Reutilizar el calculo del resumen diario (mismo motor de horas/pago/status)
+    resumen = await api_resumen_diario(
+        session_token=session_token, empleado_id=emp_id, desde=desde, hasta=hasta
+    )
+    items = [i for i in resumen.get("items", []) if i.get("empleado_id") == emp_id]
+
+    # Dias habiles esperados en el rango (lun-vie), sin contar futuro
+    d0 = date.fromisoformat(desde)
+    d1 = min(date.fromisoformat(hasta), hoy)
+    dias_habiles = 0
+    d = d0
+    while d <= d1:
+        if d.weekday() < 5:
+            dias_habiles += 1
+        d += timedelta(days=1)
+
+    # Agregar KPIs sobre los items
+    dias_trabajados = sum(1 for i in items if (i.get("horas") or 0) > 0 and not i.get("es_excepcion"))
+    dias_incapacidad = sum(1 for i in items if i.get("es_excepcion"))
+    dias_finde_trab = sum(1 for i in items if i.get("es_finde") and (i.get("horas") or 0) > 0)
+    tarde = sum(1 for i in items if i.get("status_entrada") == "tarde")
+    salida_temp = sum(1 for i in items if i.get("status_salida") == "temprano")
+
+    # Minutos tarde promedio (solo dias con entrada tarde)
+    mins_tarde = []
+    for i in items:
+        for h in (i.get("calculo") or {}).get("hitos", []):
+            if h["hito"] == "Entrada" and h["perdidos"] > 0:
+                mins_tarde.append(h["perdidos"])
+    prom_min_tarde = round(sum(mins_tarde) / len(mins_tarde), 1) if mins_tarde else 0
+
+    horas_ord = round(sum((i.get("horas") or 0) for i in items if not i.get("es_excepcion")), 2)
+    horas_extra = round(sum((i.get("horas_extras") or 0) for i in items), 2)
+    pago_acum = round(sum((i.get("pago_total") or 0) for i in items))
+
+    # Dias esperados = habiles - incapacidades (la incapacidad no es ausencia)
+    dias_esperados = max(0, dias_habiles - dias_incapacidad)
+    pct_asistencia = round(100.0 * dias_trabajados / dias_esperados, 1) if dias_esperados else 0
+    ausencias = max(0, dias_esperados - dias_trabajados)
+    pct_ausentismo = round(100.0 * ausencias / dias_esperados, 1) if dias_esperados else 0
+
+    # Serie de tendencia: horas por dia (ordenada)
+    tendencia = sorted(
+        [{"fecha": i["fecha"], "horas": i.get("horas") or 0} for i in items],
+        key=lambda x: x["fecha"],
+    )
+
+    return {
+        "empleado": empleado,
+        "rango": {"desde": desde, "hasta": hasta},
+        "kpis": {
+            "dias_habiles": dias_habiles,
+            "dias_esperados": dias_esperados,
+            "dias_trabajados": dias_trabajados,
+            "pct_asistencia": pct_asistencia,
+            "ausencias": ausencias,
+            "pct_ausentismo": pct_ausentismo,
+            "dias_incapacidad": dias_incapacidad,
+            "dias_finde_trab": dias_finde_trab,
+            "llegadas_tarde": tarde,
+            "salidas_tempranas": salida_temp,
+            "prom_min_tarde": prom_min_tarde,
+            "horas_ord": horas_ord,
+            "horas_extra": horas_extra,
+            "pago_acum": pago_acum,
+        },
+        "tendencia": tendencia,
+    }
 
 
 @router.get("/api/empleados/hik")

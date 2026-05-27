@@ -57,7 +57,9 @@
           </template>
           <template x-for="e in items" :key="e.id">
             <tr class="hover:bg-surface-2/30" :class="{ 'opacity-50': !e.activo }">
-              <td class="px-4 py-3" x-text="e.nombre"></td>
+              <td class="px-4 py-3">
+                <a :href="'/empleados/' + e.id" class="text-accent hover:text-accent-hover hover:underline transition-colors duration-200" x-text="e.nombre"></a>
+              </td>
               <td class="px-4 py-3 text-text-muted" x-text="e.cedula || '-'"></td>
               <td class="px-4 py-3 text-text-muted" x-text="e.cargo || '-'"></td>
               <td class="px-4 py-3 text-text-muted tabular" x-text="e.hik_employee_no || '-'"></td>
