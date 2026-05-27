@@ -324,9 +324,26 @@ async def api_resumen_diario(
         extra_out_ts = [m["ts"] for m in marcajes if m["tipo"] == "extra_out"]
 
         primera_entrada_ts = min(entradas_ts) if entradas_ts else None
-        ultima_salida_ts = max(salidas_ts) if salidas_ts else None
         almuerzo_out_ts = min(outs_ts) if outs_ts else None
         almuerzo_in_ts = max(ins_ts) if ins_ts else None
+
+        # ----- Salida vs Extras -----
+        # Regla: la PRIMERA marca de la franja de salida es la Salida del dia.
+        # Si hay marcas POSTERIORES (la persona se quedo a hacer extras y volvio
+        # a marcar), la primera posterior = extra_in y la ultima = extra_out,
+        # sin importar la hora. Las extras pagadas se calculan aparte (desde las
+        # 17:30 fijas). Sin marca de cierre (una sola marca extra) NO hay extras.
+        # Si el equipo YA mando extra_in/extra_out explicitos, esos mandan.
+        ultima_salida_ts = None
+        if salidas_ts:
+            salidas_ord = sorted(salidas_ts)
+            ultima_salida_ts = salidas_ord[0]  # la primera marca = salida real
+            posteriores = salidas_ord[1:]      # marcas extra implicitas
+            if posteriores and not extra_in_ts:
+                extra_in_ts = extra_in_ts + [posteriores[0]]
+            if len(posteriores) >= 2 and not extra_out_ts:
+                extra_out_ts = extra_out_ts + [posteriores[-1]]
+
         primer_extra_in_ts = min(extra_in_ts) if extra_in_ts else None
         ultimo_extra_out_ts = max(extra_out_ts) if extra_out_ts else None
 
@@ -578,16 +595,24 @@ async def api_resumen_diario(
             horas = round(bruto, 2)
             item["pausa_almuerzo_h"] = round(descuento_almuerzo, 2)
 
-        # Horas extras: SOLO cuentan si el empleado marco explicitamente
-        # extra_in y extra_out (botones del equipo o agregado manual).
-        # Sin marca = no hay extras, aunque se quede hasta tarde.
+        # Horas extras: cuentan cuando hay extra_in Y extra_out (marca de inicio
+        # y de cierre). Sin cierre = no se pagan extras.
+        # Las extras SOLO se pagan desde la hora oficial de inicio de extras
+        # (salida + margen = 17:30 fijas), aunque el extra_in se haya marcado
+        # antes (gente que se queda en la fabrica y marca a las 17:24). Asi
+        # "nunca gana tiempo": los minutos antes de las 17:30 no se pagan.
         try:
             if not en_curso and item["extra_in_ts"] and item["extra_out_ts"]:
                 t_ex_in = datetime.fromisoformat(item["extra_in_ts"])
                 t_ex_out = datetime.fromisoformat(item["extra_out_ts"])
-                if t_ex_out > t_ex_in:
+                # Piso: hora oficial de inicio de extras (17:30 por defecto)
+                inicio_extras_oficial = t_ex_in.replace(
+                    hour=salida_h, minute=salida_m, second=0, microsecond=0
+                ) + timedelta(minutes=margen_extras_min)
+                t_ex_in_efectivo = max(t_ex_in, inicio_extras_oficial)
+                if t_ex_out > t_ex_in_efectivo:
                     horas_extras = round(
-                        (t_ex_out - t_ex_in).total_seconds() / 3600.0, 2
+                        (t_ex_out - t_ex_in_efectivo).total_seconds() / 3600.0, 2
                     )
         except Exception:
             pass
