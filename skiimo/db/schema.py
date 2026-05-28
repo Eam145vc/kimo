@@ -468,6 +468,21 @@ CREATE TABLE IF NOT EXISTS asistencia_config (
     descripcion     TEXT,
     updated_at      TEXT NOT NULL
 );
+
+-- Ventanas de horas extra autorizadas por el admin (un dia o rango).
+-- Las extras SOLO se pagan si caen dentro de una ventana autorizada,
+-- topadas a hora_fin (anti-robo de minutos).
+CREATE TABLE IF NOT EXISTS extras_autorizadas (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha_desde     TEXT NOT NULL,              -- YYYY-MM-DD
+    fecha_hasta     TEXT NOT NULL,              -- YYYY-MM-DD (igual a desde si es 1 dia)
+    hora_inicio     TEXT NOT NULL DEFAULT '17:30',
+    hora_fin        TEXT NOT NULL,              -- HH:MM
+    nota            TEXT,
+    creado_por      TEXT,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_extras_fechas ON extras_autorizadas(fecha_desde, fecha_hasta);
 """
 
 

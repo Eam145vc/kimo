@@ -142,6 +142,16 @@ def register_pages(app, templates) -> None:
             context={"user": user["username"], "page": "excepciones"},
         )
 
+    @app.get("/extras", response_class=HTMLResponse)
+    async def page_extras(request: Request, session_token: str | None = Cookie(default=None)):
+        user = validar_sesion(session_token)
+        if not user:
+            return RedirectResponse(url="/login", status_code=303)
+        return templates.TemplateResponse(
+            request=request, name="extras.html",
+            context={"user": user["username"], "page": "extras"},
+        )
+
 
 # =============================================================================
 # APIs
@@ -563,6 +573,29 @@ async def api_resumen_diario(
     ahora_bogota = datetime.now(TZ_BOGOTA)
     hoy_str = ahora_bogota.date().isoformat()
 
+    # ----- Ventanas de extras autorizadas en el rango -----
+    # Las extras SOLO se pagan si la fecha cae en una ventana autorizada,
+    # topadas a su hora_fin. Sin ventana -> no se pagan (requiere autorizacion).
+    _conn_ex = get_conn()
+    try:
+        _vent_rows = _conn_ex.execute(
+            """SELECT fecha_desde, fecha_hasta, hora_inicio, hora_fin
+               FROM extras_autorizadas
+               WHERE fecha_hasta >= ? AND fecha_desde <= ?""",
+            (desde or "0000-01-01", hasta or "9999-12-31"),
+        ).fetchall()
+    except Exception:
+        _vent_rows = []
+    finally:
+        _conn_ex.close()
+
+    def _ventana_para(fecha_iso: str):
+        """Devuelve (hora_inicio, hora_fin) de la ventana de extras de esa fecha, o None."""
+        for v in _vent_rows:
+            if v["fecha_desde"] <= fecha_iso <= v["fecha_hasta"]:
+                return (v["hora_inicio"], v["hora_fin"])
+        return None
+
     for item in items:
         # Evaluar status de cada hito
         item["status_entrada"] = _evaluar_marcaje(item["primera_entrada_ts"], entrada_h, entrada_m)
@@ -670,48 +703,58 @@ async def api_resumen_diario(
             item["almuerzo_estandar_h"] = round(pausa_oficial_h, 2)
             item["almuerzo_perdido_h"] = round(max(0.0, descuento_almuerzo - pausa_oficial_h), 2)
 
-        # Horas extras: cuentan cuando hay extra_in Y extra_out (marca de inicio
-        # y de cierre). Sin cierre = no se pagan extras.
-        # El inicio EFECTIVO de las extras aplica la misma regla que la entrada
-        # ("nunca gana tiempo, solo pierde el exceso de la tolerancia"):
-        #   - marca antes de 17:30 -> cuenta desde 17:30 (no gana)
-        #   - marca dentro de 17:30 + tolerancia (ej. hasta 17:35) -> 17:30 (puntual)
-        #   - marca despues (ej. 17:37) -> marca - tolerancia (17:32): pierde
-        #     solo el exceso sobre los 5 min de gracia, no todo.
+        # Horas extras: REQUIEREN una ventana de extras AUTORIZADA por el admin
+        # para esa fecha. Sin ventana -> no se pagan (aunque marquen).
+        # Con ventana (hora_inicio, hora_fin):
+        #   - inicio efectivo = max(extra_in con tolerancia, hora_inicio de la ventana)
+        #   - cierre efectivo  = min(extra_out, hora_fin de la ventana)  <- tope anti-robo
         item["extras_en_curso"] = False
         item["extra_sin_cierre"] = False
+        item["extra_sin_autorizar"] = False
+        ventana = _ventana_para(item["fecha"])
+        # Respetar el pasado: la regla "requiere ventana" aplica de HOY en adelante.
+        # Dias ANTERIORES a hoy sin ventana usan el calculo viejo (desde 17:30).
+        es_pasado = item["fecha"] < hoy_str
         try:
-            if item["extra_in_ts"]:
+            if item["extra_in_ts"] and not ventana and es_pasado:
+                # Dia pasado sin ventana -> respetar extras ya calculadas (desde 17:30)
+                ventana = (
+                    f"{salida_h:02d}:{salida_m + margen_extras_min:02d}",
+                    "23:59",
+                )
+            if item["extra_in_ts"] and not ventana:
+                # HOY/futuro sin ventana autorizada -> no se paga, novedad.
+                item["extra_sin_autorizar"] = True
+            elif item["extra_in_ts"] and ventana:
+                v_ini_h, v_ini_m = _parse_hhmm(ventana[0], salida_h, salida_m + margen_extras_min)
+                v_fin_h, v_fin_m = _parse_hhmm(ventana[1], 23, 59)
                 t_ex_in = datetime.fromisoformat(item["extra_in_ts"]).replace(
                     second=0, microsecond=0
                 )
-                # Hora oficial de inicio de extras (17:30 por defecto)
-                inicio_extras_oficial = t_ex_in.replace(
-                    hour=salida_h, minute=salida_m, second=0, microsecond=0
-                ) + timedelta(minutes=margen_extras_min)
+                inicio_ventana = t_ex_in.replace(hour=v_ini_h, minute=v_ini_m, second=0, microsecond=0)
+                fin_ventana = t_ex_in.replace(hour=v_fin_h, minute=v_fin_m, second=0, microsecond=0)
                 tol = timedelta(minutes=TOLERANCIA_MIN)
-                if t_ex_in <= inicio_extras_oficial + tol:
-                    # Antes o dentro de tolerancia -> cuenta desde el oficial
-                    t_ex_in_efectivo = inicio_extras_oficial
+                # inicio efectivo: nunca antes del inicio de la ventana; tarde pierde el exceso
+                if t_ex_in <= inicio_ventana + tol:
+                    t_ex_in_efectivo = inicio_ventana
                 else:
-                    # Tarde -> pierde solo el exceso sobre la tolerancia
                     t_ex_in_efectivo = t_ex_in - tol
 
                 if item["extra_out_ts"]:
-                    # Caso normal: hay cierre -> extras de 17:30 al cierre.
-                    # Truncar segundos (los segundos no suman, se redondea abajo).
                     t_ex_out = datetime.fromisoformat(item["extra_out_ts"]).replace(
                         second=0, microsecond=0
                     )
-                    if t_ex_out > t_ex_in_efectivo:
-                        horas_extras = _horas_truncadas(t_ex_in_efectivo, t_ex_out)
+                    # TOPE anti-robo: no pasa de la hora_fin de la ventana
+                    t_ex_out_efectivo = min(t_ex_out, fin_ventana)
+                    if t_ex_out_efectivo > t_ex_in_efectivo:
+                        horas_extras = _horas_truncadas(t_ex_in_efectivo, t_ex_out_efectivo)
                 elif item["fecha"] == hoy_str and ahora_bogota > t_ex_in_efectivo:
-                    # HOY y sin cierre aun -> contador EN VIVO desde 17:30
-                    ahora_trunc = ahora_bogota.replace(second=0, microsecond=0)
-                    horas_extras = _horas_truncadas(t_ex_in_efectivo, ahora_trunc)
+                    # HOY y sin cierre -> contador en vivo, tambien topado a hora_fin
+                    ahora_trunc = min(ahora_bogota.replace(second=0, microsecond=0), fin_ventana)
+                    if ahora_trunc > t_ex_in_efectivo:
+                        horas_extras = _horas_truncadas(t_ex_in_efectivo, ahora_trunc)
                     item["extras_en_curso"] = True
                 else:
-                    # Dia pasado con extra_in pero SIN cierre -> no se paga, novedad
                     item["extra_sin_cierre"] = True
         except Exception:
             pass
@@ -840,6 +883,8 @@ async def api_resumen_diario(
         # Extra sin cierre: marcó extra in pero nunca el extra out
         if item.get("extra_sin_cierre"):
             alertas.append({"nivel": "warning", "texto": "Extra sin cierre — no se paga, revisar"})
+        if item.get("extra_sin_autorizar"):
+            alertas.append({"nivel": "warning", "texto": "Marcó extras sin ventana autorizada — no se paga"})
         if item.get("extras_en_curso"):
             alertas.append({"nivel": "info", "texto": "Horas extra en curso (sin cierre aún)"})
         item["alertas"] = alertas
@@ -1769,6 +1814,77 @@ async def api_excepcion_borrar(excep_id: int,
     conn = get_conn()
     try:
         conn.execute("DELETE FROM excepciones_asistencia WHERE id = ?", (excep_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+class ExtraAutorizadaIn(BaseModel):
+    fecha_desde: str
+    fecha_hasta: str | None = None      # si no viene, = fecha_desde (un dia)
+    hora_inicio: str = "17:30"
+    hora_fin: str
+    nota: str | None = None
+
+
+@router.get("/api/extras-autorizadas")
+async def api_extras_list(
+    desde: str = "", hasta: str = "",
+    session_token: str | None = Cookie(default=None),
+):
+    """Lista las ventanas de extras autorizadas (opcional filtrar por rango)."""
+    _require_user(session_token)
+    where, params = ["1=1"], []
+    if desde:
+        where.append("fecha_hasta >= ?"); params.append(desde)
+    if hasta:
+        where.append("fecha_desde <= ?"); params.append(hasta)
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            f"""SELECT * FROM extras_autorizadas WHERE {' AND '.join(where)}
+                ORDER BY fecha_desde DESC, hora_inicio""",
+            tuple(params),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.post("/api/extras-autorizadas")
+async def api_extras_crear(body: ExtraAutorizadaIn, session_token: str | None = Cookie(default=None)):
+    """Crea una ventana de extras autorizada (un dia o rango)."""
+    user = _require_user(session_token)
+    desde = body.fecha_desde
+    hasta = body.fecha_hasta or body.fecha_desde
+    if hasta < desde:
+        desde, hasta = hasta, desde
+    if body.hora_fin <= body.hora_inicio:
+        raise HTTPException(400, "La hora fin debe ser mayor a la hora inicio")
+    now = datetime.now(TZ_BOGOTA).isoformat()
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO extras_autorizadas
+               (fecha_desde, fecha_hasta, hora_inicio, hora_fin, nota, creado_por, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (desde, hasta, body.hora_inicio, body.hora_fin, body.nota,
+             user.get("username", "admin"), now),
+        )
+        conn.commit()
+        eid = cur.lastrowid
+    finally:
+        conn.close()
+    return {"id": eid, "ok": True}
+
+
+@router.delete("/api/extras-autorizadas/{extra_id}")
+async def api_extras_borrar(extra_id: int, session_token: str | None = Cookie(default=None)):
+    _require_user(session_token)
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM extras_autorizadas WHERE id = ?", (extra_id,))
         conn.commit()
     finally:
         conn.close()

@@ -689,3 +689,120 @@ async def job_aviso_sin_salida(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
             except Exception:
                 log.exception("No se pudo avisar sin-salida a %s", r["nombre"])
+
+
+# =============================================================================
+# Programar EXTRAS (solo admin/administrativo) + notificar a operarios
+# =============================================================================
+
+
+async def _notificar_extras(context, fecha_desde, fecha_hasta, hora_ini, hora_fin, nota=None):
+    """Avisa a operarios y coordinadores vinculados que hay extras disponibles."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT nombre, telegram_chat_id FROM empleados
+               WHERE activo = 1 AND telegram_chat_id IS NOT NULL
+                 AND LOWER(cargo) IN ('operario','coordinador')"""
+        ).fetchall()
+    finally:
+        conn.close()
+    rango = (f"el {_fecha_corta(fecha_desde)}" if fecha_desde == fecha_hasta
+             else f"del {_fecha_corta(fecha_desde)} al {_fecha_corta(fecha_hasta)}")
+    txt = (f"⭐ *Horas extra disponibles* {rango}\n"
+           f"De {_h12(hora_ini)} a {_h12(hora_fin)}.")
+    if nota:
+        txt += f"\n_{nota}_"
+    txt += "\n\nRecuerda marcar inicio y cierre de extras en el equipo."
+    n = 0
+    for r in rows:
+        try:
+            await context.bot.send_message(
+                chat_id=int(r["telegram_chat_id"]), text=txt, parse_mode=ParseMode.MARKDOWN
+            )
+            n += 1
+        except Exception:
+            log.exception("No se pudo notificar extras a %s", r["nombre"])
+    return n
+
+
+async def cmd_extras(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Programa una ventana de extras (admin/administrativo).
+
+    Uso:
+      /extras hoy 18:00 20:00
+      /extras 2026-05-30 17:30 21:00
+      /extras 2026-05-30 2026-06-02 17:30 20:00   (rango)
+    """
+    chat_id = update.effective_chat.id
+    if not _es_admin_total(chat_id):
+        await update.message.reply_text("Solo el administrador puede programar extras.")
+        return
+
+    args = ctx.args or []
+    if len(args) < 3:
+        await update.message.reply_text(
+            "📋 *Programar extras*\n"
+            "Uso:\n"
+            "`/extras hoy 18:00 20:00`\n"
+            "`/extras 2026-05-30 17:30 21:00`\n"
+            "`/extras 2026-05-30 2026-06-02 17:30 20:00` (rango)\n\n"
+            "_La hora inicio default sugerida es 17:30._",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    hoy = _now_bogota().date()
+    # parsear: [fecha] o [desde hasta], luego hora_ini hora_fin
+    def _pf(s):
+        if s.lower() == "hoy":
+            return hoy.isoformat()
+        if s.lower() in ("mañana", "manana"):
+            return (hoy + timedelta(days=1)).isoformat()
+        try:
+            return date.fromisoformat(s).isoformat()
+        except Exception:
+            return None
+
+    # las 2 ultimas son horas; lo de antes son fechas
+    *fechas, h_ini, h_fin = args
+    if len(fechas) == 1:
+        fd = _pf(fechas[0]); fh = fd
+    elif len(fechas) == 2:
+        fd = _pf(fechas[0]); fh = _pf(fechas[1])
+    else:
+        await update.message.reply_text("Formato no reconocido. Usá /extras para ver ejemplos.")
+        return
+    if not fd or not fh:
+        await update.message.reply_text("Fecha inválida. Usá YYYY-MM-DD, 'hoy' o 'mañana'.")
+        return
+    import re as _re
+    if not (_re.match(r'^\d{1,2}:\d{2}$', h_ini) and _re.match(r'^\d{1,2}:\d{2}$', h_fin)):
+        await update.message.reply_text("Horas inválidas. Usá HH:MM (ej. 18:00).")
+        return
+    if h_fin <= h_ini:
+        await update.message.reply_text("La hora fin debe ser mayor a la inicio.")
+        return
+    if fh < fd:
+        fd, fh = fh, fd
+
+    # guardar
+    now = _now_bogota().isoformat()
+    conn = get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO extras_autorizadas
+               (fecha_desde, fecha_hasta, hora_inicio, hora_fin, nota, creado_por, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (fd, fh, h_ini, h_fin, None, "bot", now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    n = await _notificar_extras(ctx, fd, fh, h_ini, h_fin)
+    rango = (f"el {_fecha_corta(fd)}" if fd == fh else f"del {_fecha_corta(fd)} al {_fecha_corta(fh)}")
+    await update.message.reply_text(
+        f"✅ Extras programadas {rango} de {_h12(h_ini)} a {_h12(h_fin)}.\n"
+        f"Se notificó a {n} empleado(s).",
+    )

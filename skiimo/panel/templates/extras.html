@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Extras · Esskimo{% endblock %}
+
+{% block content %}
+<div x-data="extrasPage()" x-init="init()">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Horas extra autorizadas</h1>
+      <p class="text-xs text-text-muted mt-0.5">
+        Programá las ventanas en que se pueden hacer extras. Las extras
+        <strong>solo se pagan</strong> dentro de la ventana autorizada (topadas a la hora fin).
+        Sin ventana, los marcajes de extra no cuentan.
+      </p>
+    </div>
+    <button @click="openCreate()" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg">
+      + Programar extras
+    </button>
+  </div>
+
+  <!-- Tabla -->
+  <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-surface-2 text-text-muted">
+          <tr>
+            <th class="text-left px-4 py-3 font-medium">Desde</th>
+            <th class="text-left px-3 py-3 font-medium">Hasta</th>
+            <th class="text-left px-3 py-3 font-medium">Inicio</th>
+            <th class="text-left px-3 py-3 font-medium">Fin</th>
+            <th class="text-left px-3 py-3 font-medium">Nota</th>
+            <th class="text-right px-4 py-3 font-medium"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border/40">
+          <template x-if="!items.length">
+            <tr><td colspan="6" class="text-center py-10 text-text-muted">Sin ventanas de extras programadas</td></tr>
+          </template>
+          <template x-for="x in items" :key="x.id">
+            <tr class="hover:bg-surface-2/30">
+              <td class="px-4 py-3 tabular whitespace-nowrap" x-text="fechaCorta(x.fecha_desde)"></td>
+              <td class="px-3 py-3 tabular whitespace-nowrap" x-text="x.fecha_hasta === x.fecha_desde ? '—' : fechaCorta(x.fecha_hasta)"></td>
+              <td class="px-3 py-3 tabular whitespace-nowrap text-success" x-text="h12(x.hora_inicio)"></td>
+              <td class="px-3 py-3 tabular whitespace-nowrap text-warning" x-text="h12(x.hora_fin)"></td>
+              <td class="px-3 py-3 text-xs text-text-muted truncate max-w-xs" x-text="x.nota || '—'"></td>
+              <td class="px-4 py-3 text-right">
+                <button @click="del(x.id)" class="text-xs text-danger">Borrar</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div x-show="modalOpen" x-transition.opacity
+       class="fixed inset-0 bg-bg/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+       @keydown.escape.window="modalOpen = false" style="display:none">
+    <div class="bg-surface ring-1 ring-border rounded-xl p-6 max-w-md w-full">
+      <h3 class="text-lg font-semibold mb-4">Programar horas extra</h3>
+
+      <div class="space-y-3 text-sm">
+        <label class="flex items-center gap-2 text-xs text-text-muted">
+          <input type="checkbox" x-model="rango" class="rounded">
+          Es un rango de varios días
+        </label>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-text-muted mb-1" x-text="rango ? 'Desde *' : 'Día *'"></label>
+            <input type="date" x-model="form.fecha_desde" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          </div>
+          <div x-show="rango">
+            <label class="block text-xs text-text-muted mb-1">Hasta *</label>
+            <input type="date" x-model="form.fecha_hasta" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Hora inicio *</label>
+            <input type="time" x-model="form.hora_inicio" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+            <p class="text-[10px] text-text-muted mt-1">Default 17:30 (salida + margen).</p>
+          </div>
+          <div>
+            <label class="block text-xs text-text-muted mb-1">Hora fin *</label>
+            <input type="time" x-model="form.hora_fin" class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2 tabular">
+            <p class="text-[10px] text-text-muted mt-1">Tope: no se paga después de esta hora.</p>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs text-text-muted mb-1">Nota (opcional)</label>
+          <input type="text" x-model="form.nota" placeholder="ej: inventario fin de mes"
+                 class="w-full bg-surface-2 ring-1 ring-border rounded px-3 py-2">
+        </div>
+
+        <div class="rounded-lg bg-accent/10 ring-1 ring-accent/30 p-2.5 text-[11px] text-accent">
+          Se notificará por el bot a los operarios y coordinadores vinculados.
+        </div>
+      </div>
+
+      <p x-show="formError" class="text-xs text-danger mt-3" x-text="formError"></p>
+
+      <div class="flex justify-end gap-2 mt-5">
+        <button @click="modalOpen = false" class="text-sm px-4 py-2 text-text-muted hover:text-text">Cancelar</button>
+        <button @click="save()" :disabled="saving" class="text-sm bg-accent hover:bg-accent-hover text-bg font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+          <span x-show="!saving">Programar</span>
+          <span x-show="saving">Guardando…</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function extrasPage() {
+  return {
+    items: [],
+    modalOpen: false,
+    saving: false,
+    rango: false,
+    formError: '',
+    form: { fecha_desde: '', fecha_hasta: '', hora_inicio: '17:30', hora_fin: '20:00', nota: '' },
+
+    async init() {
+      await this.cargar();
+    },
+
+    async cargar() {
+      const r = await fetch('/api/extras-autorizadas');
+      const j = await r.json();
+      this.items = j.items || [];
+    },
+
+    hoyBogota() {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).format(new Date());
+    },
+
+    h12(hhmm) {
+      if (!hhmm) return '—';
+      const m = String(hhmm).match(/(\d{1,2}):(\d{2})/);
+      if (!m) return hhmm;
+      let h = parseInt(m[1], 10);
+      const ap = h < 12 ? 'a.m.' : 'p.m.';
+      h = h % 12 || 12;
+      return `${h}:${m[2]} ${ap}`;
+    },
+
+    fechaCorta(iso) {
+      try {
+        const [y, mo, d] = iso.split('-');
+        const dias = ['dom','lun','mar','mié','jue','vie','sáb'];
+        const dia = dias[new Date(iso + 'T00:00:00').getDay()];
+        return `${dia} ${d}/${mo}`;
+      } catch { return iso; }
+    },
+
+    openCreate() {
+      const hoy = this.hoyBogota();
+      this.rango = false;
+      this.form = { fecha_desde: hoy, fecha_hasta: hoy, hora_inicio: '17:30', hora_fin: '20:00', nota: '' };
+      this.formError = '';
+      this.modalOpen = true;
+    },
+
+    async save() {
+      this.formError = '';
+      if (!this.form.fecha_desde) { this.formError = 'Indicá la fecha'; return; }
+      if (!this.form.hora_fin) { this.formError = 'Indicá la hora fin'; return; }
+      if (this.form.hora_fin <= this.form.hora_inicio) { this.formError = 'La hora fin debe ser mayor a la inicio'; return; }
+      const payload = {
+        fecha_desde: this.form.fecha_desde,
+        fecha_hasta: this.rango ? this.form.fecha_hasta : this.form.fecha_desde,
+        hora_inicio: this.form.hora_inicio,
+        hora_fin: this.form.hora_fin,
+        nota: this.form.nota || null,
+      };
+      this.saving = true;
+      try {
+        const r = await fetch('/api/extras-autorizadas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          const t = await r.text();
+          this.formError = 'Error: ' + t.slice(0, 150);
+          return;
+        }
+        this.modalOpen = false;
+        await this.cargar();
+      } catch (e) {
+        this.formError = 'Error: ' + e.message;
+      }
+      this.saving = false;
+    },
+
+    async del(id) {
+      if (!confirm('¿Borrar esta ventana de extras?')) return;
+      await fetch('/api/extras-autorizadas/' + id, { method: 'DELETE' });
+      await this.cargar();
+    },
+  };
+}
+</script>
+{% endblock %}
