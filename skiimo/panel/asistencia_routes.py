@@ -356,6 +356,10 @@ async def api_resumen_diario(
         salidas_ts = salidas_ts + salida_desde_in
         extra_in_ts = [m["ts"] for m in marcajes if m["tipo"] == "extra_in"]
         extra_out_ts = [m["ts"] for m in marcajes if m["tipo"] == "extra_out"]
+        # Marcas tipo 'extra' (generico, del clasificador por hora cuando Hikvision
+        # NO manda el tipo): son marcas de la franja de extras sin rol explicito.
+        # Se tratan como marcas posteriores y se reparten en extra_in/extra_out.
+        extra_generico_ts = [m["ts"] for m in marcajes if m["tipo"] == "extra"]
 
         primera_entrada_ts = min(entradas_ts) if entradas_ts else None
         almuerzo_out_ts = min(outs_ts) if outs_ts else None
@@ -385,11 +389,15 @@ async def api_resumen_diario(
             for ts in antes:
                 if (_salida_min_oficial - _min_del_dia(ts)) > ANOMALA_MIN:
                     marcas_anomalas_ts.append(ts)
-            # marcas posteriores = extras implicitas (si no hay tipo explicito)
-            if posteriores and not extra_in_ts:
-                extra_in_ts = extra_in_ts + [posteriores[0]]
-            if len(posteriores) >= 2 and not extra_out_ts:
-                extra_out_ts = extra_out_ts + [posteriores[-1]]
+        else:
+            posteriores = []
+        # Las marcas 'extra' genericas (Hikvision sin tipo) tambien son posteriores
+        # a la salida -> se suman a la pila para repartir en extra_in/extra_out.
+        posteriores = sorted(posteriores + extra_generico_ts)
+        if posteriores and not extra_in_ts:
+            extra_in_ts = extra_in_ts + [posteriores[0]]
+        if len(posteriores) >= 2 and not extra_out_ts:
+            extra_out_ts = extra_out_ts + [posteriores[-1]]
 
         primer_extra_in_ts = min(extra_in_ts) if extra_in_ts else None
         ultimo_extra_out_ts = max(extra_out_ts) if extra_out_ts else None
