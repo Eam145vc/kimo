@@ -604,8 +604,8 @@ function marcajesPage() {
     },
 
     setRango(tipo) {
-      const hoy = new Date();
-      const fmt = d => d.toISOString().slice(0, 10);
+      const hoy = this.hoyBogota();
+      const fmt = d => this.fechaBogota(d);
       if (tipo === 'hoy') {
         this.filtro.desde = fmt(hoy);
         this.filtro.hasta = fmt(hoy);
@@ -647,15 +647,29 @@ function marcajesPage() {
       } catch { return ''; }
     },
 
+    // Fecha YYYY-MM-DD en zona horaria de Bogotá (NO usar toISOString que da
+    // UTC: a las 7pm GMT-5 = medianoche UTC y mostraba el dia siguiente).
+    fechaBogota(d) {
+      const f = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Bogota',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+      });
+      return f.format(d || new Date());  // en-CA da formato YYYY-MM-DD
+    },
+
+    hoyBogota() {
+      return new Date();  // el objeto Date; fechaBogota() lo formatea en tz Bogotá
+    },
+
     // Convierte "HH:MM" o "HH:MM:SS" (24h) a 12h con a.m./p.m.
-    // Ej: "17:01:14" -> "5:01 p. m.", "07:00:00" -> "7:00 a. m."
+    // Ej: "17:01:14" -> "5:01 p.m.", "07:00:00" -> "7:00 a.m."
     h12(hms) {
       if (!hms) return '';
       const m = String(hms).match(/(\d{1,2}):(\d{2})/);
       if (!m) return hms;
       let h = parseInt(m[1], 10);
       const min = m[2];
-      const ampm = h < 12 ? 'a. m.' : 'p. m.';
+      const ampm = h < 12 ? 'a.m.' : 'p.m.';
       h = h % 12; if (h === 0) h = 12;
       return `${h}:${min} ${ampm}`;
     },
@@ -893,7 +907,7 @@ function marcajesPage() {
 
     // ===== Marcaje manual (agregar/editar/borrar) =====
     _emptyMarcajeForm() {
-      const hoy = new Date().toISOString().slice(0, 10);
+      const hoy = this.fechaBogota();
       return {
         id: null,
         empleado_id: this.filtro.empleado_id || '',
