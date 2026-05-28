@@ -311,6 +311,79 @@ async def cmd_nuevo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Listo, empezamos de cero.")
 
 
+async def cmd_ayuda(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra los comandos disponibles segun el rol de quien pregunta."""
+    assert update.message and update.effective_chat
+    chat_id = update.effective_chat.id
+    ok, info = _is_authorized(chat_id)
+    rol = (info or {}).get("rol") if ok else None
+    emp = _empleado_vinculado(chat_id)
+
+    H = "━━━━━━━━━━━━━━━"
+    if rol == "admin":
+        # Administrativo / admin completo
+        txt = (
+            "🛠 *Ayuda — Administrador*\n" + H + "\n"
+            "*Ventas y negocio:*\n"
+            "• Escribe un pedido o pregunta normal (ej. 'cuánto vendí este mes')\n"
+            "• /factura — cargar factura proveedor\n"
+            "• /gastomanual (/gm) — gasto sin factura\n"
+            "• /resumen — resumen del día\n"
+            "• /correos — revisar facturas del correo\n"
+            "• /agregar — registrar usuario\n\n"
+            "*Asistencia (equipo):*\n"
+            "• /asistencia\\_hoy — resumen del día\n"
+            "• /quien\\_esta — quién está en la fábrica\n"
+            "• /llegadas\\_tarde — tardanzas (7 días)\n"
+            "• /nomina\\_equipo — horas y pago del equipo\n\n"
+            "*Acciones por chat (lenguaje natural):*\n"
+            "• 'programa extras hoy de 6 a 8pm'\n"
+            "• 'Daniel entró a las 7' / 'corrige la salida de Mateo a las 5pm'\n\n"
+            "*Lo tuyo:*\n"
+            "• /mi\\_asistencia · /mi\\_nomina · /mis\\_kpis"
+        )
+    elif rol == "vendedor":
+        txt = (
+            "🛒 *Ayuda — Ventas*\n" + H + "\n"
+            "*Ventas:*\n"
+            "• Escribe un pedido o pregunta normal\n"
+            "• /factura · /gastomanual (/gm) · /resumen · /correos\n"
+            "• /cancelar · /nuevo · /yo\n\n"
+            "*Tu asistencia:*\n"
+            "• /mi\\_asistencia — tus marcajes de hoy\n"
+            "• /mi\\_nomina — cuánto llevas esta quincena\n"
+            "• /mis\\_kpis — tu asistencia y tardanzas"
+        )
+    elif emp and (emp.get("cargo") or "").lower() == "coordinador":
+        txt = (
+            "👔 *Ayuda — Coordinador*\n" + H + "\n"
+            "*Tu equipo (operarios):*\n"
+            "• /asistencia\\_hoy — resumen del día\n"
+            "• /quien\\_esta — quién está en la fábrica\n"
+            "• /llegadas\\_tarde — tardanzas (7 días)\n"
+            "• /nomina\\_equipo — horas y pago del equipo\n\n"
+            "*Lo tuyo:*\n"
+            "• /mi\\_asistencia — tus marcajes de hoy\n"
+            "• /mi\\_nomina — cuánto llevas\n"
+            "• /mis\\_kpis — tu asistencia y tardanzas"
+        )
+    elif emp:
+        # Operario u otro trabajador
+        txt = (
+            f"👋 *Ayuda — {emp['nombre'].split()[0]}*\n" + H + "\n"
+            "• /mi\\_asistencia — tus marcajes de hoy\n"
+            "• /mi\\_nomina — cuánto llevas esta quincena\n"
+            "• /mis\\_kpis — tu asistencia y tardanzas del mes\n\n"
+            "_Recuerda marcar entrada, almuerzo y salida en el equipo._"
+        )
+    else:
+        txt = (
+            "👋 Para usar el bot, envíame tu *número de cédula* para identificarte.\n\n"
+            "Una vez identificado podrás consultar tu asistencia y nómina."
+        )
+    await update.message.reply_text(txt, parse_mode="Markdown")
+
+
 async def cmd_agregar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """/agregar <chat_id> <nombre...> [admin|vendedor]
     Atajo para registrar usuarios. Solo admins.
@@ -3446,6 +3519,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand("yo", "Ver mi info"),
     BotCommand("nuevo", "Empezar conversación de cero"),
     BotCommand("cancelar", "Cancelar pedido en curso"),
+    BotCommand("ayuda", "Ver comandos disponibles"),
     BotCommand("start", "Saludo / instrucciones"),
 ]
 
@@ -3454,6 +3528,7 @@ CMDS_TRABAJADOR = [
     BotCommand("mi_asistencia", "Mis marcajes de hoy"),
     BotCommand("mi_nomina", "Cuánto llevo esta quincena"),
     BotCommand("mis_kpis", "Mi asistencia y tardanzas"),
+    BotCommand("ayuda", "Ver comandos disponibles"),
 ]
 CMDS_SUPERVISION = CMDS_TRABAJADOR + [
     BotCommand("asistencia_hoy", "Resumen de asistencia de hoy"),
@@ -3517,6 +3592,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("yo", cmd_yo))
     app.add_handler(CommandHandler("nuevo", cmd_nuevo))
+    app.add_handler(CommandHandler("ayuda", cmd_ayuda))
     app.add_handler(CommandHandler("cancelar", cmd_cancelar))
     app.add_handler(CommandHandler("correos", cmd_correos))
     app.add_handler(CommandHandler("factura", cmd_factura))
