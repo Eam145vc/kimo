@@ -1228,19 +1228,29 @@ async def api_empleado_perfil(
     dias_trabajados_real = sum(1 for i in items if (i.get("horas") or 0) > 0 and not i.get("es_excepcion"))
     dias_incapacidad = sum(1 for i in items if i.get("es_excepcion"))
     dias_finde_trab = sum(1 for i in items if i.get("es_finde") and (i.get("horas") or 0) > 0)
-    tarde = sum(1 for i in items if i.get("status_entrada") == "tarde")
+    # Llegadas tarde: cuenta cualquier hito de "llegada" que perdio tiempo
+    # (entrada, regreso de almuerzo o inicio de extras tarde). Antes solo
+    # miraba la entrada y no contaba la tardanza de almuerzo/extras.
+    tarde = 0
     salida_temp = sum(1 for i in items if i.get("status_salida") == "temprano")
+    for i in items:
+        for h in (i.get("calculo") or {}).get("hitos", []):
+            if h["hito"] in ("Entrada", "Regreso almuerzo") and h["perdidos"] > 0:
+                tarde += 1
+        # extra in tarde tambien cuenta
+        if i.get("status_extra_in") == "tarde":
+            tarde += 1
 
     # Dias trabajados para KPI = max(reales, asumidos). Como todo el rango por
     # defecto es pasado (<= hoy), los dias asumidos cubren todos los habiles ->
     # asistencia 100%. Cuando haya dias futuros (desde mañana) entran los reales.
     dias_trabajados = max(dias_trabajados_real, dias_habiles_asumidos)
 
-    # Minutos tarde promedio (solo dias con entrada tarde)
+    # Minutos tarde promedio: incluye entrada Y regreso de almuerzo tarde.
     mins_tarde = []
     for i in items:
         for h in (i.get("calculo") or {}).get("hitos", []):
-            if h["hito"] == "Entrada" and h["perdidos"] > 0:
+            if h["hito"] in ("Entrada", "Regreso almuerzo") and h["perdidos"] > 0:
                 mins_tarde.append(h["perdidos"])
     prom_min_tarde = round(sum(mins_tarde) / len(mins_tarde), 1) if mins_tarde else 0
 

@@ -53,10 +53,22 @@
       <!-- Selector de rango -->
       <div class="flex items-center gap-2 mb-4 text-sm flex-wrap">
         <span class="text-xs text-text-muted">Periodo:</span>
-        <button @click="setRango(30)" :class="rangoDias===30 ? 'bg-accent text-bg' : 'bg-surface ring-1 ring-border text-text-muted hover:text-text'" class="text-xs px-3 py-1.5 rounded-lg transition-colors duration-200">30 días</button>
-        <button @click="setRango(15)" :class="rangoDias===15 ? 'bg-accent text-bg' : 'bg-surface ring-1 ring-border text-text-muted hover:text-text'" class="text-xs px-3 py-1.5 rounded-lg transition-colors duration-200">15 días</button>
-        <button @click="setRango(90)" :class="rangoDias===90 ? 'bg-accent text-bg' : 'bg-surface ring-1 ring-border text-text-muted hover:text-text'" class="text-xs px-3 py-1.5 rounded-lg transition-colors duration-200">90 días</button>
-        <span class="text-[11px] text-text-muted ml-1 tabular" x-text="rango.desde + ' → ' + rango.hasta"></span>
+        <template x-for="opt in [{k:'semana',t:'Semana'},{k:'quincena',t:'Quincena'},{k:'mes',t:'Mes'},{k:'custom',t:'Personalizado'}]" :key="opt.k">
+          <button @click="setPeriodo(opt.k)"
+                  :class="periodo===opt.k ? 'bg-accent text-bg' : 'bg-surface ring-1 ring-border text-text-muted hover:text-text'"
+                  class="text-xs px-3 py-1.5 rounded-lg transition-colors duration-200" x-text="opt.t"></button>
+        </template>
+        <!-- inputs de fecha solo en modo personalizado -->
+        <template x-if="periodo==='custom'">
+          <span class="flex items-center gap-1">
+            <input type="date" x-model="rango.desde" @change="cargarCustom()" class="bg-surface ring-1 ring-border rounded px-2 py-1 text-xs tabular">
+            <span class="text-text-muted text-xs">→</span>
+            <input type="date" x-model="rango.hasta" @change="cargarCustom()" class="bg-surface ring-1 ring-border rounded px-2 py-1 text-xs tabular">
+          </span>
+        </template>
+        <template x-if="periodo!=='custom'">
+          <span class="text-[11px] text-text-muted ml-1 tabular" x-text="rango.desde + ' → ' + rango.hasta"></span>
+        </template>
       </div>
 
       <!-- ===== KPIs ===== -->
@@ -169,23 +181,55 @@ function empleadoDetalle(empId) {
     kpis: {},
     tendencia: [],
     rango: { desde: '', hasta: '' },
-    rangoDias: 30,
+    periodo: 'mes',  // por defecto: mes actual
 
     async init() {
-      await this.cargar();
+      this.setPeriodo('mes');
+    },
+
+    // Fecha YYYY-MM-DD en tz Bogota
+    _fbog(dd) {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).format(dd || new Date());
+    },
+
+    // Calcula desde/hasta segun el periodo elegido y recarga.
+    setPeriodo(p) {
+      this.periodo = p;
+      if (p === 'custom') {
+        // mantiene el rango actual; el usuario ajusta con los inputs
+        if (!this.rango.desde) this.rango.desde = this._fbog();
+        if (!this.rango.hasta) this.rango.hasta = this._fbog();
+        return;
+      }
+      const hoyStr = this._fbog();          // YYYY-MM-DD hoy (Bogota)
+      const [Y, M, D] = hoyStr.split('-').map(Number);
+      let desde, hasta = hoyStr;
+      if (p === 'semana') {
+        // lunes de esta semana hasta hoy
+        const dow = new Date(hoyStr + 'T12:00:00').getDay(); // 0=dom..6=sab
+        const offset = (dow === 0 ? 6 : dow - 1);            // dias desde lunes
+        const lun = new Date(hoyStr + 'T12:00:00'); lun.setDate(lun.getDate() - offset);
+        desde = this._fbog(lun);
+      } else if (p === 'quincena') {
+        // 1-15 o 16-fin segun el dia actual
+        desde = `${Y}-${String(M).padStart(2,'0')}-${D <= 15 ? '01' : '16'}`;
+      } else { // mes
+        desde = `${Y}-${String(M).padStart(2,'0')}-01`;
+      }
+      this.rango = { desde, hasta };
+      this.cargar();
+    },
+
+    cargarCustom() {
+      if (this.rango.desde && this.rango.hasta) this.cargar();
     },
 
     async cargar() {
       this.cargando = true;
-      const fbog = (dd) => new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit'
-      }).format(dd);
-      const hoy = new Date();
-      const hasta = fbog(hoy);
-      const d = new Date(hoy); d.setDate(d.getDate() - (this.rangoDias - 1));
-      const desde = fbog(d);
       try {
-        const r = await fetch(`/api/empleados/${this.empId}/perfil?desde=${desde}&hasta=${hasta}`);
+        const r = await fetch(`/api/empleados/${this.empId}/perfil?desde=${this.rango.desde}&hasta=${this.rango.hasta}`);
         if (!r.ok) { this.cargando = false; return; }
         const j = await r.json();
         this.emp = j.empleado;
@@ -195,11 +239,6 @@ function empleadoDetalle(empId) {
         this.fotoEmp = this.emp.foto_path || null;
       } catch (e) {}
       this.cargando = false;
-    },
-
-    setRango(dias) {
-      this.rangoDias = dias;
-      this.cargar();
     },
 
     iniciales(nombre) {
