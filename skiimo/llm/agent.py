@@ -115,9 +115,14 @@ REGLAS:
   modificar_pedido_actual(item_descripcion=..., nuevo_precio=...).
   Por default, asume que los precios manuales son CON IVA salvo que el usuario
   diga explicitamente "sin IVA". Para precios "25 mil" interpretar como 25000.
-- Si dice "Hugo paga en 8 dias y le doy 10%" / "configura pronto pago de X" /
-  "a Zuniga descuento 10% si paga antes de 8 dias" -> configurar_pronto_pago() (solo admin).
-  Para quitar pronto pago: 'sacale el pronto pago a X' -> configurar_pronto_pago(X, 0, 0).
+- PRONTO PAGO = descuento que se le da a un cliente si paga rapido (ej: 10% si paga en 8 dias).
+  - Configurar: "Hugo paga en 8 dias y le doy 10%" / "a Zuniga descuento 10% si paga antes de 8 dias"
+    -> configurar_pronto_pago() (solo admin). Para quitar: 'sacale el pronto pago a X'
+    -> configurar_pronto_pago(X, 0, 0).
+  - CONSULTAR: "que clientes tienen pronto pago" / "quien tiene descuento por pronto pago" /
+    "mostrame los prontos pagos" -> listar_pronto_pago() (sin argumentos).
+    "cual es el pronto pago de Hugo" -> listar_pronto_pago(cliente_query='Hugo').
+  NUNCA digas que no sabes nada del pronto pago: usa estas tools.
 - Si dice "que tengo por pagar" -> facturas_proveedor_pendientes()
 - Si dice "que esta vencido" -> vencimientos_proximos()
 - Si dice "repite pedido de X" / "lo de siempre a X" -> repetir_pedido_cliente()

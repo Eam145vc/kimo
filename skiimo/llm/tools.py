@@ -1589,6 +1589,65 @@ def configurar_pronto_pago(
     }
 
 
+def listar_pronto_pago(cliente_query: str | None = None) -> dict:
+    """Lista los descuentos por pronto pago configurados.
+
+    Sin argumentos: devuelve TODOS los clientes con pronto pago activo.
+    Con cliente_query: el pronto pago de ese cliente (o que no tiene).
+
+    Usar cuando preguntan: 'que clientes tienen pronto pago', 'quien tiene
+    descuento por pronto pago', 'cual es el pronto pago de Hugo', 'mostrame
+    los prontos pagos'.
+    """
+    conn = get_conn()
+    try:
+        # Filtrar a un cliente si lo piden
+        customer_id = None
+        cliente_nombre = None
+        if cliente_query:
+            from skiimo.matcher import Matcher
+            hits = Matcher().search_customer(cliente_query, limit=1)
+            if not hits:
+                return {"ok": False, "error": f"Cliente '{cliente_query}' no encontrado"}
+            customer_id = hits[0].id
+            cliente_nombre = hits[0].name
+
+        sql = (
+            """SELECT pp.customer_id, pp.dias_max, pp.descuento_pct, pp.notas,
+                      COALESCE(c.name, pp.customer_id) AS nombre
+               FROM clientes_pronto_pago pp
+               LEFT JOIN siigo_customers c ON c.id = pp.customer_id
+               WHERE pp.activo = 1"""
+        )
+        params: list = []
+        if customer_id:
+            sql += " AND pp.customer_id = ?"
+            params.append(customer_id)
+        sql += " ORDER BY pp.descuento_pct DESC, nombre ASC"
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+    items = [
+        {
+            "cliente": r["nombre"],
+            "descuento_pct": r["descuento_pct"],
+            "dias_max": r["dias_max"],
+            "texto": f"{r['descuento_pct']:.0f}% si paga en {r['dias_max']} dias",
+        }
+        for r in rows
+    ]
+    if cliente_query and not items:
+        return {
+            "ok": True,
+            "cliente": cliente_nombre,
+            "tiene_pronto_pago": False,
+            "items": [],
+            "total": 0,
+        }
+    return {"ok": True, "items": items, "total": len(items)}
+
+
 def modificar_pedido_actual(
     chat_id: int,
     item_descripcion: str | None = None,
@@ -1753,6 +1812,7 @@ TOOLS_MAP: dict[str, Any] = {
     "cambiar_categoria_cliente": cambiar_categoria_cliente,
     "cambiar_precios_grupo": cambiar_precios_grupo,
     "configurar_pronto_pago": configurar_pronto_pago,
+    "listar_pronto_pago": listar_pronto_pago,
     "modificar_pedido_actual": modificar_pedido_actual,
     "analizar_pago_factura": analizar_pago_factura,
     "analizar_pago_a_proveedor": analizar_pago_a_proveedor,
@@ -2222,6 +2282,25 @@ TOOL_DECLARATIONS: list[dict] = [
                 "descuento_pct": {"type": "number", "description": "Porcentaje de descuento (0 para quitar). Ej: 10 para 10%"},
             },
             "required": ["cliente_query", "dias_max", "descuento_pct"],
+        },
+    },
+    {
+        "name": "listar_pronto_pago",
+        "description": (
+            "Lista los descuentos por pronto pago configurados. Sin argumentos "
+            "devuelve TODOS los clientes que tienen pronto pago activo. Con "
+            "cliente_query devuelve el de ese cliente. Usar cuando preguntan "
+            "'que clientes tienen pronto pago', 'quien tiene descuento por pronto "
+            "pago', 'cual es el pronto pago de Hugo', 'mostrame los prontos pagos'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cliente_query": {
+                    "type": "string",
+                    "description": "Opcional. Nombre o NIT de un cliente para ver solo su pronto pago. Omitir para listar todos.",
+                },
+            },
         },
     },
 ]
