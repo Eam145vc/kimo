@@ -3406,7 +3406,7 @@ CMDS_SUPERVISION = CMDS_TRABAJADOR + [
     BotCommand("asistencia_hoy", "Resumen de asistencia de hoy"),
     BotCommand("quien_esta", "Quién está en la fábrica ahora"),
     BotCommand("llegadas_tarde", "Llegadas tarde (7 días)"),
-    BotCommand("quincena_equipo", "Horas y pago del equipo"),
+    BotCommand("nomina_equipo", "Horas y pago del equipo"),
 ]
 
 
@@ -3487,7 +3487,8 @@ def main() -> None:
     app.add_handler(CommandHandler("quien_esta", cmd_quien_esta))
     app.add_handler(CommandHandler("asistencia_hoy", cmd_asistencia_hoy))
     app.add_handler(CommandHandler("llegadas_tarde", cmd_llegadas_tarde))
-    app.add_handler(CommandHandler("quincena_equipo", cmd_quincena))
+    app.add_handler(CommandHandler("nomina_equipo", cmd_quincena))
+    app.add_handler(CommandHandler("quincena_equipo", cmd_quincena))  # alias
     app.add_handler(CommandHandler("asistencia_help", cmd_asistencia_help))
 
     # Job de resumen diario a las 8:00 hora Colombia (UTC-5 = 13:00 UTC)

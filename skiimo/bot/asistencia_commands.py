@@ -200,62 +200,79 @@ async def cmd_llegadas_tarde(update: Update, _: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
+def _es_admin_total(chat_id: int) -> bool:
+    """admin-env o empleado con cargo Administrativo (ven el ciclo quincenal)."""
+    if _is_admin(chat_id):
+        return True
+    emp = empleado_por_chat(chat_id)
+    return bool(emp) and (emp.get("cargo") or "").strip().lower() == "administrativo"
+
+
 async def cmd_quincena(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    """Resumen de quincena actual con horas y pago estimado."""
+    """Pago del equipo segun el rol:
+      - Coordinador: SEMANA actual, solo operarios (semanal).
+      - Administrativo/admin: QUINCENA actual, administrativos y ventas.
+    """
     chat_id = update.effective_chat.id
     if not puede_supervisar(chat_id):
         await update.message.reply_text("No tienes permiso para ver esta informacion del equipo.")
         return
 
-    from skiimo.asistencia.horas import calcular_dia
-
     hoy = _now_bogota().date()
-    if hoy.day <= 15:
-        inicio = hoy.replace(day=1)
-        fin = hoy.replace(day=15)
-    else:
-        inicio = hoy.replace(day=16)
-        if inicio.month == 12:
-            fin = inicio.replace(year=inicio.year + 1, month=1, day=1) - timedelta(days=1)
+    es_admin = _es_admin_total(chat_id)
+
+    if es_admin:
+        # Quincena: administrativos + ventas (cargos quincenales)
+        if hoy.day <= 15:
+            inicio, fin = hoy.replace(day=1), hoy.replace(day=15)
         else:
-            fin = inicio.replace(month=inicio.month + 1, day=1) - timedelta(days=1)
+            inicio = hoy.replace(day=16)
+            fin = (inicio.replace(year=inicio.year + 1, month=1, day=1) - timedelta(days=1)
+                   if inicio.month == 12
+                   else inicio.replace(month=inicio.month + 1, day=1) - timedelta(days=1))
+        cargos = "administrativo,venta"
+        titulo = f"💰 *Nómina quincenal* (administrativos y ventas)"
+    else:
+        # Coordinador: semana actual (lun-dom), solo operarios
+        inicio = hoy - timedelta(days=hoy.weekday())  # lunes
+        fin = inicio + timedelta(days=6)
+        cargos = "operario"
+        titulo = f"💰 *Nómina semanal* (operarios)"
 
-    conn = get_conn()
+    # Usar el motor del panel (mismo calculo que la web)
+    from skiimo.panel.asistencia_routes import api_resumen_diario
+    import skiimo.panel.asistencia_routes as _ar
+    _orig = _ar._require_user
+    _ar._require_user = lambda t: {"username": "bot"}
     try:
-        empleados = conn.execute(
-            "SELECT id, nombre, valor_hora_ord FROM empleados WHERE activo = 1 ORDER BY nombre"
-        ).fetchall()
-        total_pago = 0.0
-        lines = [f"*Quincena {inicio.isoformat()} a {fin.isoformat()}*", ""]
-        for emp in empleados:
-            marc = conn.execute(
-                "SELECT ts FROM marcajes WHERE empleado_id = ? AND fecha BETWEEN ? AND ? ORDER BY ts",
-                (emp["id"], inicio.isoformat(), fin.isoformat()),
-            ).fetchall()
-            por_dia: dict[str, list[datetime]] = {}
-            for r in marc:
-                ts = datetime.fromisoformat(r["ts"])
-                por_dia.setdefault(ts.date().isoformat(), []).append(ts)
-
-            tot_h = 0.0
-            tot_ext = 0.0
-            pago = 0.0
-            vh = emp["valor_hora_ord"] or 0
-            for fecha_str, lista in por_dia.items():
-                t = calcular_dia(date.fromisoformat(fecha_str), sorted(lista))
-                tot_h += t.total_horas()
-                tot_ext += (t.extra_diurnas + t.extra_nocturnas
-                             + t.dom_fest_extra_diurnas + t.dom_fest_extra_nocturnas)
-                pago += t.valorizar(vh)
-            total_pago += pago
-            if tot_h > 0:
-                extra_label = f" _+{tot_ext:.1f}h extra_" if tot_ext > 0 else ""
-                lines.append(f"  • {emp['nombre']}: *{tot_h:.1f}h*{extra_label}  ~${pago:,.0f}")
-        lines.append("")
-        lines.append(f"💰 *Total quincena: ${total_pago:,.0f}*")
+        r = await api_resumen_diario(
+            session_token="bot", desde=inicio.isoformat(), hasta=fin.isoformat(), cargo=cargos
+        )
     finally:
-        conn.close()
+        _ar._require_user = _orig
+    items = r.get("items", [])
 
+    # Agrupar por empleado
+    por_emp: dict[int, dict] = {}
+    for i in items:
+        e = por_emp.setdefault(i["empleado_id"], {"nombre": i["empleado_nombre"], "h": 0.0, "ext": 0.0, "pago": 0})
+        if not i.get("es_excepcion"):
+            e["h"] += i.get("horas") or 0
+        e["ext"] += i.get("horas_extras") or 0
+        e["pago"] += i.get("pago_total") or 0
+
+    lines = [titulo, f"_{_fecha_corta(inicio)} a {_fecha_corta(fin)}_", "━━━━━━━━━━━━━━━"]
+    total = 0
+    for e in sorted(por_emp.values(), key=lambda x: x["nombre"]):
+        if e["h"] <= 0 and e["pago"] <= 0:
+            continue
+        total += e["pago"]
+        ext = f" +{_hm(e['ext'])} extra" if e["ext"] > 0 else ""
+        pago_fmt = f"{round(e['pago']):,.0f}".replace(",", ".")
+        lines.append(f"• {e['nombre']}: *{_hm(e['h'])}*{ext}  ~${pago_fmt}")
+    lines.append("━━━━━━━━━━━━━━━")
+    total_fmt = f"{round(total):,.0f}".replace(",", ".")
+    lines.append(f"💵 *Total: ${total_fmt}*")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
@@ -444,6 +461,32 @@ def _hm(horas) -> str:
     return f"{m}min"
 
 
+_MESES = ["", "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+_DIAS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
+
+
+def _fecha_larga(iso: str) -> str:
+    """2026-05-28 -> 'jueves 28 de mayo'."""
+    try:
+        d = date.fromisoformat(iso)
+        dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        meses = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+                 "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+        return f"{dias[d.weekday()]} {d.day} de {meses[d.month]}"
+    except Exception:
+        return iso
+
+
+def _fecha_corta(d) -> str:
+    """date/iso -> '28 may'."""
+    try:
+        if isinstance(d, str):
+            d = date.fromisoformat(d)
+        return f"{d.day} {_MESES[d.month]}"
+    except Exception:
+        return str(d)
+
+
 async def cmd_mi_asistencia(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     """El trabajador ve sus marcajes de HOY."""
     chat_id = update.effective_chat.id
@@ -461,18 +504,23 @@ async def cmd_mi_asistencia(update: Update, _: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
     i = items[0]
-    lines = [f"*Tu asistencia de hoy* ({hoy})", ""]
-    lines.append(f"🟢 Entrada: {_h12(i.get('primera_entrada'))}")
-    lines.append(f"🔵 Salida almuerzo: {_h12(i.get('almuerzo_out'))}")
-    lines.append(f"🔵 Regreso almuerzo: {_h12(i.get('almuerzo_in'))}")
-    lines.append(f"🟠 Salida: {_h12(i.get('ultima_salida'))}")
+    nombre = emp["nombre"].split()[0]
+    fecha_txt = _fecha_larga(hoy)
+    lines = [
+        f"📋 *Tu asistencia de hoy*",
+        f"_{fecha_txt}_",
+        "━━━━━━━━━━━━━━━",
+        f"🟢 Entrada            `{_h12(i.get('primera_entrada'))}`",
+        f"🍽 Salida almuerzo  `{_h12(i.get('almuerzo_out'))}`",
+        f"↩️ Regreso            `{_h12(i.get('almuerzo_in'))}`",
+        f"🔴 Salida              `{_h12(i.get('ultima_salida'))}`",
+    ]
     if i.get("extra_in"):
-        lines.append(f"🟡 Extras: {_h12(i.get('extra_in'))} → {_h12(i.get('extra_out'))}")
-    lines.append("")
-    lines.append(f"Horas: *{_hm(i.get('horas'))}*")
-    # avisar si llego tarde
+        lines.append(f"⭐ Extras             `{_h12(i.get('extra_in'))} → {_h12(i.get('extra_out'))}`")
+    lines.append("━━━━━━━━━━━━━━━")
+    lines.append(f"⏱ Horas trabajadas: *{_hm(i.get('horas'))}*")
     if i.get("status_entrada") == "tarde":
-        lines.append("⚠️ _Llegaste tarde hoy._")
+        lines.append("\n⚠️ _Hoy llegaste tarde._")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
@@ -492,15 +540,19 @@ async def cmd_mi_nomina(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     tot_h = sum((i.get("horas") or 0) for i in items if not i.get("es_excepcion"))
     tot_ext = sum((i.get("horas_extras") or 0) for i in items)
     tot_pago = sum((i.get("pago_total") or 0) for i in items)
+    quincena = "1ª (1–15)" if hoy.day <= 15 else "2ª (16–fin)"
+    total_fmt = f"{round(tot_pago):,.0f}".replace(",", ".")
     lines = [
-        f"*Tu nómina* ({desde.isoformat()} → {hoy.isoformat()})", "",
-        f"Horas trabajadas: *{_hm(tot_h)}*",
+        f"💰 *Tu nómina* — quincena {quincena}",
+        f"_{_fecha_corta(desde)} a {_fecha_corta(hoy)}_",
+        "━━━━━━━━━━━━━━━",
+        f"⏱ Horas trabajadas: *{_hm(tot_h)}*",
     ]
     if tot_ext > 0:
-        lines.append(f"Horas extra: *{_hm(tot_ext)}*")
-    lines.append(f"Total estimado: *${round(tot_pago):,.0f}*".replace(",", "."))
-    lines.append("")
-    lines.append("_Estimado, sujeto a ajustes de la administración._")
+        lines.append(f"⭐ Horas extra:      *{_hm(tot_ext)}*")
+    lines.append("━━━━━━━━━━━━━━━")
+    lines.append(f"💵 *Total estimado:  ${total_fmt}*")
+    lines.append("\n_Valor estimado, sujeto a ajustes de administración._")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
@@ -524,16 +576,31 @@ async def cmd_mis_kpis(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     finally:
         _ar._require_user = _orig
     k = r["kpis"]
+    # barra visual de asistencia (10 bloques)
+    pct = k["pct_asistencia"]
+    llenos = int(round(pct / 10))
+    barra = "█" * llenos + "░" * (10 - llenos)
+    emoji_asist = "🟢" if pct >= 95 else ("🟡" if pct >= 80 else "🔴")
     lines = [
-        f"*Tus indicadores* (mes actual)", "",
-        f"Asistencia: *{k['pct_asistencia']}%*  ({k['dias_trabajados']}/{k['dias_esperados']} días)",
-        f"Llegadas tarde: *{k['llegadas_tarde']}*",
-        f"  - Entrada: {k.get('tarde_entrada', 0)}",
-        f"  - Almuerzo: {k.get('tarde_almuerzo', 0)}",
-        f"Horas trabajadas: *{_hm(k['horas_ord'])}*",
+        f"📊 *Tus indicadores* — mes actual",
+        "━━━━━━━━━━━━━━━",
+        f"{emoji_asist} Asistencia: *{pct}%*",
+        f"`{barra}`",
+        f"   _{k['dias_trabajados']} de {k['dias_esperados']} días_",
+        "",
+        f"⏰ Llegadas tarde: *{k['llegadas_tarde']}*",
     ]
+    if k["llegadas_tarde"] > 0:
+        if k.get("tarde_entrada", 0):
+            lines.append(f"   • Entrada: {k['tarde_entrada']}")
+        if k.get("tarde_almuerzo", 0):
+            lines.append(f"   • Almuerzo: {k['tarde_almuerzo']}")
+        if k.get("tarde_extras", 0):
+            lines.append(f"   • Extras: {k['tarde_extras']}")
+    lines.append("")
+    lines.append(f"⏱ Horas trabajadas: *{_hm(k['horas_ord'])}*")
     if k.get("horas_extra", 0) > 0:
-        lines.append(f"Horas extra: *{_hm(k['horas_extra'])}*")
+        lines.append(f"⭐ Horas extra: *{_hm(k['horas_extra'])}*")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
@@ -544,11 +611,14 @@ async def cmd_mi_help(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
             "Envíame tu número de cédula para identificarte y poder consultar tu información."
         )
         return
+    nombre = emp["nombre"].split()[0]
     await update.message.reply_text(
-        f"Hola {emp['nombre']}. Puedes consultar:\n\n"
-        "/mi_asistencia — tus marcajes de hoy\n"
-        "/mi_nomina — cuánto llevas esta quincena\n"
-        "/mis_kpis — tu asistencia y tardanzas del mes",
+        f"👋 Hola, *{nombre}*\n"
+        "━━━━━━━━━━━━━━━\n"
+        "📋 /mi\\_asistencia — tus marcajes de hoy\n"
+        "💰 /mi\\_nomina — cuánto llevas esta quincena\n"
+        "📊 /mis\\_kpis — tu asistencia y tardanzas del mes",
+        parse_mode=ParseMode.MARKDOWN,
     )
 
 
