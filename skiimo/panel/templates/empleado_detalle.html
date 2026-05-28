@@ -83,7 +83,15 @@
         <div class="rounded-xl bg-surface ring-1 ring-border p-4">
           <p class="text-xs text-text-muted">Llegadas tarde</p>
           <p class="text-2xl font-semibold tabular mt-1" :class="kpis.llegadas_tarde > 0 ? 'text-warning' : 'text-success'" x-text="kpis.llegadas_tarde"></p>
-          <p class="text-[11px] text-text-muted mt-0.5 tabular" x-text="kpis.prom_min_tarde > 0 ? ('prom. ' + kpis.prom_min_tarde + ' min') : 'sin tardanzas'"></p>
+          <template x-if="kpis.llegadas_tarde > 0">
+            <div class="text-[11px] text-text-muted mt-1 space-y-0.5">
+              <p x-show="kpis.tarde_entrada > 0" class="tabular">Entrada: <span class="text-warning" x-text="kpis.tarde_entrada"></span></p>
+              <p x-show="kpis.tarde_almuerzo > 0" class="tabular">Almuerzo: <span class="text-warning" x-text="kpis.tarde_almuerzo"></span></p>
+              <p x-show="kpis.tarde_extras > 0" class="tabular">Extras: <span class="text-warning" x-text="kpis.tarde_extras"></span></p>
+              <p class="tabular text-text-muted/70" x-text="'prom. ' + kpis.prom_min_tarde + ' min'"></p>
+            </div>
+          </template>
+          <p x-show="kpis.llegadas_tarde === 0" class="text-[11px] text-text-muted mt-0.5">sin tardanzas</p>
         </div>
         <div class="rounded-xl bg-surface ring-1 ring-border p-4">
           <p class="text-xs text-text-muted">Salidas tempranas</p>

@@ -1228,18 +1228,22 @@ async def api_empleado_perfil(
     dias_trabajados_real = sum(1 for i in items if (i.get("horas") or 0) > 0 and not i.get("es_excepcion"))
     dias_incapacidad = sum(1 for i in items if i.get("es_excepcion"))
     dias_finde_trab = sum(1 for i in items if i.get("es_finde") and (i.get("horas") or 0) > 0)
-    # Llegadas tarde: cuenta cualquier hito de "llegada" que perdio tiempo
-    # (entrada, regreso de almuerzo o inicio de extras tarde). Antes solo
-    # miraba la entrada y no contaba la tardanza de almuerzo/extras.
-    tarde = 0
+    # Llegadas tarde desglosadas POR HITO para seguimiento:
+    #   entrada / almuerzo (regreso) / extras (inicio). El total es la suma.
+    tarde_entrada = 0
+    tarde_almuerzo = 0
+    tarde_extras = 0
     salida_temp = sum(1 for i in items if i.get("status_salida") == "temprano")
     for i in items:
         for h in (i.get("calculo") or {}).get("hitos", []):
-            if h["hito"] in ("Entrada", "Regreso almuerzo") and h["perdidos"] > 0:
-                tarde += 1
-        # extra in tarde tambien cuenta
+            if h["perdidos"] > 0:
+                if h["hito"] == "Entrada":
+                    tarde_entrada += 1
+                elif h["hito"] == "Regreso almuerzo":
+                    tarde_almuerzo += 1
         if i.get("status_extra_in") == "tarde":
-            tarde += 1
+            tarde_extras += 1
+    tarde = tarde_entrada + tarde_almuerzo + tarde_extras
 
     # Dias trabajados para KPI = max(reales, asumidos). Como todo el rango por
     # defecto es pasado (<= hoy), los dias asumidos cubren todos los habiles ->
@@ -1285,6 +1289,9 @@ async def api_empleado_perfil(
             "dias_incapacidad": dias_incapacidad,
             "dias_finde_trab": dias_finde_trab,
             "llegadas_tarde": tarde,
+            "tarde_entrada": tarde_entrada,
+            "tarde_almuerzo": tarde_almuerzo,
+            "tarde_extras": tarde_extras,
             "salidas_tempranas": salida_temp,
             "prom_min_tarde": prom_min_tarde,
             "horas_ord": horas_ord,
