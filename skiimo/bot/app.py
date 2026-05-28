@@ -36,6 +36,7 @@ from telegram import (
     MenuButtonCommands,
     Update,
 )
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -61,6 +62,33 @@ log = logging.getLogger("skiimo.bot")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
+
+
+async def _reply_md_safe(update: Update, texto: str, **kwargs):
+    """Responde intentando Markdown; si Telegram no puede parsear las entidades
+    (texto del LLM/OCR con `*` o `_` sin balancear) reintenta en texto plano.
+
+    Evita que el bot quede mudo con 'BadRequest: can't parse entities'.
+    """
+    try:
+        return await update.message.reply_text(texto, parse_mode="Markdown", **kwargs)
+    except BadRequest as e:
+        if "parse entities" in str(e).lower() or "end of the entity" in str(e).lower():
+            log.warning("Markdown invalido, reenvio en texto plano: %s", e)
+            return await update.message.reply_text(texto, **kwargs)
+        raise
+
+
+async def _edit_md_safe(cb, texto: str, **kwargs):
+    """Igual que _reply_md_safe pero para editar un mensaje (callback query)."""
+    try:
+        return await cb.edit_message_text(texto, parse_mode="Markdown", **kwargs)
+    except BadRequest as e:
+        msg = str(e).lower()
+        if "parse entities" in msg or "end of the entity" in msg:
+            log.warning("Markdown invalido (edit), reenvio en texto plano: %s", e)
+            return await cb.edit_message_text(texto, **kwargs)
+        raise
 
 # Matcher singleton recargable (inicializacion lazy para que bootstrap pueda crear la DB primero)
 _matcher: Matcher | None = None
@@ -1231,10 +1259,10 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )])
     buttons.append([InlineKeyboardButton("❌  Descartar", callback_data=f"cpcancel:{comp_id}")])
 
-    await update.message.reply_text(
+    await _reply_md_safe(
+        update,
         "\n".join(msg_lines),
         reply_markup=InlineKeyboardMarkup(buttons),
-        parse_mode="Markdown",
     )
 
 
@@ -1592,10 +1620,10 @@ async def _send_pago_proposal(update: Update, ctx: ContextTypes.DEFAULT_TYPE, te
         )])
     buttons.append([InlineKeyboardButton("❌  Cancelar", callback_data=f"paycanc:{propuesta_id}")])
 
-    await update.message.reply_text(
+    await _reply_md_safe(
+        update,
         texto[:3500],
         reply_markup=InlineKeyboardMarkup(buttons),
-        parse_mode="Markdown" if "*" in texto or "_" in texto else None,
     )
 
 
@@ -1616,10 +1644,10 @@ async def _send_pago_proveedor_proposal(update: Update, ctx: ContextTypes.DEFAUL
         )])
     buttons.append([InlineKeyboardButton("❌  Cancelar", callback_data=f"prvcanc:{propuesta_id}")])
 
-    await update.message.reply_text(
+    await _reply_md_safe(
+        update,
         texto[:3500],
         reply_markup=InlineKeyboardMarkup(buttons),
-        parse_mode="Markdown" if "*" in texto or "_" in texto else None,
     )
 
 
@@ -2735,10 +2763,10 @@ async def _handle_comprobante_callback(cb, ctx, accion: str, parts: list[str]) -
             )])
         buttons.append([InlineKeyboardButton("❌  Cancelar", callback_data=f"paycanc:{propuesta_id}")])
 
-        await cb.edit_message_text(
+        await _edit_md_safe(
+            cb,
             texto,
             reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode="Markdown",
         )
         # liberar comprobante (ya se delegó al flujo de pagos)
         _COMPROBANTE_CACHE.pop(cid, None)
