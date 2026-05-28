@@ -769,20 +769,21 @@ async def api_equipo_empleados_bot(session_token: str | None = Cookie(default=No
     conn = get_conn()
     try:
         total = conn.execute("SELECT COUNT(*) FROM empleados WHERE activo=1").fetchone()[0]
+        # 'vinculado' = tiene chat NO nulo y NO vacio
         vinculados = conn.execute(
-            "SELECT COUNT(*) FROM empleados WHERE activo=1 AND telegram_chat_id IS NOT NULL"
+            "SELECT COUNT(*) FROM empleados WHERE activo=1 AND telegram_chat_id IS NOT NULL AND TRIM(telegram_chat_id) != ''"
         ).fetchone()[0]
         por_cargo = conn.execute(
             """SELECT cargo,
                       COUNT(*) AS total,
-                      SUM(CASE WHEN telegram_chat_id IS NOT NULL THEN 1 ELSE 0 END) AS vinculados
+                      SUM(CASE WHEN telegram_chat_id IS NOT NULL AND TRIM(telegram_chat_id) != '' THEN 1 ELSE 0 END) AS vinculados
                FROM empleados WHERE activo=1
                GROUP BY cargo ORDER BY cargo"""
         ).fetchall()
         faltan = conn.execute(
             """SELECT nombre, cargo, CASE WHEN cedula IS NULL OR cedula='' THEN 0 ELSE 1 END AS tiene_cedula
                FROM empleados
-               WHERE activo=1 AND telegram_chat_id IS NULL
+               WHERE activo=1 AND (telegram_chat_id IS NULL OR TRIM(telegram_chat_id) = '')
                ORDER BY nombre"""
         ).fetchall()
     finally:
