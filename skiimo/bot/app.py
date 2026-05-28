@@ -256,11 +256,19 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             f"  /cancelar — cancelar pedido en curso\n"
             f"  /yo — ver mi info"
         )
+        await _aplicar_menu_por_rol(ctx.bot, chat_id)
     else:
-        await update.message.reply_text(
-            f"Hola. Tu chat_id es: {chat_id}\n\n"
-            f"No estas autorizado. Pasale este chat_id al admin para que te de de alta."
-        )
+        # ¿Es un TRABAJADOR vinculado? -> menu de asistencia segun su cargo.
+        emp = _empleado_vinculado(chat_id)
+        if emp:
+            from skiimo.bot.asistencia_commands import cmd_mi_help
+            await cmd_mi_help(update, ctx)
+            await _aplicar_menu_por_rol(ctx.bot, chat_id)
+        else:
+            await update.message.reply_text(
+                "Hola. Para identificarte, envíame tu número de cédula."
+            )
+            await _aplicar_menu_por_rol(ctx.bot, chat_id)
 
 
 async def cmd_yo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -838,6 +846,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                     "/mi_nomina — cuánto llevas esta quincena\n"
                     "/mis_kpis — tu asistencia y tardanzas del mes"
                 )
+                await _aplicar_menu_por_rol(ctx.bot, chat_id)
             else:
                 await update.message.reply_text(
                     "No encontré esa cédula en el sistema. Verifica el número "
@@ -3386,6 +3395,44 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand("cancelar", "Cancelar pedido en curso"),
     BotCommand("start", "Saludo / instrucciones"),
 ]
+
+# Menus por rol (Telegram permite comandos por chat con BotCommandScopeChat)
+CMDS_TRABAJADOR = [
+    BotCommand("mi_asistencia", "Mis marcajes de hoy"),
+    BotCommand("mi_nomina", "Cuánto llevo esta quincena"),
+    BotCommand("mis_kpis", "Mi asistencia y tardanzas"),
+]
+CMDS_SUPERVISION = CMDS_TRABAJADOR + [
+    BotCommand("asistencia_hoy", "Resumen de asistencia de hoy"),
+    BotCommand("quien_esta", "Quién está en la fábrica ahora"),
+    BotCommand("llegadas_tarde", "Llegadas tarde (7 días)"),
+    BotCommand("quincena_equipo", "Horas y pago del equipo"),
+]
+
+
+async def _aplicar_menu_por_rol(bot, chat_id: int) -> None:
+    """Configura el menu de comandos de Telegram segun el rol del chat.
+
+    - admin-env / vendedor (bot_vendedores): menu de ventas (BOT_COMMANDS).
+    - empleado Administrativo/Coordinador: menu de supervision.
+    - empleado Operario/Venta: menu de trabajador.
+    """
+    from telegram import BotCommandScopeChat
+    try:
+        from skiimo.bot.asistencia_commands import empleado_por_chat, puede_supervisar
+        ok, _info = _is_authorized(chat_id)
+        emp = empleado_por_chat(chat_id)
+        if ok:
+            cmds = BOT_COMMANDS
+        elif emp and puede_supervisar(chat_id):
+            cmds = CMDS_SUPERVISION
+        elif emp:
+            cmds = CMDS_TRABAJADOR
+        else:
+            cmds = [BotCommand("start", "Identificarme")]
+        await bot.set_my_commands(cmds, scope=BotCommandScopeChat(chat_id=chat_id))
+    except Exception as e:
+        log.warning("No se pudo aplicar menu por rol a %s: %s", chat_id, e)
 
 
 async def _post_init(app: "Application") -> None:
