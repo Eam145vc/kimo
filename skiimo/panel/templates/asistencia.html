@@ -151,9 +151,8 @@
   <!-- Leyenda de colores -->
   <div class="flex items-center gap-4 mb-3 text-[11px] text-text-muted flex-wrap">
     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-success"></span> A tiempo (±5 min)</span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-warning"></span> Tarde (entrada/almuerzo)</span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-danger"></span> Salió antes / falta</span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-accent"></span> Salió después de hora</span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-danger"></span> Llegó tarde / salió antes / falta</span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-accent"></span> Llegó antes / salió después (no penaliza)</span>
     <span class="text-danger font-medium">Nombre rojo</span><span>= ausencia total</span>
   </div>
 
@@ -208,8 +207,8 @@
                     x-text="r.primera_entrada ? h12(r.primera_entrada) : (esAusencia(r) ? 'AUSENTE' : '—')"></td>
               </template>
               <template x-if="!r.es_excepcion">
-                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusColor(r.status_almuerzo_out)"
-                    :title="statusLabel(r.status_almuerzo_out)"
+                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusColorSalida(r.status_almuerzo_out)"
+                    :title="statusLabelSalida(r.status_almuerzo_out)"
                     x-text="r.almuerzo_out ? h12(r.almuerzo_out) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
@@ -819,23 +818,23 @@ function marcajesPage() {
       });
     },
 
+    // Color para hitos de LLEGADA (entrada, regreso de almuerzo):
+    //   tarde = disciplinario (rojo). temprano = llego antes, no es falta (azul).
     statusColor(status) {
-      // Verde = ok (dentro de tolerancia). Rojo = falta o fuera de tolerancia.
-      // Naranja = tarde/temprano (fuera de tolerancia pero hay marcaje).
       if (!status) return 'text-text-muted';
       return {
         'ok': 'text-success',
-        'tarde': 'text-danger',
-        'temprano': 'text-warning',
+        'tarde': 'text-danger',     // llego tarde -> disciplinario
+        'temprano': 'text-accent',  // llego antes -> informativo (azul)
         'falta': 'text-danger/60',
       }[status] || 'text-text-muted';
     },
 
     statusLabel(status) {
       return {
-        'ok': 'Marcaje en tolerancia (±5 min)',
-        'tarde': 'Marcaje fuera de tolerancia (tarde)',
-        'temprano': 'Marcaje fuera de tolerancia (temprano)',
+        'ok': 'A tiempo (±5 min)',
+        'tarde': 'Llegó tarde (disciplinario)',
+        'temprano': 'Llegó antes de hora (no penaliza)',
         'falta': 'Sin marcaje',
       }[status] || '';
     },
