@@ -584,13 +584,20 @@ def crear_documento_soporte(
 
     obs_origen = factura.get("origen_obs") or "[CORREO]"
     obs_extra = (factura.get('observaciones') or '')[:180]
+
+    # supplier_receipt_number.number debe ser un consecutivo valido (Siigo rechaza "0").
+    # Para gastos manuales sin numero de factura fisica generamos un consecutivo propio
+    # basado en fecha+hora (unico y trazable), p.ej. 260527112412.
+    numero_factura = str(factura.get("numero_factura") or "").strip()
+    if not numero_factura or numero_factura == "0":
+        numero_factura = datetime.now().strftime("%y%m%d%H%M%S")
     payload = {
         "document": {"id": DS_DOC_ID},
         "date": fecha,
         "supplier": {"identification": nit, "branch_office": 0},
         "supplier_receipt_number": {
             "prefix": (factura.get("prefijo_factura") or "DS")[:10],
-            "number": str(factura.get("numero_factura") or "0"),
+            "number": numero_factura,
         },
         "discount_type": "Value",
         "observations": f"{obs_origen} {obs_extra}".strip()[:300],
