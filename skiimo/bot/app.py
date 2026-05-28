@@ -428,20 +428,42 @@ def _sync_incremental_catalogos() -> tuple[int, int]:
 
 
 async def _job_resumen_diario(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Job que corre cada mañana y manda el resumen a ADMIN_TELEGRAM_CHAT_ID."""
+    """Resumen de negocio cada mañana al admin-env + empleados Administrativos."""
     from skiimo.config import ADMIN_TELEGRAM_CHAT_ID
-    if not ADMIN_TELEGRAM_CHAT_ID:
-        log.warning("Resumen diario: no hay ADMIN_TELEGRAM_CHAT_ID configurado")
+    # destinatarios: admin-env + cargo Administrativo (no coordinadores; es negocio)
+    chats = set()
+    if ADMIN_TELEGRAM_CHAT_ID:
+        try:
+            chats.add(int(ADMIN_TELEGRAM_CHAT_ID))
+        except Exception:
+            pass
+    try:
+        conn = get_conn()
+        try:
+            for r in conn.execute(
+                """SELECT telegram_chat_id FROM empleados
+                   WHERE activo=1 AND telegram_chat_id IS NOT NULL
+                     AND LOWER(cargo)='administrativo'"""
+            ).fetchall():
+                try:
+                    chats.add(int(r["telegram_chat_id"]))
+                except Exception:
+                    pass
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    if not chats:
         return
     try:
         from skiimo.daily_summary import construir_resumen_diario
         texto = await asyncio.to_thread(construir_resumen_diario)
-        await context.bot.send_message(
-            chat_id=int(ADMIN_TELEGRAM_CHAT_ID),
-            text=texto,
-            parse_mode="Markdown",
-        )
-        log.info("Resumen diario enviado al admin")
+        for chat in chats:
+            try:
+                await context.bot.send_message(chat_id=chat, text=texto, parse_mode="Markdown")
+            except Exception:
+                log.exception("No se pudo enviar resumen de negocio a %s", chat)
+        log.info("Resumen de negocio enviado a %d destinatario(s)", len(chats))
     except Exception:
         log.exception("Error mandando resumen diario")
 
@@ -3507,7 +3529,8 @@ def main() -> None:
     # Comandos de TRABAJADOR (asistencia, solo su propia info)
     from skiimo.bot.asistencia_commands import (
         cmd_mi_asistencia, cmd_mi_nomina, cmd_mis_kpis, cmd_mi_help,
-        job_aviso_no_marco, job_aviso_sin_salida,
+        job_aviso_no_marco, job_aviso_sin_salida, job_aviso_almuerzo,
+        job_resumen_asistencia_cierre, job_resumen_asistencia_manana,
         cmd_quien_esta, cmd_asistencia_hoy, cmd_llegadas_tarde,
         cmd_quincena, cmd_asistencia_help, cmd_extras,
     )
@@ -3524,28 +3547,43 @@ def main() -> None:
     app.add_handler(CommandHandler("extras", cmd_extras))
     app.add_handler(CommandHandler("asistencia_help", cmd_asistencia_help))
 
-    # Job de resumen diario a las 8:00 hora Colombia (UTC-5 = 13:00 UTC)
+    # Jobs de asistencia (hora Colombia = UTC-5). Recordatorios despues de la
+    # tolerancia de 5 min. Horas en UTC = hora_colombia + 5.
     from datetime import time as _time
-    if ADMIN_TELEGRAM_CHAT_ID and app.job_queue:
-        app.job_queue.run_daily(
-            _job_resumen_diario,
-            time=_time(hour=13, minute=0),  # 13:00 UTC = 8:00 Colombia
-            name="resumen_diario",
-        )
-        log.info("Job resumen diario programado: 8:00 hora Colombia (13:00 UTC)")
-    # Avisos a trabajadores vinculados (hora Colombia = UTC-5)
     if app.job_queue:
         app.job_queue.run_daily(
+            _job_resumen_diario,
+            time=_time(hour=13, minute=0),  # 8:00 Colombia: resumen de negocio
+            name="resumen_diario",
+        )
+        # Resumenes de asistencia a supervisores (admin + administrativos + coordinadores)
+        app.job_queue.run_daily(
+            job_resumen_asistencia_cierre,
+            time=_time(hour=12, minute=0),   # 7:00 Colombia: cierre del dia anterior
+            name="resumen_asist_cierre",
+        )
+        app.job_queue.run_daily(
+            job_resumen_asistencia_manana,
+            time=_time(hour=13, minute=0),   # 8:00 Colombia: estado de hoy
+            name="resumen_asist_manana",
+        )
+        # Recordatorios al trabajador (tras los 5 min de tolerancia)
+        app.job_queue.run_daily(
             job_aviso_no_marco,
-            time=_time(hour=12, minute=15),  # 7:15 Colombia: no marco entrada
+            time=_time(hour=12, minute=10),  # 7:10 Colombia: no marco entrada (7:00+5)
             name="aviso_no_marco",
+        )
+        app.job_queue.run_daily(
+            job_aviso_almuerzo,
+            time=_time(hour=18, minute=35),  # 13:35 Colombia: falto marca de almuerzo
+            name="aviso_almuerzo",
         )
         app.job_queue.run_daily(
             job_aviso_sin_salida,
             time=_time(hour=23, minute=0),   # 18:00 Colombia: no marco salida
             name="aviso_sin_salida",
         )
-        log.info("Jobs de aviso a trabajadores programados (7:15 y 18:00 Colombia)")
+        log.info("Jobs de asistencia programados (resumenes 7/8am, avisos 7:10/13:35/18:00)")
     # Sync periodico de facturas recientes (cada 5 min)
     if app.job_queue:
         app.job_queue.run_repeating(

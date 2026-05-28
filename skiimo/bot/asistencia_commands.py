@@ -806,3 +806,140 @@ async def cmd_extras(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"✅ Extras programadas {rango} de {_h12(h_ini)} a {_h12(h_fin)}.\n"
         f"Se notificó a {n} empleado(s).",
     )
+
+
+# =============================================================================
+# Resumen de asistencia a SUPERVISORES (admin-env + Administrativos + Coordinadores)
+# =============================================================================
+
+
+def _chats_supervisores() -> list[int]:
+    """Chats que deben recibir resumenes de asistencia: admin-env + empleados
+    vinculados con cargo Administrativo o Coordinador."""
+    chats = set()
+    if ADMIN_TELEGRAM_CHAT_ID:
+        try:
+            chats.add(int(ADMIN_TELEGRAM_CHAT_ID))
+        except Exception:
+            pass
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT telegram_chat_id FROM empleados
+               WHERE activo=1 AND telegram_chat_id IS NOT NULL
+                 AND LOWER(cargo) IN ('administrativo','coordinador')"""
+        ).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        try:
+            chats.add(int(r["telegram_chat_id"]))
+        except Exception:
+            pass
+    return list(chats)
+
+
+async def _resumen_asistencia_texto(fecha_iso: str, titulo: str) -> str:
+    """Arma el texto de resumen de asistencia de una fecha usando el motor del panel."""
+    from skiimo.panel.asistencia_routes import api_resumen_diario
+    import skiimo.panel.asistencia_routes as _ar
+    _orig = _ar._require_user
+    _ar._require_user = lambda t: {"username": "bot"}
+    try:
+        r = await api_resumen_diario(session_token="bot", desde=fecha_iso, hasta=fecha_iso)
+    finally:
+        _ar._require_user = _orig
+    items = [i for i in r.get("items", []) if not i.get("es_excepcion")]
+    ausentes = [i for i in items if i.get("es_ausente")]
+    tarde = [i for i in items if i.get("status_entrada") == "tarde"]
+    con_extras = [i for i in items if (i.get("horas_extras") or 0) > 0]
+    sin_salida = [i for i in items if i.get("extra_sin_cierre") or (
+        i.get("primera_entrada") and not i.get("ultima_salida") and not i.get("es_ausente"))]
+
+    lines = [titulo, f"_{_fecha_larga(fecha_iso)}_", "━━━━━━━━━━━━━━━"]
+    lines.append(f"👥 Marcaron: *{sum(1 for i in items if i.get('primera_entrada'))}*")
+    lines.append(f"🔴 Ausentes: *{len(ausentes)}*")
+    for a in ausentes[:10]:
+        lines.append(f"   • {a['empleado_nombre']}")
+    lines.append(f"⏰ Llegaron tarde: *{len(tarde)}*")
+    for t in tarde[:10]:
+        lines.append(f"   • {t['empleado_nombre']} ({_h12(t.get('primera_entrada'))})")
+    if con_extras:
+        lines.append(f"⭐ Con extras: *{len(con_extras)}*")
+        for e in con_extras[:10]:
+            lines.append(f"   • {e['empleado_nombre']}: {_hm(e.get('horas_extras'))}")
+    if sin_salida:
+        lines.append(f"⚠️ Sin cerrar salida/extras: *{len(sin_salida)}*")
+        for s in sin_salida[:10]:
+            lines.append(f"   • {s['empleado_nombre']}")
+    return "\n".join(lines)
+
+
+async def job_resumen_asistencia_cierre(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """7:00 am: resumen del DIA ANTERIOR completo (con extras ya cerradas)."""
+    ayer = (_now_bogota().date() - timedelta(days=1)).isoformat()
+    texto = await _resumen_asistencia_texto(ayer, "📊 *Cierre de asistencia (ayer)*")
+    for chat in _chats_supervisores():
+        try:
+            await context.bot.send_message(chat_id=chat, text=texto, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            log.exception("No se pudo enviar resumen cierre a %s", chat)
+
+
+async def job_resumen_asistencia_manana(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """8:00 am: estado de HOY (quien llego/falto/llego tarde)."""
+    hoy = _now_bogota().date()
+    if hoy.weekday() >= 5:
+        return
+    texto = await _resumen_asistencia_texto(hoy.isoformat(), "🌅 *Asistencia de hoy*")
+    for chat in _chats_supervisores():
+        try:
+            await context.bot.send_message(chat_id=chat, text=texto, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            log.exception("No se pudo enviar resumen mañana a %s", chat)
+
+
+# =============================================================================
+# Recordatorios de ALMUERZO al trabajador (marcas faltantes)
+# =============================================================================
+
+
+async def job_aviso_almuerzo(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """~13:30: recuerda marcar el ALMUERZO a quien:
+       - entró pero no marcó salida a almuerzo, o
+       - marcó salida a almuerzo pero no el regreso.
+    """
+    hoy = _now_bogota().date()
+    if hoy.weekday() >= 5:
+        return
+    hoy_iso = hoy.isoformat()
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT e.nombre, e.telegram_chat_id,
+                      SUM(CASE WHEN m.tipo='entrada' THEN 1 ELSE 0 END) AS ent,
+                      SUM(CASE WHEN m.tipo='almuerzo_out' THEN 1 ELSE 0 END) AS a_out,
+                      SUM(CASE WHEN m.tipo='almuerzo_in' THEN 1 ELSE 0 END) AS a_in
+               FROM empleados e
+               JOIN marcajes m ON m.empleado_id = e.id AND m.fecha = ?
+               WHERE e.activo=1 AND e.telegram_chat_id IS NOT NULL
+                 AND LOWER(e.cargo) IN ('operario','coordinador')
+               GROUP BY e.id""",
+            (hoy_iso,),
+        ).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        # Si no marcó entrada, no vino: no recordarle nada de almuerzo.
+        if r["ent"] == 0:
+            continue
+        msg = None
+        if r["a_out"] == 0:
+            msg = f"🍽 {r['nombre']}, no registraste tu salida a almuerzo hoy. Recuerda marcar."
+        elif r["a_out"] > 0 and r["a_in"] == 0:
+            msg = f"↩️ {r['nombre']}, marcaste salida a almuerzo pero no el regreso. No olvides marcar al volver."
+        if msg:
+            try:
+                await context.bot.send_message(chat_id=int(r["telegram_chat_id"]), text=msg)
+            except Exception:
+                log.exception("No se pudo avisar almuerzo a %s", r["nombre"])
