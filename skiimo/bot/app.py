@@ -3572,7 +3572,7 @@ def main() -> None:
         # porque afectan su nomina si no corrige a tiempo). UTC = Colombia + 5.
         app.job_queue.run_daily(
             job_aviso_no_marco,
-            time=_time(hour=12, minute=10),  # 7:10: no marco entrada (7:00+5)
+            time=_time(hour=12, minute=5),   # 12:05 UTC = 7:05 Colombia: no marco entrada
             name="aviso_no_marco",
         )
         app.job_queue.run_daily(
