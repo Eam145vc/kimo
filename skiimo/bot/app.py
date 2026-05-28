@@ -106,16 +106,35 @@ def _get_matcher() -> Matcher:
 # =============================================================================
 
 def _is_authorized(chat_id: int) -> tuple[bool, dict | None]:
-    """Devuelve (autorizado, info_vendedor) para pedidos/ventas.
+    """Devuelve (autorizado, info) para pedidos/ventas y rol del agente.
 
-    NOTA: los TRABAJADORES (empleados vinculados) NO son autorizados aca:
-    solo pueden usar los comandos /mi_* de asistencia. Ver _empleado_vinculado.
+    El rol sale del CARGO del empleado vinculado (fuente de verdad):
+      - Administrativo -> admin (todo: ventas, extras, marcajes, supervision)
+      - Venta          -> vendedor (pedidos/ventas)
+      - Operario/Coordinador -> NO autorizados aca (solo /mi_* de asistencia)
+    Respaldo: admin-env (.env) y bot_vendedores siguen funcionando.
     """
-    # admin via env
+    from skiimo.config import DEFAULT_SELLER_ID
+    # admin via env (respaldo)
     if ADMIN_TELEGRAM_CHAT_ID and str(chat_id) == str(ADMIN_TELEGRAM_CHAT_ID):
-        return True, {"telegram_chat_id": chat_id, "nombre": "Admin", "rol": "admin", "siigo_seller_id": 341}
+        return True, {"telegram_chat_id": chat_id, "nombre": "Admin", "rol": "admin", "siigo_seller_id": DEFAULT_SELLER_ID}
     conn = get_conn()
     try:
+        # 1) Empleado vinculado: el cargo define el rol
+        emp = conn.execute(
+            "SELECT nombre, cargo FROM empleados WHERE telegram_chat_id = ? AND activo = 1",
+            (str(chat_id),),
+        ).fetchone()
+        if emp:
+            cargo = (emp["cargo"] or "").strip().lower()
+            if cargo == "administrativo":
+                return True, {"telegram_chat_id": chat_id, "nombre": emp["nombre"],
+                              "rol": "admin", "siigo_seller_id": DEFAULT_SELLER_ID}
+            if cargo == "venta":
+                return True, {"telegram_chat_id": chat_id, "nombre": emp["nombre"],
+                              "rol": "vendedor", "siigo_seller_id": DEFAULT_SELLER_ID}
+            # operario / coordinador -> no autorizados para ventas (solo asistencia)
+        # 2) bot_vendedores (respaldo / usuarios legacy)
         row = conn.execute(
             "SELECT * FROM bot_vendedores WHERE telegram_chat_id = ? AND activo = 1",
             (chat_id,),
