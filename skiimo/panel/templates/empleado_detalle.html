@@ -177,10 +177,13 @@ function empleadoDetalle(empId) {
 
     async cargar() {
       this.cargando = true;
+      const fbog = (dd) => new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).format(dd);
       const hoy = new Date();
-      const hasta = hoy.toISOString().slice(0, 10);
+      const hasta = fbog(hoy);
       const d = new Date(hoy); d.setDate(d.getDate() - (this.rangoDias - 1));
-      const desde = d.toISOString().slice(0, 10);
+      const desde = fbog(d);
       try {
         const r = await fetch(`/api/empleados/${this.empId}/perfil?desde=${desde}&hasta=${hasta}`);
         if (!r.ok) { this.cargando = false; return; }
