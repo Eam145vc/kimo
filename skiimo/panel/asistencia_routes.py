@@ -1852,9 +1852,57 @@ async def api_extras_list(
     return {"items": [dict(r) for r in rows]}
 
 
+async def _notificar_extras_telegram(desde, hasta, hora_ini, hora_fin, nota=None) -> int:
+    """Notifica a operarios/coordinadores vinculados que hay extras disponibles,
+    pegandole directo a la API HTTP de Telegram (el panel no comparte proceso con
+    el bot). Devuelve cuantos recibieron el aviso."""
+    try:
+        import httpx
+        from skiimo.config import TELEGRAM_BOT_TOKEN
+    except Exception:
+        return 0
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT nombre, telegram_chat_id FROM empleados
+               WHERE activo = 1 AND telegram_chat_id IS NOT NULL
+                 AND LOWER(cargo) IN ('operario','coordinador')"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    def _h12(hhmm):
+        try:
+            h, m = int(hhmm[:2]), hhmm[3:5]
+            ap = "a.m." if h < 12 else "p.m."
+            h = h % 12 or 12
+            return f"{h}:{m} {ap}"
+        except Exception:
+            return hhmm
+
+    rango = f"el {desde}" if desde == hasta else f"del {desde} al {hasta}"
+    txt = (f"⭐ Horas extra disponibles {rango}\n"
+           f"De {_h12(hora_ini)} a {_h12(hora_fin)}.")
+    if nota:
+        txt += f"\n{nota}"
+    txt += "\n\nRecuerda marcar inicio y cierre de extras en el equipo."
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    n = 0
+    async with httpx.AsyncClient(timeout=10) as client:
+        for r in rows:
+            try:
+                resp = await client.post(url, json={"chat_id": int(r["telegram_chat_id"]), "text": txt})
+                if resp.status_code == 200:
+                    n += 1
+            except Exception:
+                log.warning("No se pudo notificar extras a %s", r["nombre"])
+    return n
+
+
 @router.post("/api/extras-autorizadas")
 async def api_extras_crear(body: ExtraAutorizadaIn, session_token: str | None = Cookie(default=None)):
-    """Crea una ventana de extras autorizada (un dia o rango)."""
+    """Crea una ventana de extras autorizada (un dia o rango) y notifica a los empleados."""
     user = _require_user(session_token)
     desde = body.fecha_desde
     hasta = body.fecha_hasta or body.fecha_desde
@@ -1876,7 +1924,15 @@ async def api_extras_crear(body: ExtraAutorizadaIn, session_token: str | None = 
         eid = cur.lastrowid
     finally:
         conn.close()
-    return {"id": eid, "ok": True}
+    # Notificar a los trabajadores (no bloquea la respuesta si falla)
+    try:
+        notificados = await _notificar_extras_telegram(
+            desde, hasta, body.hora_inicio, body.hora_fin, body.nota
+        )
+    except Exception:
+        notificados = 0
+        log.exception("Error notificando extras desde panel")
+    return {"id": eid, "ok": True, "notificados": notificados}
 
 
 @router.delete("/api/extras-autorizadas/{extra_id}")

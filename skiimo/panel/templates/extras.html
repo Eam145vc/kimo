@@ -192,8 +192,12 @@ function extrasPage() {
           this.formError = 'Error: ' + t.slice(0, 150);
           return;
         }
+        const j = await r.json();
         this.modalOpen = false;
         await this.cargar();
+        if (typeof j.notificados === 'number') {
+          alert(`Extras programadas. Se notificó a ${j.notificados} empleado(s).`);
+        }
       } catch (e) {
         this.formError = 'Error: ' + e.message;
       }
