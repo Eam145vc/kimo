@@ -106,7 +106,11 @@ def _get_matcher() -> Matcher:
 # =============================================================================
 
 def _is_authorized(chat_id: int) -> tuple[bool, dict | None]:
-    """Devuelve (autorizado, info_vendedor)."""
+    """Devuelve (autorizado, info_vendedor) para pedidos/ventas.
+
+    NOTA: los TRABAJADORES (empleados vinculados) NO son autorizados aca:
+    solo pueden usar los comandos /mi_* de asistencia. Ver _empleado_vinculado.
+    """
     # admin via env
     if ADMIN_TELEGRAM_CHAT_ID and str(chat_id) == str(ADMIN_TELEGRAM_CHAT_ID):
         return True, {"telegram_chat_id": chat_id, "nombre": "Admin", "rol": "admin", "siigo_seller_id": 341}
@@ -119,6 +123,12 @@ def _is_authorized(chat_id: int) -> tuple[bool, dict | None]:
         return (True, dict(row)) if row else (False, None)
     finally:
         conn.close()
+
+
+def _empleado_vinculado(chat_id: int) -> dict | None:
+    """Empleado de asistencia vinculado a este chat (rol trabajador), o None."""
+    from skiimo.bot.asistencia_commands import empleado_por_chat
+    return empleado_por_chat(chat_id)
 
 
 # =============================================================================
@@ -809,7 +819,34 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     ok, info = _is_authorized(chat_id)
     if not ok:
-        await update.message.reply_text("No autorizado. Manda /start")
+        # ¿Es un TRABAJADOR (empleado vinculado)? -> solo menu de asistencia.
+        emp = _empleado_vinculado(chat_id)
+        if emp:
+            from skiimo.bot.asistencia_commands import cmd_mi_help
+            await cmd_mi_help(update, ctx)
+            return
+        # No vinculado: si el texto parece una cedula, intentar vincular.
+        posible_ced = (update.message.text or "").strip().replace(".", "").replace(" ", "")
+        if posible_ced.isdigit() and len(posible_ced) >= 5:
+            from skiimo.bot.asistencia_commands import vincular_por_cedula
+            emp = vincular_por_cedula(chat_id, posible_ced)
+            if emp:
+                await update.message.reply_text(
+                    f"¡Listo, {emp['nombre']}! Quedaste identificado.\n\n"
+                    "Puedes consultar:\n"
+                    "/mi_asistencia — tus marcajes de hoy\n"
+                    "/mi_nomina — cuánto llevas esta quincena\n"
+                    "/mis_kpis — tu asistencia y tardanzas del mes"
+                )
+            else:
+                await update.message.reply_text(
+                    "No encontré esa cédula en el sistema. Verifica el número "
+                    "o pídele al administrador que te registre."
+                )
+            return
+        await update.message.reply_text(
+            "Para identificarte, envíame tu número de cédula."
+        )
         return
 
     texto = (update.message.text or "").strip()
@@ -3388,6 +3425,16 @@ def main() -> None:
     app.add_handler(CommandHandler("resumen", cmd_resumen))
     app.add_handler(CommandHandler("agregar", cmd_agregar))
 
+    # Comandos de TRABAJADOR (asistencia, solo su propia info)
+    from skiimo.bot.asistencia_commands import (
+        cmd_mi_asistencia, cmd_mi_nomina, cmd_mis_kpis, cmd_mi_help,
+        job_aviso_no_marco, job_aviso_sin_salida,
+    )
+    app.add_handler(CommandHandler("mi_asistencia", cmd_mi_asistencia))
+    app.add_handler(CommandHandler("mi_nomina", cmd_mi_nomina))
+    app.add_handler(CommandHandler("mis_kpis", cmd_mis_kpis))
+    app.add_handler(CommandHandler("mi_help", cmd_mi_help))
+
     # Job de resumen diario a las 8:00 hora Colombia (UTC-5 = 13:00 UTC)
     from datetime import time as _time
     if ADMIN_TELEGRAM_CHAT_ID and app.job_queue:
@@ -3397,6 +3444,19 @@ def main() -> None:
             name="resumen_diario",
         )
         log.info("Job resumen diario programado: 8:00 hora Colombia (13:00 UTC)")
+    # Avisos a trabajadores vinculados (hora Colombia = UTC-5)
+    if app.job_queue:
+        app.job_queue.run_daily(
+            job_aviso_no_marco,
+            time=_time(hour=12, minute=15),  # 7:15 Colombia: no marco entrada
+            name="aviso_no_marco",
+        )
+        app.job_queue.run_daily(
+            job_aviso_sin_salida,
+            time=_time(hour=23, minute=0),   # 18:00 Colombia: no marco salida
+            name="aviso_sin_salida",
+        )
+        log.info("Jobs de aviso a trabajadores programados (7:15 y 18:00 Colombia)")
     # Sync periodico de facturas recientes (cada 5 min)
     if app.job_queue:
         app.job_queue.run_repeating(

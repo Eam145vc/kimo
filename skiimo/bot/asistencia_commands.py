@@ -341,3 +341,265 @@ async def job_alerta_tarde(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     except Exception:
         log.exception("No se pudo enviar alerta de tarde")
+
+
+# =============================================================================
+# TRABAJADORES (usuarios normales): consultan SOLO su propia info.
+# Se vinculan dando su cedula -> empleados.telegram_chat_id.
+# =============================================================================
+
+
+def empleado_por_chat(chat_id: int) -> dict | None:
+    """Devuelve el empleado vinculado a este chat de Telegram, o None."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM empleados WHERE telegram_chat_id = ? AND activo = 1",
+            (str(chat_id),),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def vincular_por_cedula(chat_id: int, cedula: str) -> dict | None:
+    """Vincula un chat de Telegram a un empleado por su cedula.
+
+    Devuelve el empleado vinculado, o None si no existe esa cedula.
+    """
+    cedula = (cedula or "").strip().replace(".", "").replace(",", "")
+    if not cedula.isdigit():
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM empleados WHERE cedula = ? AND activo = 1", (cedula,)
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "UPDATE empleados SET telegram_chat_id = ? WHERE id = ?",
+            (str(chat_id), row["id"]),
+        )
+        conn.commit()
+        return dict(row)
+    finally:
+        conn.close()
+
+
+async def _resumen_propio(emp_id: int, desde: str, hasta: str) -> list[dict]:
+    """Reutiliza el motor del panel para traer SOLO los items de este empleado."""
+    from skiimo.panel.asistencia_routes import api_resumen_diario
+
+    # se parchea la auth porque aca ya validamos por chat de Telegram
+    import skiimo.panel.asistencia_routes as _ar
+    _orig = _ar._require_user
+    _ar._require_user = lambda t: {"username": "bot"}
+    try:
+        r = await api_resumen_diario(
+            session_token="bot", empleado_id=emp_id, desde=desde, hasta=hasta
+        )
+    finally:
+        _ar._require_user = _orig
+    return [i for i in r.get("items", []) if i.get("empleado_id") == emp_id]
+
+
+def _h12(hms: str | None) -> str:
+    """HH:MM:SS -> '5:01 p.m.' (los trabajadores ven 12h)."""
+    if not hms:
+        return "—"
+    try:
+        h, m = int(hms[:2]), hms[3:5]
+        ap = "a.m." if h < 12 else "p.m."
+        h = h % 12 or 12
+        return f"{h}:{m} {ap}"
+    except Exception:
+        return hms
+
+
+def _hm(horas) -> str:
+    """horas decimales -> 'Xh Ymin'."""
+    total = round((float(horas) or 0) * 60)
+    h, m = divmod(total, 60)
+    if h and m:
+        return f"{h}h {m}min"
+    if h:
+        return f"{h}h"
+    return f"{m}min"
+
+
+async def cmd_mi_asistencia(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    """El trabajador ve sus marcajes de HOY."""
+    chat_id = update.effective_chat.id
+    emp = empleado_por_chat(chat_id)
+    if not emp:
+        await update.message.reply_text(
+            "Primero envíame tu número de cédula para identificarte."
+        )
+        return
+    hoy = _now_bogota().date().isoformat()
+    items = await _resumen_propio(emp["id"], hoy, hoy)
+    if not items or not items[0].get("primera_entrada"):
+        await update.message.reply_text(
+            f"Hola {emp['nombre']}, hoy todavía no tienes marcajes registrados."
+        )
+        return
+    i = items[0]
+    lines = [f"*Tu asistencia de hoy* ({hoy})", ""]
+    lines.append(f"🟢 Entrada: {_h12(i.get('primera_entrada'))}")
+    lines.append(f"🔵 Salida almuerzo: {_h12(i.get('almuerzo_out'))}")
+    lines.append(f"🔵 Regreso almuerzo: {_h12(i.get('almuerzo_in'))}")
+    lines.append(f"🟠 Salida: {_h12(i.get('ultima_salida'))}")
+    if i.get("extra_in"):
+        lines.append(f"🟡 Extras: {_h12(i.get('extra_in'))} → {_h12(i.get('extra_out'))}")
+    lines.append("")
+    lines.append(f"Horas: *{_hm(i.get('horas'))}*")
+    # avisar si llego tarde
+    if i.get("status_entrada") == "tarde":
+        lines.append("⚠️ _Llegaste tarde hoy._")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+
+async def cmd_mi_nomina(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    """El trabajador ve cuánto lleva esta quincena."""
+    chat_id = update.effective_chat.id
+    emp = empleado_por_chat(chat_id)
+    if not emp:
+        await update.message.reply_text("Primero envíame tu número de cédula.")
+        return
+    hoy = _now_bogota().date()
+    if hoy.day <= 15:
+        desde = hoy.replace(day=1)
+    else:
+        desde = hoy.replace(day=16)
+    items = await _resumen_propio(emp["id"], desde.isoformat(), hoy.isoformat())
+    tot_h = sum((i.get("horas") or 0) for i in items if not i.get("es_excepcion"))
+    tot_ext = sum((i.get("horas_extras") or 0) for i in items)
+    tot_pago = sum((i.get("pago_total") or 0) for i in items)
+    lines = [
+        f"*Tu nómina* ({desde.isoformat()} → {hoy.isoformat()})", "",
+        f"Horas trabajadas: *{_hm(tot_h)}*",
+    ]
+    if tot_ext > 0:
+        lines.append(f"Horas extra: *{_hm(tot_ext)}*")
+    lines.append(f"Total estimado: *${round(tot_pago):,.0f}*".replace(",", "."))
+    lines.append("")
+    lines.append("_Estimado, sujeto a ajustes de la administración._")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+
+async def cmd_mis_kpis(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    """El trabajador ve sus KPIs del mes (asistencia, tardanzas)."""
+    chat_id = update.effective_chat.id
+    emp = empleado_por_chat(chat_id)
+    if not emp:
+        await update.message.reply_text("Primero envíame tu número de cédula.")
+        return
+    from skiimo.panel.asistencia_routes import api_empleado_perfil
+    import skiimo.panel.asistencia_routes as _ar
+    hoy = _now_bogota().date()
+    desde = hoy.replace(day=1).isoformat()
+    _orig = _ar._require_user
+    _ar._require_user = lambda t: {"username": "bot"}
+    try:
+        r = await api_empleado_perfil(
+            emp_id=emp["id"], desde=desde, hasta=hoy.isoformat(), session_token="bot"
+        )
+    finally:
+        _ar._require_user = _orig
+    k = r["kpis"]
+    lines = [
+        f"*Tus indicadores* (mes actual)", "",
+        f"Asistencia: *{k['pct_asistencia']}%*  ({k['dias_trabajados']}/{k['dias_esperados']} días)",
+        f"Llegadas tarde: *{k['llegadas_tarde']}*",
+        f"  - Entrada: {k.get('tarde_entrada', 0)}",
+        f"  - Almuerzo: {k.get('tarde_almuerzo', 0)}",
+        f"Horas trabajadas: *{_hm(k['horas_ord'])}*",
+    ]
+    if k.get("horas_extra", 0) > 0:
+        lines.append(f"Horas extra: *{_hm(k['horas_extra'])}*")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+
+async def cmd_mi_help(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    emp = empleado_por_chat(update.effective_chat.id)
+    if not emp:
+        await update.message.reply_text(
+            "Envíame tu número de cédula para identificarte y poder consultar tu información."
+        )
+        return
+    await update.message.reply_text(
+        f"Hola {emp['nombre']}. Puedes consultar:\n\n"
+        "/mi_asistencia — tus marcajes de hoy\n"
+        "/mi_nomina — cuánto llevas esta quincena\n"
+        "/mis_kpis — tu asistencia y tardanzas del mes",
+    )
+
+
+# =============================================================================
+# Jobs de notificacion a TRABAJADORES (solo a vinculados)
+# =============================================================================
+
+
+async def job_aviso_no_marco(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Avisa al TRABAJADOR vinculado que no ha marcado entrada (tras 7:15)."""
+    hoy = _now_bogota().date()
+    if hoy.weekday() >= 5:
+        return  # findes no
+    hoy_iso = hoy.isoformat()
+    conn = get_conn()
+    try:
+        # empleados vinculados que NO marcaron hoy
+        rows = conn.execute(
+            """SELECT e.id, e.nombre, e.telegram_chat_id
+               FROM empleados e
+               WHERE e.activo = 1 AND e.telegram_chat_id IS NOT NULL
+                 AND e.id NOT IN (
+                   SELECT DISTINCT empleado_id FROM marcajes
+                   WHERE fecha = ? AND empleado_id IS NOT NULL
+                 )""",
+            (hoy_iso,),
+        ).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        try:
+            await context.bot.send_message(
+                chat_id=int(r["telegram_chat_id"]),
+                text=f"⚠️ {r['nombre']}, aún no registras tu entrada de hoy. "
+                     f"No olvides marcar en el equipo.",
+            )
+        except Exception:
+            log.exception("No se pudo avisar no-marco a %s", r["nombre"])
+
+
+async def job_aviso_sin_salida(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Al final de la jornada, recuerda marcar salida a quien entró y no salió."""
+    hoy = _now_bogota().date()
+    if hoy.weekday() >= 5:
+        return
+    hoy_iso = hoy.isoformat()
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT e.id, e.nombre, e.telegram_chat_id,
+                      SUM(CASE WHEN m.tipo='salida' THEN 1 ELSE 0 END) AS salidas,
+                      COUNT(*) AS total
+               FROM empleados e
+               JOIN marcajes m ON m.empleado_id = e.id AND m.fecha = ?
+               WHERE e.activo = 1 AND e.telegram_chat_id IS NOT NULL
+               GROUP BY e.id""",
+            (hoy_iso,),
+        ).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        if r["salidas"] == 0 and r["total"] > 0:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(r["telegram_chat_id"]),
+                    text=f"🔔 {r['nombre']}, no registraste tu salida hoy. "
+                         f"Recuerda marcar al salir (y el cierre de extras si trabajaste).",
+                )
+            except Exception:
+                log.exception("No se pudo avisar sin-salida a %s", r["nombre"])
