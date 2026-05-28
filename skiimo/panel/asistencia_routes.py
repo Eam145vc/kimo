@@ -1205,22 +1205,36 @@ async def api_empleado_perfil(
     )
     items = [i for i in resumen.get("items", []) if i.get("empleado_id") == emp_id]
 
+    # ----- Fecha de corte: HOY hacia atras se ASUME 100% -----
+    # Antes del despliegue del equipo no habia marcas reales, asi que esos dias
+    # (hoy inclusive y todo lo anterior) se dan por completos para los KPIs.
+    # Desde MAÑANA cuentan las marcas reales. Solo afecta KPIs, NO la nomina.
+    corte_asumido = hoy  # dias <= hoy se asumen presentes
+
     # Dias habiles esperados en el rango (lun-vie), sin contar futuro
     d0 = date.fromisoformat(desde)
     d1 = min(date.fromisoformat(hasta), hoy)
     dias_habiles = 0
+    dias_habiles_asumidos = 0  # habiles <= hoy (asumidos 100%)
     d = d0
     while d <= d1:
         if d.weekday() < 5:
             dias_habiles += 1
+            if d <= corte_asumido:
+                dias_habiles_asumidos += 1
         d += timedelta(days=1)
 
-    # Agregar KPIs sobre los items
-    dias_trabajados = sum(1 for i in items if (i.get("horas") or 0) > 0 and not i.get("es_excepcion"))
+    # KPIs sobre items REALES (con marca)
+    dias_trabajados_real = sum(1 for i in items if (i.get("horas") or 0) > 0 and not i.get("es_excepcion"))
     dias_incapacidad = sum(1 for i in items if i.get("es_excepcion"))
     dias_finde_trab = sum(1 for i in items if i.get("es_finde") and (i.get("horas") or 0) > 0)
     tarde = sum(1 for i in items if i.get("status_entrada") == "tarde")
     salida_temp = sum(1 for i in items if i.get("status_salida") == "temprano")
+
+    # Dias trabajados para KPI = max(reales, asumidos). Como todo el rango por
+    # defecto es pasado (<= hoy), los dias asumidos cubren todos los habiles ->
+    # asistencia 100%. Cuando haya dias futuros (desde mañana) entran los reales.
+    dias_trabajados = max(dias_trabajados_real, dias_habiles_asumidos)
 
     # Minutos tarde promedio (solo dias con entrada tarde)
     mins_tarde = []
@@ -1236,6 +1250,8 @@ async def api_empleado_perfil(
 
     # Dias esperados = habiles - incapacidades (la incapacidad no es ausencia)
     dias_esperados = max(0, dias_habiles - dias_incapacidad)
+    # Topar trabajados a esperados (no puede haber mas presentes que esperados)
+    dias_trabajados = min(dias_trabajados, dias_esperados)
     pct_asistencia = round(100.0 * dias_trabajados / dias_esperados, 1) if dias_esperados else 0
     ausencias = max(0, dias_esperados - dias_trabajados)
     pct_ausentismo = round(100.0 * ausencias / dias_esperados, 1) if dias_esperados else 0
