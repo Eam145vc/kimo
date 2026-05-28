@@ -989,6 +989,60 @@ async def api_resumen_diario(
         if e["id"] not in ids_que_marcaron_hoy
     ]
 
+    # Inyectar filas de AUSENTE para hoy: empleados activos que no marcaron y
+    # ya paso la hora de entrada + tolerancia (7:05). Si despues marcan, dejan
+    # de ser ausentes (la marca crea su item normal y desaparecen de esta lista).
+    # Solo si el rango filtrado incluye hoy.
+    hoy_en_rango = (not desde or desde <= hoy_str) and (not hasta or hasta >= hoy_str)
+    limite_entrada_hoy = ahora_bogota.replace(
+        hour=entrada_h, minute=entrada_m, second=0, microsecond=0
+    ) + timedelta(minutes=TOLERANCIA_MIN)
+    if hoy_en_rango and ahora_bogota > limite_entrada_hoy:
+        # filtro por cargo si aplica (mismo criterio que el resumen)
+        cargos_lower = [c.lower() for c in cargos_list] if cargos_list else None
+        conn3 = get_conn()
+        try:
+            emp_full = conn3.execute(
+                "SELECT id, nombre, cargo, salario_mensual, valor_hora_ord FROM empleados WHERE activo = 1"
+            ).fetchall()
+        finally:
+            conn3.close()
+        for e in emp_full:
+            if e["id"] in ids_que_marcaron_hoy:
+                continue
+            if empleado_id and e["id"] != empleado_id:
+                continue
+            if cargos_lower and (e["cargo"] or "").lower() not in cargos_lower:
+                continue
+            # es fin de semana? no marca ausencia los findes
+            try:
+                if date.fromisoformat(hoy_str).weekday() >= 5:
+                    continue
+            except Exception:
+                pass
+            items.append({
+                "empleado_id": e["id"],
+                "empleado_nombre": e["nombre"],
+                "valor_hora_ord": e["valor_hora_ord"],
+                "salario_mensual": e["salario_mensual"],
+                "fecha": hoy_str,
+                "primera_entrada": None, "almuerzo_out": None,
+                "almuerzo_in": None, "ultima_salida": None,
+                "extra_in": None, "extra_out": None,
+                "horas": None, "horas_extras": 0,
+                "pago_total": 0, "pago_ord": 0, "pago_extras": 0,
+                "status_entrada": "falta", "status_salida": "falta",
+                "status_almuerzo_out": "falta", "status_almuerzo_in": "falta",
+                "status_extra_in": "no_aplica", "status_extra_out": "no_aplica",
+                "es_ausente": True,
+                "es_finde": False, "en_curso": False,
+                "cantidad_marcajes": 0,
+                "marcajes_clasificados": [],
+                "marcas_anomalas": [],
+                "alertas": [{"nivel": "danger", "texto": "Ausente — no marcó entrada"}],
+                "calculo": {"hitos": []},
+            })
+
     return {
         "items": items,
         "jornada": {

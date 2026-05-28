@@ -242,12 +242,12 @@
                   :class="r.horas_extras > 0 ? 'text-warning font-medium' : 'text-text-muted'"
                   x-text="r.horas_extras != null && r.horas_extras > 0 ? hm(r.horas_extras) : '—'"></td>
               <td class="px-3 py-3 text-right tabular"
-                  :class="r.salario_mensual ? '' : 'text-warning'"
+                  :class="r.es_ausente ? 'text-danger' : (r.salario_mensual ? '' : 'text-warning')"
                   :title="r.es_finde ? 'Día fin de semana: base $100.000' : (r.salario_mensual ? `Ordinarias: $${(r.pago_ord||0).toLocaleString('es-CO')}` : 'Falta configurar salario')"
-                  x-text="r.salario_mensual ? '$' + (r.pago_total || 0).toLocaleString('es-CO') : 'falta sal.'"></td>
+                  x-text="r.es_ausente ? '—' : (r.salario_mensual ? '$' + (r.pago_total || 0).toLocaleString('es-CO') : 'falta sal.')"></td>
               <td class="px-4 py-3">
-                <button x-show="!r.es_excepcion" @click="verDetalle(r)" class="text-xs text-accent hover:text-accent-hover" x-text="r.cantidad_marcajes + ' marcajes'"></button>
-                <span x-show="r.es_excepcion" class="text-xs text-text-muted">—</span>
+                <button x-show="!r.es_excepcion && !r.es_ausente" @click="verDetalle(r)" class="text-xs text-accent hover:text-accent-hover" x-text="r.cantidad_marcajes + ' marcajes'"></button>
+                <span x-show="r.es_excepcion || r.es_ausente" class="text-xs text-text-muted">—</span>
               </td>
             </tr>
           </template>
