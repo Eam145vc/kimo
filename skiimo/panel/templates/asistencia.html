@@ -861,11 +861,13 @@ function marcajesPage() {
     },
 
     statusExtraColor(status) {
-      // ok=verde, tarde=rojo (marco extras despues de 17:30), falta=rojo, sin extras=gris
+      // ok=verde, tarde=rojo (inicio tarde, disciplinario), temprano=azul
+      // (cerro antes del fin de ventana, informativo), falta=rojo, sin extras=gris
       if (!status || status === 'no_aplica') return 'text-text-muted';
       return {
         'ok': 'text-success',
         'tarde': 'text-danger',
+        'temprano': 'text-accent',
         'falta': 'text-danger',
       }[status] || 'text-text-muted';
     },
@@ -873,7 +875,8 @@ function marcajesPage() {
     statusExtraLabel(status) {
       return {
         'ok': 'Marcaje de extras registrado',
-        'tarde': 'Marcó el inicio de extras después de las 17:30',
+        'tarde': 'Marcó el inicio de extras después de la hora',
+        'temprano': 'Cerró las extras antes del fin de la ventana (no penaliza)',
         'falta': 'Hizo extras pero no marco Extra in/out',
         'no_aplica': 'No hizo horas extras',
       }[status] || '';

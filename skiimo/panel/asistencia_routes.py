@@ -711,6 +711,7 @@ async def api_resumen_diario(
         item["extras_en_curso"] = False
         item["extra_sin_cierre"] = False
         item["extra_sin_autorizar"] = False
+        item["extra_out_temprano"] = False
         ventana = _ventana_para(item["fecha"])
         # Respetar el pasado: la regla "requiere ventana" aplica de HOY en adelante.
         # Dias ANTERIORES a hoy sin ventana usan el calculo viejo (desde 17:30).
@@ -744,6 +745,10 @@ async def api_resumen_diario(
                     t_ex_out = datetime.fromisoformat(item["extra_out_ts"]).replace(
                         second=0, microsecond=0
                     )
+                    # Cerro extras ANTES del fin de la ventana -> informativo (no penaliza,
+                    # las extras son voluntarias hasta el limite; salir antes solo es menos extras).
+                    if t_ex_out < fin_ventana - tol:
+                        item["extra_out_temprano"] = True
                     # TOPE anti-robo: no pasa de la hora_fin de la ventana
                     t_ex_out_efectivo = min(t_ex_out, fin_ventana)
                     if t_ex_out_efectivo > t_ex_in_efectivo:
@@ -808,7 +813,11 @@ async def api_resumen_diario(
                 item["status_extra_in"] = "ok"
         else:
             item["status_extra_in"] = "falta" if horas_extras > 0 else "no_aplica"
-        item["status_extra_out"] = "ok" if item["extra_out_ts"] else ("falta" if horas_extras > 0 else "no_aplica")
+        if item["extra_out_ts"]:
+            # 'temprano' = cerro extras antes del fin de la ventana (informativo, no penaliza)
+            item["status_extra_out"] = "temprano" if item.get("extra_out_temprano") else "ok"
+        else:
+            item["status_extra_out"] = "falta" if horas_extras > 0 else "no_aplica"
 
         # ----- Desglose por hito: hora real vs hora que conto (ajustada) -----
         # Permite que el panel explique POR QUE cada marcaje pierde o no minutos.
