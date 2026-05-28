@@ -231,16 +231,16 @@
                     :title="statusExtraLabel(r.status_extra_out)"
                     x-text="r.extra_out ? h12(r.extra_out) : '—'"></td>
               </template>
-              <td class="px-3 py-3 text-right tabular">
+              <td class="px-3 py-3 text-right tabular whitespace-nowrap">
                 <span x-show="r.horas != null"
                       :class="r.en_curso ? 'text-accent' : ''"
                       :title="r.en_curso ? 'En curso - calculado hasta ahora' : ''"
-                      x-text="(r.horas != null ? r.horas.toFixed(2) : '—') + (r.en_curso ? ' ⏵' : '')"></span>
+                      x-text="(r.horas != null ? hm(r.horas) : '—') + (r.en_curso ? ' ⏵' : '')"></span>
                 <span x-show="r.horas == null" class="text-text-muted">—</span>
               </td>
-              <td class="px-3 py-3 text-right tabular"
+              <td class="px-3 py-3 text-right tabular whitespace-nowrap"
                   :class="r.horas_extras > 0 ? 'text-warning font-medium' : 'text-text-muted'"
-                  x-text="r.horas_extras != null && r.horas_extras > 0 ? r.horas_extras.toFixed(2) : '—'"></td>
+                  x-text="r.horas_extras != null && r.horas_extras > 0 ? hm(r.horas_extras) : '—'"></td>
               <td class="px-3 py-3 text-right tabular"
                   :class="r.salario_mensual ? '' : 'text-warning'"
                   :title="r.es_finde ? 'Día fin de semana: base $100.000' : (r.salario_mensual ? `Ordinarias: $${(r.pago_ord||0).toLocaleString('es-CO')}` : 'Falta configurar salario')"
@@ -280,7 +280,7 @@
         <div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
           <div class="flex justify-between">
             <span class="text-text-muted">Horas trabajadas</span>
-            <span class="tabular" x-text="(detalle.calculo?.horas ?? 0) + ' h'"></span>
+            <span class="tabular" x-text="hm(detalle.calculo?.horas)"></span>
           </div>
           <div class="flex justify-between">
             <span class="text-text-muted">Valor hora</span>
@@ -288,12 +288,12 @@
           </div>
           <div class="flex justify-between">
             <span class="text-text-muted">Almuerzo</span>
-            <span class="tabular" x-text="(detalle.calculo?.almuerzo_estandar_h ?? 1) + ' h'"></span>
+            <span class="tabular" x-text="hm(detalle.calculo?.almuerzo_estandar_h ?? 1)"></span>
           </div>
           <template x-if="(detalle.calculo?.almuerzo_perdido_h ?? 0) > 0">
             <div class="flex justify-between">
               <span class="text-text-muted">Tarde de almuerzo</span>
-              <span class="tabular text-warning" x-text="'-' + detalle.calculo.almuerzo_perdido_h + ' h'"></span>
+              <span class="tabular text-warning" x-text="'-' + hm(detalle.calculo.almuerzo_perdido_h)"></span>
             </div>
           </template>
           <div class="flex justify-between">
@@ -302,7 +302,7 @@
           </div>
           <template x-if="(detalle.calculo?.horas_extras ?? 0) > 0">
             <div class="flex justify-between">
-              <span class="text-text-muted" x-text="'Extras (' + detalle.calculo.horas_extras + ' h)'"></span>
+              <span class="text-text-muted" x-text="'Extras (' + hm(detalle.calculo.horas_extras) + ')'"></span>
               <span class="tabular text-warning" x-text="fmtMoney(detalle.calculo?.pago_extras)"></span>
             </div>
           </template>
@@ -659,6 +659,17 @@ function marcajesPage() {
 
     hoyBogota() {
       return new Date();  // el objeto Date; fechaBogota() lo formatea en tz Bogotá
+    },
+
+    // Convierte horas decimales a "Xh Ymin" legible.
+    // Ej: 8.98 -> "8 h 59 min", 0.02 -> "1 min", 1 -> "1 h", 0 -> "0 min"
+    hm(horasDec) {
+      const total = Math.round((Number(horasDec) || 0) * 60);  // minutos totales
+      const h = Math.floor(total / 60);
+      const m = total % 60;
+      if (h && m) return `${h} h ${m} min`;
+      if (h) return `${h} h`;
+      return `${m} min`;
     },
 
     // Convierte "HH:MM" o "HH:MM:SS" (24h) a 12h con a.m./p.m.
