@@ -489,6 +489,9 @@ async def api_resumen_diario(
             ts = datetime.fromisoformat(ts_iso)
         except Exception:
             return "falta"
+        # Truncar segundos al minuto inferior (7:05:30 -> 7:05): los segundos
+        # no cuentan, igual que en el calculo de horas.
+        ts = ts.replace(second=0, microsecond=0)
         oficial = ts.replace(hour=hora_oficial_h, minute=hora_oficial_m,
                               second=0, microsecond=0)
         delta_min = (ts - oficial).total_seconds() / 60.0
