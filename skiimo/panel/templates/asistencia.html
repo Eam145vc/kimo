@@ -150,9 +150,10 @@
 
   <!-- Leyenda de colores -->
   <div class="flex items-center gap-4 mb-3 text-[11px] text-text-muted flex-wrap">
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-success"></span> En tolerancia (±5 min)</span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-warning"></span> Temprano</span>
-    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-danger"></span> Tarde / falta</span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-success"></span> A tiempo (±5 min)</span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-warning"></span> Tarde (entrada/almuerzo)</span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-danger"></span> Salió antes / falta</span>
+    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-accent"></span> Salió después de hora</span>
     <span class="text-danger font-medium">Nombre rojo</span><span>= ausencia total</span>
   </div>
 
@@ -217,8 +218,8 @@
                     x-text="r.almuerzo_in ? h12(r.almuerzo_in) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
-                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusColor(r.status_salida)"
-                    :title="statusLabel(r.status_salida)"
+                <td class="px-3 py-3 tabular whitespace-nowrap" :class="statusColorSalida(r.status_salida)"
+                    :title="statusLabelSalida(r.status_salida)"
                     x-text="r.ultima_salida ? h12(r.ultima_salida) : '—'"></td>
               </template>
               <template x-if="!r.es_excepcion">
@@ -836,6 +837,27 @@ function marcajesPage() {
         'tarde': 'Marcaje fuera de tolerancia (tarde)',
         'temprano': 'Marcaje fuera de tolerancia (temprano)',
         'falta': 'Sin marcaje',
+      }[status] || '';
+    },
+
+    // Color especifico para la SALIDA: salir TEMPRANO pierde tiempo (rojo);
+    // salir TARDE (despues de hora) no penaliza, es solo informativo (azul).
+    statusColorSalida(status) {
+      if (!status) return 'text-text-muted';
+      return {
+        'ok': 'text-success',
+        'temprano': 'text-danger',   // se fue antes -> pierde
+        'tarde': 'text-accent',      // se quedo de mas -> informativo (azul)
+        'falta': 'text-danger/60',
+      }[status] || 'text-text-muted';
+    },
+
+    statusLabelSalida(status) {
+      return {
+        'ok': 'Salió a tiempo (±5 min)',
+        'temprano': 'Salió antes de hora (descuenta tiempo)',
+        'tarde': 'Salió después de hora (no penaliza)',
+        'falta': 'Sin marca de salida',
       }[status] || '';
     },
 
