@@ -102,6 +102,7 @@
               <option value="Operario">Operario (pago semanal)</option>
               <option value="Coordinador">Coordinador (pago semanal)</option>
               <option value="Administrativo">Administrativo (pago quincenal)</option>
+              <option value="Venta">Venta (pago quincenal)</option>
             </select>
           </div>
         </div>
@@ -299,7 +300,7 @@ function empleadosPage() {
       // Normalizar cargo a uno de los dos validos (los auto-creados traen
       // 'Pendiente configuracion' o 'Operario')
       let cargo = e.cargo || 'Operario';
-      if (!['Operario', 'Coordinador', 'Administrativo'].includes(cargo)) cargo = 'Operario';
+      if (!['Operario', 'Coordinador', 'Administrativo', 'Venta'].includes(cargo)) cargo = 'Operario';
       this.form = {
         id: e.id, nombre: e.nombre || '', cedula: e.cedula || '', cargo: cargo,
         hik_employee_no: e.hik_employee_no || '', salario_mensual: e.salario_mensual,

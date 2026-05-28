@@ -3429,11 +3429,19 @@ def main() -> None:
     from skiimo.bot.asistencia_commands import (
         cmd_mi_asistencia, cmd_mi_nomina, cmd_mis_kpis, cmd_mi_help,
         job_aviso_no_marco, job_aviso_sin_salida,
+        cmd_quien_esta, cmd_asistencia_hoy, cmd_llegadas_tarde,
+        cmd_quincena, cmd_asistencia_help,
     )
     app.add_handler(CommandHandler("mi_asistencia", cmd_mi_asistencia))
     app.add_handler(CommandHandler("mi_nomina", cmd_mi_nomina))
     app.add_handler(CommandHandler("mis_kpis", cmd_mis_kpis))
     app.add_handler(CommandHandler("mi_help", cmd_mi_help))
+    # Comandos de SUPERVISION (admin/coordinador, validan permiso adentro)
+    app.add_handler(CommandHandler("quien_esta", cmd_quien_esta))
+    app.add_handler(CommandHandler("asistencia_hoy", cmd_asistencia_hoy))
+    app.add_handler(CommandHandler("llegadas_tarde", cmd_llegadas_tarde))
+    app.add_handler(CommandHandler("quincena_equipo", cmd_quincena))
+    app.add_handler(CommandHandler("asistencia_help", cmd_asistencia_help))
 
     # Job de resumen diario a las 8:00 hora Colombia (UTC-5 = 13:00 UTC)
     from datetime import time as _time

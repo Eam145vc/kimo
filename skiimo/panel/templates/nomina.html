@@ -25,7 +25,7 @@
     <button @click="setModo('quincenal')"
             :class="modo === 'quincenal' ? 'bg-accent text-bg' : 'text-text-muted hover:text-text'"
             class="text-sm px-4 py-2 rounded-md font-medium transition-all">
-      💼 Administrativos (quincenal)
+      💼 Administrativos y Ventas (quincenal)
     </button>
   </div>
 
@@ -59,7 +59,7 @@
       Operarios: lunes a viernes. Si trabajaron sábado/domingo, amplía el rango con las fechas. Pago cada viernes.
     </p>
     <p class="text-[11px] text-text-muted mt-2" x-show="modo === 'quincenal'">
-      Administrativos: 1-15 y 16-fin de mes.
+      Administrativos y Ventas: 1-15 y 16-fin de mes.
     </p>
   </div>
 
@@ -193,7 +193,7 @@ function nominaPage() {
       this.loading = true;
       this.periodoLabel = `${this.desde} a ${this.hasta}`;
       try {
-        const cargo = this.modo === 'semanal' ? 'Operario,Coordinador' : 'Administrativo';
+        const cargo = this.modo === 'semanal' ? 'Operario,Coordinador' : 'Administrativo,Venta';
         const params = new URLSearchParams();
         params.set('desde', this.desde);
         params.set('hasta', this.hasta);

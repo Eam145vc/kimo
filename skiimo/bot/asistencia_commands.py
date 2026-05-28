@@ -38,6 +38,22 @@ def _is_admin(chat_id: int) -> bool:
     return ADMIN_TELEGRAM_CHAT_ID and str(chat_id) == str(ADMIN_TELEGRAM_CHAT_ID)
 
 
+# Cargos que pueden SUPERVISAR al equipo (ver asistencia + nomina de todos)
+CARGOS_SUPERVISION = ("administrativo", "coordinador")
+
+
+def puede_supervisar(chat_id: int) -> bool:
+    """True si el chat puede ver la asistencia/nomina del EQUIPO completo:
+    el admin (env) o un empleado vinculado con cargo Administrativo/Coordinador.
+    """
+    if _is_admin(chat_id):
+        return True
+    emp = empleado_por_chat(chat_id)
+    if not emp:
+        return False
+    return (emp.get("cargo") or "").strip().lower() in CARGOS_SUPERVISION
+
+
 # =============================================================================
 # Comandos
 # =============================================================================
@@ -46,8 +62,8 @@ def _is_admin(chat_id: int) -> bool:
 async def cmd_quien_esta(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     """Lista quien esta adentro de la fabrica ahora mismo."""
     chat_id = update.effective_chat.id
-    if not _is_admin(chat_id):
-        await update.message.reply_text("Solo el admin puede ver asistencia.")
+    if not puede_supervisar(chat_id):
+        await update.message.reply_text("No tienes permiso para ver la asistencia del equipo.")
         return
 
     hoy = _now_bogota().date().isoformat()
@@ -96,8 +112,8 @@ async def cmd_quien_esta(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_asistencia_hoy(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     """Resumen del dia: total marcajes, llegadas tarde, no marcaron."""
     chat_id = update.effective_chat.id
-    if not _is_admin(chat_id):
-        await update.message.reply_text("Solo admin.")
+    if not puede_supervisar(chat_id):
+        await update.message.reply_text("No tienes permiso para ver esta informacion del equipo.")
         return
 
     hoy = _now_bogota().date().isoformat()
@@ -136,8 +152,8 @@ async def cmd_asistencia_hoy(update: Update, _: ContextTypes.DEFAULT_TYPE) -> No
 async def cmd_llegadas_tarde(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     """Llegadas tarde de la ultima semana."""
     chat_id = update.effective_chat.id
-    if not _is_admin(chat_id):
-        await update.message.reply_text("Solo admin.")
+    if not puede_supervisar(chat_id):
+        await update.message.reply_text("No tienes permiso para ver esta informacion del equipo.")
         return
 
     end = _now_bogota().date()
@@ -187,8 +203,8 @@ async def cmd_llegadas_tarde(update: Update, _: ContextTypes.DEFAULT_TYPE) -> No
 async def cmd_quincena(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     """Resumen de quincena actual con horas y pago estimado."""
     chat_id = update.effective_chat.id
-    if not _is_admin(chat_id):
-        await update.message.reply_text("Solo admin.")
+    if not puede_supervisar(chat_id):
+        await update.message.reply_text("No tienes permiso para ver esta informacion del equipo.")
         return
 
     from skiimo.asistencia.horas import calcular_dia
