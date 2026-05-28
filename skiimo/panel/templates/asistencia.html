@@ -667,9 +667,10 @@ function marcajesPage() {
       const total = Math.round((Number(horasDec) || 0) * 60);  // minutos totales
       const h = Math.floor(total / 60);
       const m = total % 60;
-      if (h && m) return `${h} h ${m} min`;
-      if (h) return `${h} h`;
-      return `${m} min`;
+      // Espacios de no-ruptura ( ) para que "2h 16min" no se parta en 2 lineas.
+      if (h && m) return `${h} h ${m} min`;
+      if (h) return `${h} h`;
+      return `${m} min`;
     },
 
     // Convierte "HH:MM" o "HH:MM:SS" (24h) a 12h con a.m./p.m.
