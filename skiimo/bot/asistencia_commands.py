@@ -904,22 +904,17 @@ async def job_resumen_asistencia_manana(context: ContextTypes.DEFAULT_TYPE) -> N
 # =============================================================================
 
 
-async def job_aviso_almuerzo(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """~13:30: recuerda marcar el ALMUERZO a quien:
-       - entró pero no marcó salida a almuerzo, o
-       - marcó salida a almuerzo pero no el regreso.
-    """
-    hoy = _now_bogota().date()
-    if hoy.weekday() >= 5:
-        return
-    hoy_iso = hoy.isoformat()
+def _marcas_hoy_operarios():
+    """Cuenta marcas por tipo de los operarios/coordinadores vinculados (hoy)."""
+    hoy_iso = _now_bogota().date().isoformat()
     conn = get_conn()
     try:
-        rows = conn.execute(
+        return conn.execute(
             """SELECT e.nombre, e.telegram_chat_id,
                       SUM(CASE WHEN m.tipo='entrada' THEN 1 ELSE 0 END) AS ent,
                       SUM(CASE WHEN m.tipo='almuerzo_out' THEN 1 ELSE 0 END) AS a_out,
-                      SUM(CASE WHEN m.tipo='almuerzo_in' THEN 1 ELSE 0 END) AS a_in
+                      SUM(CASE WHEN m.tipo='almuerzo_in' THEN 1 ELSE 0 END) AS a_in,
+                      SUM(CASE WHEN m.tipo='salida' THEN 1 ELSE 0 END) AS sal
                FROM empleados e
                JOIN marcajes m ON m.empleado_id = e.id AND m.fecha = ?
                WHERE e.activo=1 AND e.telegram_chat_id IS NOT NULL
@@ -929,17 +924,40 @@ async def job_aviso_almuerzo(context: ContextTypes.DEFAULT_TYPE) -> None:
         ).fetchall()
     finally:
         conn.close()
-    for r in rows:
-        # Si no marcó entrada, no vino: no recordarle nada de almuerzo.
+
+
+async def job_aviso_salida_almuerzo(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """12:10 (12:00 + tolerancia): entró pero no marcó SALIDA a almuerzo.
+    Rápido porque afecta su nómina si no lo corrige."""
+    if _now_bogota().date().weekday() >= 5:
+        return
+    for r in _marcas_hoy_operarios():
+        if r["ent"] == 0:  # no vino -> no molestar
+            continue
+        if r["a_out"] == 0:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(r["telegram_chat_id"]),
+                    text=f"🍽 {r['nombre']}, no marcaste tu salida a almuerzo. "
+                         f"Márcala ya para que no te afecte la nómina.",
+                )
+            except Exception:
+                log.exception("No se pudo avisar salida-almuerzo a %s", r["nombre"])
+
+
+async def job_aviso_regreso_almuerzo(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """13:05 (13:00 + tolerancia): salió a almuerzo pero no marcó el REGRESO."""
+    if _now_bogota().date().weekday() >= 5:
+        return
+    for r in _marcas_hoy_operarios():
         if r["ent"] == 0:
             continue
-        msg = None
-        if r["a_out"] == 0:
-            msg = f"🍽 {r['nombre']}, no registraste tu salida a almuerzo hoy. Recuerda marcar."
-        elif r["a_out"] > 0 and r["a_in"] == 0:
-            msg = f"↩️ {r['nombre']}, marcaste salida a almuerzo pero no el regreso. No olvides marcar al volver."
-        if msg:
+        if r["a_out"] > 0 and r["a_in"] == 0:
             try:
-                await context.bot.send_message(chat_id=int(r["telegram_chat_id"]), text=msg)
+                await context.bot.send_message(
+                    chat_id=int(r["telegram_chat_id"]),
+                    text=f"↩️ {r['nombre']}, no marcaste tu regreso de almuerzo. "
+                         f"Márcalo ya para que no te afecte la nómina.",
+                )
             except Exception:
-                log.exception("No se pudo avisar almuerzo a %s", r["nombre"])
+                log.exception("No se pudo avisar regreso-almuerzo a %s", r["nombre"])

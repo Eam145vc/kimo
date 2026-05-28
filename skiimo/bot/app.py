@@ -3529,7 +3529,8 @@ def main() -> None:
     # Comandos de TRABAJADOR (asistencia, solo su propia info)
     from skiimo.bot.asistencia_commands import (
         cmd_mi_asistencia, cmd_mi_nomina, cmd_mis_kpis, cmd_mi_help,
-        job_aviso_no_marco, job_aviso_sin_salida, job_aviso_almuerzo,
+        job_aviso_no_marco, job_aviso_sin_salida,
+        job_aviso_salida_almuerzo, job_aviso_regreso_almuerzo,
         job_resumen_asistencia_cierre, job_resumen_asistencia_manana,
         cmd_quien_esta, cmd_asistencia_hoy, cmd_llegadas_tarde,
         cmd_quincena, cmd_asistencia_help, cmd_extras,
@@ -3567,23 +3568,29 @@ def main() -> None:
             time=_time(hour=13, minute=0),   # 8:00 Colombia: estado de hoy
             name="resumen_asist_manana",
         )
-        # Recordatorios al trabajador (tras los 5 min de tolerancia)
+        # Recordatorios al trabajador (rapidos, tras los 5 min de tolerancia,
+        # porque afectan su nomina si no corrige a tiempo). UTC = Colombia + 5.
         app.job_queue.run_daily(
             job_aviso_no_marco,
-            time=_time(hour=12, minute=10),  # 7:10 Colombia: no marco entrada (7:00+5)
+            time=_time(hour=12, minute=10),  # 7:10: no marco entrada (7:00+5)
             name="aviso_no_marco",
         )
         app.job_queue.run_daily(
-            job_aviso_almuerzo,
-            time=_time(hour=18, minute=35),  # 13:35 Colombia: falto marca de almuerzo
-            name="aviso_almuerzo",
+            job_aviso_salida_almuerzo,
+            time=_time(hour=17, minute=10),  # 12:10: no marco salida a almuerzo (12:00+5)
+            name="aviso_salida_almuerzo",
+        )
+        app.job_queue.run_daily(
+            job_aviso_regreso_almuerzo,
+            time=_time(hour=18, minute=5),   # 13:05: no marco regreso (13:00+5)
+            name="aviso_regreso_almuerzo",
         )
         app.job_queue.run_daily(
             job_aviso_sin_salida,
-            time=_time(hour=23, minute=0),   # 18:00 Colombia: no marco salida
+            time=_time(hour=22, minute=10),  # 17:10: no marco salida (17:00+5)
             name="aviso_sin_salida",
         )
-        log.info("Jobs de asistencia programados (resumenes 7/8am, avisos 7:10/13:35/18:00)")
+        log.info("Jobs de asistencia programados (resumenes 7/8am, avisos 7:10/12:10/13:05/17:10)")
     # Sync periodico de facturas recientes (cada 5 min)
     if app.job_queue:
         app.job_queue.run_repeating(
