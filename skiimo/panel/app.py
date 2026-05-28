@@ -758,6 +758,44 @@ async def api_equipo_list(session_token: str | None = Cookie(default=None)):
     return {"items": [dict(r) for r in rows]}
 
 
+@app.get("/api/equipo/empleados-bot")
+async def api_equipo_empleados_bot(session_token: str | None = Cookie(default=None)):
+    """Resumen de empleados vinculados al bot (registrados via cedula/chat).
+
+    Devuelve total de activos, cuantos estan vinculados y el desglose por cargo,
+    mas la lista de los que faltan por vincularse.
+    """
+    _require_user(session_token)
+    conn = get_conn()
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM empleados WHERE activo=1").fetchone()[0]
+        vinculados = conn.execute(
+            "SELECT COUNT(*) FROM empleados WHERE activo=1 AND telegram_chat_id IS NOT NULL"
+        ).fetchone()[0]
+        por_cargo = conn.execute(
+            """SELECT cargo,
+                      COUNT(*) AS total,
+                      SUM(CASE WHEN telegram_chat_id IS NOT NULL THEN 1 ELSE 0 END) AS vinculados
+               FROM empleados WHERE activo=1
+               GROUP BY cargo ORDER BY cargo"""
+        ).fetchall()
+        faltan = conn.execute(
+            """SELECT nombre, cargo, CASE WHEN cedula IS NULL OR cedula='' THEN 0 ELSE 1 END AS tiene_cedula
+               FROM empleados
+               WHERE activo=1 AND telegram_chat_id IS NULL
+               ORDER BY nombre"""
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "total": total,
+        "vinculados": vinculados,
+        "faltan": total - vinculados,
+        "por_cargo": [dict(r) for r in por_cargo],
+        "lista_faltan": [dict(r) for r in faltan],
+    }
+
+
 class EquipoBody(BaseModel):
     nombre: str
     telegram_chat_id: int

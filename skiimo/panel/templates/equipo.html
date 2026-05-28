@@ -36,6 +36,54 @@
     </div>
   </div>
 
+  <!-- Empleados vinculados al bot (asistencia) -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-5 mb-4" x-data="empleadosBot()" x-init="cargar()">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-sm font-semibold">Empleados registrados en el bot</h3>
+      <span class="text-xs text-text-muted">Asistencia · vinculación por cédula</span>
+    </div>
+    <div class="grid grid-cols-3 gap-3 mb-3">
+      <div class="rounded-lg bg-surface-2 ring-1 ring-border p-3 text-center">
+        <p class="text-2xl font-semibold tabular text-success" x-text="data.vinculados ?? '—'"></p>
+        <p class="text-[11px] text-text-muted mt-0.5">Vinculados</p>
+      </div>
+      <div class="rounded-lg bg-surface-2 ring-1 ring-border p-3 text-center">
+        <p class="text-2xl font-semibold tabular" :class="(data.faltan ?? 0) > 0 ? 'text-warning' : ''" x-text="data.faltan ?? '—'"></p>
+        <p class="text-[11px] text-text-muted mt-0.5">Faltan</p>
+      </div>
+      <div class="rounded-lg bg-surface-2 ring-1 ring-border p-3 text-center">
+        <p class="text-2xl font-semibold tabular text-text-muted" x-text="data.total ?? '—'"></p>
+        <p class="text-[11px] text-text-muted mt-0.5">Activos</p>
+      </div>
+    </div>
+    <!-- desglose por cargo -->
+    <div class="flex flex-wrap gap-2 mb-2">
+      <template x-for="c in data.por_cargo || []" :key="c.cargo">
+        <span class="text-[11px] px-2 py-1 rounded-full bg-surface-2 ring-1 ring-border">
+          <span x-text="c.cargo || '(sin cargo)'"></span>:
+          <span class="tabular" :class="c.vinculados === c.total ? 'text-success' : 'text-text-muted'"
+                x-text="c.vinculados + '/' + c.total"></span>
+        </span>
+      </template>
+    </div>
+    <!-- lista de los que faltan (colapsable) -->
+    <div x-data="{ abierto: false }" x-show="(data.faltan ?? 0) > 0">
+      <button @click="abierto = !abierto" class="text-xs text-accent hover:text-accent-hover">
+        <span x-text="abierto ? '▲ ocultar' : '▼ ver quiénes faltan'"></span>
+      </button>
+      <div x-show="abierto" class="mt-2 flex flex-wrap gap-1.5" style="display:none">
+        <template x-for="e in data.lista_faltan || []" :key="e.nombre">
+          <span class="text-[11px] px-2 py-0.5 rounded ring-1"
+                :class="e.tiene_cedula ? 'ring-border text-text-muted' : 'ring-danger/40 text-danger'"
+                :title="e.tiene_cedula ? 'Tiene cédula, falta que se vincule' : 'Sin cédula cargada'">
+            <span x-text="e.nombre"></span>
+            <span x-show="!e.tiene_cedula"> ⚠️ sin cédula</span>
+          </span>
+        </template>
+      </div>
+    </div>
+  </div>
+
   <!-- Tabla -->
   <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
     <div class="overflow-x-auto">
@@ -147,6 +195,18 @@
 </div>
 
 <script>
+function empleadosBot() {
+  return {
+    data: {},
+    async cargar() {
+      try {
+        const r = await fetch('/api/equipo/empleados-bot', { credentials: 'same-origin' });
+        if (r.ok) this.data = await r.json();
+      } catch (e) { console.error(e); }
+    },
+  };
+}
+
 function equipo() {
   return {
     items: [], loading: false,
