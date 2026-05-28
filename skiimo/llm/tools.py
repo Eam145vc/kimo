@@ -1790,11 +1790,188 @@ def facturas_pendientes_cobro(limit: int = 10) -> dict:
 
 
 # =============================================================================
+# ASISTENCIA: programar extras + crear/editar marcajes (conversacional, admin)
+# =============================================================================
+
+
+def _tz_bogota():
+    from skiimo.hikvision import TZ_BOGOTA
+    return TZ_BOGOTA
+
+
+def _fecha_relativa(s: str) -> str | None:
+    """'hoy'/'mañana'/'ayer'/YYYY-MM-DD -> fecha ISO. None si no parsea."""
+    from datetime import datetime as _dt, timedelta as _td
+    hoy = _dt.now(_tz_bogota()).date()
+    s = (s or "").strip().lower()
+    if s in ("hoy", "today"):
+        return hoy.isoformat()
+    if s in ("mañana", "manana", "tomorrow"):
+        return (hoy + _td(days=1)).isoformat()
+    if s in ("ayer", "yesterday"):
+        return (hoy - _td(days=1)).isoformat()
+    try:
+        from datetime import date as _date
+        return _date.fromisoformat(s).isoformat()
+    except Exception:
+        return None
+
+
+def programar_extras(
+    fecha: str,
+    hora_fin: str,
+    hora_inicio: str = "17:30",
+    fecha_hasta: str | None = None,
+    nota: str | None = None,
+) -> dict:
+    """Programa una ventana de horas extra autorizadas (solo admin).
+
+    Usar cuando el admin dice cosas como:
+    - 'programa extras hoy de 6 a 8 pm'
+    - 'autoriza horas extra mañana de 5:30 a 9pm'
+    - 'habilita extras del 30 de mayo al 2 de junio de 6 a 8'
+
+    fecha: dia de las extras ('hoy', 'mañana' o YYYY-MM-DD)
+    hora_fin: hora limite de las extras en formato HH:MM 24h (ej. '20:00')
+    hora_inicio: hora de inicio HH:MM 24h. Default '17:30'.
+    fecha_hasta: si es un rango, la fecha final (YYYY-MM-DD). Opcional.
+    nota: nota opcional.
+    """
+    import re as _re
+    from datetime import datetime as _dt
+    fd = _fecha_relativa(fecha)
+    if not fd:
+        return {"error": f"No entendí la fecha '{fecha}'. Usá 'hoy', 'mañana' o AAAA-MM-DD."}
+    fh = _fecha_relativa(fecha_hasta) if fecha_hasta else fd
+    if not fh:
+        return {"error": f"No entendí la fecha final '{fecha_hasta}'."}
+    if not (_re.match(r'^\d{1,2}:\d{2}$', hora_inicio or "") and _re.match(r'^\d{1,2}:\d{2}$', hora_fin or "")):
+        return {"error": "Las horas deben ser HH:MM (ej. 18:00)."}
+    # normalizar a 2 digitos
+    def _nz(h):
+        hh, mm = h.split(":"); return f"{int(hh):02d}:{mm}"
+    hi, hfn = _nz(hora_inicio), _nz(hora_fin)
+    if hfn <= hi:
+        return {"error": "La hora fin debe ser mayor a la hora inicio."}
+    if fh < fd:
+        fd, fh = fh, fd
+    now = _dt.now(_tz_bogota()).isoformat()
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO extras_autorizadas
+               (fecha_desde, fecha_hasta, hora_inicio, hora_fin, nota, creado_por, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (fd, fh, hi, hfn, nota, "bot", now),
+        )
+        conn.commit()
+        eid = cur.lastrowid
+    finally:
+        conn.close()
+    return {
+        "ok": True, "id": eid,
+        "fecha_desde": fd, "fecha_hasta": fh,
+        "hora_inicio": hi, "hora_fin": hfn,
+        "_notificar_extras": True,  # señal para que el bot notifique a operarios
+    }
+
+
+def registrar_marcaje_empleado(
+    empleado: str,
+    fecha: str,
+    hora: str,
+    tipo: str,
+) -> dict:
+    """Crea o corrige un marcaje de un trabajador (solo admin).
+
+    Usar cuando el admin dice:
+    - 'Daniel entró hoy a las 7'
+    - 'registra la salida de Mateo a las 5pm de hoy'
+    - 'corrige el regreso de almuerzo de Juan Diego a la 1pm'
+    - 'Manuela marcó entrada ayer a las 7:05'
+
+    empleado: nombre (o parte) del empleado.
+    fecha: 'hoy', 'mañana', 'ayer' o YYYY-MM-DD.
+    hora: hora del marcaje en HH:MM 24h (ej. '07:00', '17:00', '13:00').
+    tipo: uno de: entrada, salida, almuerzo_out (salida a almuerzo),
+          almuerzo_in (regreso de almuerzo), extra_in (inicio extras),
+          extra_out (fin extras).
+    """
+    import re as _re
+    from datetime import datetime as _dt
+    tipos_ok = ("entrada", "salida", "almuerzo_out", "almuerzo_in", "extra_in", "extra_out")
+    tipo = (tipo or "").strip().lower()
+    if tipo not in tipos_ok:
+        return {"error": f"Tipo inválido '{tipo}'. Debe ser uno de: {', '.join(tipos_ok)}."}
+    fd = _fecha_relativa(fecha)
+    if not fd:
+        return {"error": f"No entendí la fecha '{fecha}'."}
+    if not _re.match(r'^\d{1,2}:\d{2}$', hora or ""):
+        return {"error": "La hora debe ser HH:MM (ej. 07:00)."}
+    hh, mm = hora.split(":")
+    hora_norm = f"{int(hh):02d}:{mm}"
+    conn = get_conn()
+    try:
+        # buscar empleado por nombre (parcial)
+        q = f"%{empleado.strip()}%"
+        rows = conn.execute(
+            "SELECT id, nombre FROM empleados WHERE activo=1 AND nombre LIKE ? COLLATE NOCASE",
+            (q,),
+        ).fetchall()
+        if not rows:
+            return {"error": f"No encontré un empleado que coincida con '{empleado}'."}
+        if len(rows) > 1:
+            nombres = [r["nombre"] for r in rows[:8]]
+            return {
+                "necesita_aclaracion": True,
+                "pregunta": f"Hay varios empleados con '{empleado}'. ¿A cuál te refieres?",
+                "opciones": nombres,
+            }
+        emp = rows[0]
+        ts = f"{fd}T{hora_norm}:00-05:00"
+        now = _dt.now(_tz_bogota()).isoformat()
+        # ¿ya hay un marcaje de ese tipo ese dia? -> corregir (editar) en vez de duplicar
+        ya = conn.execute(
+            "SELECT id FROM marcajes WHERE empleado_id=? AND fecha=? AND tipo=? LIMIT 1",
+            (emp["id"], fd, tipo),
+        ).fetchone()
+        if ya:
+            conn.execute(
+                """UPDATE marcajes SET ts=?, metodo='manual', origen='corregido',
+                       editado=1, editado_por='bot', editado_at=? WHERE id=?""",
+                (ts, now, ya["id"]),
+            )
+            accion = "corregido"
+        else:
+            conn.execute(
+                """INSERT INTO marcajes (empleado_id, ts, fecha, tipo, metodo, origen,
+                                         editado, editado_por, editado_at, created_at)
+                   VALUES (?,?,?,?, 'manual','manual', 1, 'bot', ?, ?)""",
+                (emp["id"], ts, fd, tipo, now, now),
+            )
+            accion = "registrado"
+        conn.commit()
+    finally:
+        conn.close()
+    etiqueta = {
+        "entrada": "entrada", "salida": "salida",
+        "almuerzo_out": "salida a almuerzo", "almuerzo_in": "regreso de almuerzo",
+        "extra_in": "inicio de extras", "extra_out": "fin de extras",
+    }[tipo]
+    return {
+        "ok": True, "accion": accion, "empleado": emp["nombre"],
+        "tipo": etiqueta, "fecha": fd, "hora": hora_norm,
+    }
+
+
+# =============================================================================
 # REGISTRO DE TOOLS (signature declarations para Gemini)
 # =============================================================================
 
 # Dict que mapea nombre tool -> funcion python
 TOOLS_MAP: dict[str, Any] = {
+    "programar_extras": programar_extras,
+    "registrar_marcaje_empleado": registrar_marcaje_empleado,
     "consultar_ventas": consultar_ventas,
     "consultar_gastos": consultar_gastos,
     "top_clientes": top_clientes,
@@ -1830,6 +2007,52 @@ TOOLS_MAP: dict[str, Any] = {
 # Declaraciones para Gemini (function declarations)
 # Estos no incluyen "registrar_pedido" porque ese flujo se maneja con structured output aparte.
 TOOL_DECLARATIONS: list[dict] = [
+    {
+        "name": "programar_extras",
+        "description": (
+            "Programa una ventana de horas extra autorizadas (SOLO admin). "
+            "Usar cuando el admin dice: 'programa extras hoy de 6 a 8pm', "
+            "'autoriza horas extra mañana de 5:30 a 9', 'habilita extras el 30 de mayo "
+            "de 18:00 a 20:00'. Convertí las horas a formato 24h HH:MM. "
+            "Si no dicen hora de inicio, usar 17:30."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fecha": {"type": "string", "description": "'hoy', 'mañana' o AAAA-MM-DD"},
+                "hora_fin": {"type": "string", "description": "Hora límite HH:MM 24h (ej. '20:00')"},
+                "hora_inicio": {"type": "string", "description": "Hora inicio HH:MM 24h. Default '17:30'"},
+                "fecha_hasta": {"type": "string", "description": "Fecha final si es un rango (AAAA-MM-DD). Opcional."},
+                "nota": {"type": "string", "description": "Nota opcional"},
+            },
+            "required": ["fecha", "hora_fin"],
+        },
+    },
+    {
+        "name": "registrar_marcaje_empleado",
+        "description": (
+            "Crea o corrige un marcaje de asistencia de un trabajador (SOLO admin). "
+            "Usar cuando el admin dice: 'Daniel entró hoy a las 7', "
+            "'registra la salida de Mateo a las 5pm', 'corrige el regreso de almuerzo "
+            "de Juan a la 1pm', 'Manuela marcó entrada ayer 7:05'. "
+            "Convertí la hora a formato 24h HH:MM. Si hay varios empleados que coinciden "
+            "con el nombre, la herramienta devolverá las opciones para que preguntes cuál."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "empleado": {"type": "string", "description": "Nombre o parte del nombre del empleado"},
+                "fecha": {"type": "string", "description": "'hoy', 'ayer', 'mañana' o AAAA-MM-DD"},
+                "hora": {"type": "string", "description": "Hora del marcaje HH:MM 24h (ej. '07:00', '17:00')"},
+                "tipo": {
+                    "type": "string",
+                    "enum": ["entrada", "salida", "almuerzo_out", "almuerzo_in", "extra_in", "extra_out"],
+                    "description": "Tipo de marcaje. almuerzo_out=salida a almuerzo, almuerzo_in=regreso, extra_in/extra_out=extras",
+                },
+            },
+            "required": ["empleado", "fecha", "hora", "tipo"],
+        },
+    },
     {
         "name": "consultar_ventas",
         "description": "Consulta total y cantidad de ventas (facturas emitidas) en un periodo. Usar cuando el usuario pregunta por ventas, ingresos, facturacion.",

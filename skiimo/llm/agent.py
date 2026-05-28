@@ -138,6 +138,12 @@ REGLAS:
 - Si dice "agrega como admin/vendedor al chat X" / "registra a Y" / "da de alta a Z" -> agregar_usuario()
 - Si dice "lista de usuarios" / "quien tiene acceso" -> listar_usuarios()
 - Si dice "sacale acceso a X" / "desactiva al chat Y" -> desactivar_usuario()
+- ASISTENCIA (solo admin):
+  - "programa/autoriza/habilita extras [fecha] de X a Y" -> programar_extras(). Convertí
+    las horas a 24h (ej. "6 a 8pm" -> inicio 18:00 fin 20:00). Si no dan inicio, usa 17:30.
+  - "Daniel entró a las 7" / "registra la salida de Mateo a las 5pm" / "corrige el regreso
+    de almuerzo de Juan" -> registrar_marcaje_empleado(). Convertí la hora a 24h. Si la tool
+    devuelve necesita_aclaracion con opciones, PREGUNTALE al usuario cuál empleado.
 - NUNCA inventes datos.
 - Responde SIEMPRE en espanol colombiano informal."""
 
@@ -413,7 +419,11 @@ def process_message(
             for fc in fcs:
                 tools_used.append(fc.name)
                 fn = TOOLS_MAP.get(fc.name)
-                if not fn:
+                # Tools de asistencia que escriben datos sensibles: SOLO admin.
+                TOOLS_SOLO_ADMIN = ("programar_extras", "registrar_marcaje_empleado")
+                if fc.name in TOOLS_SOLO_ADMIN and user_role != "admin":
+                    out = {"error": "Solo el administrador puede hacer esto."}
+                elif not fn:
                     out = {"error": f"tool desconocida: {fc.name}"}
                 else:
                     try:

@@ -1609,6 +1609,18 @@ async def _dispatch_agent_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, 
 
     if reply.kind == "texto":
         msg = (reply.texto or "(sin respuesta)")[:4000]
+        # Si se programaron extras por conversacion -> notificar a operarios/coordinadores
+        if (reply.tools_used and "programar_extras" in reply.tools_used
+                and reply.last_tool_result and reply.last_tool_result.get("_notificar_extras")):
+            r = reply.last_tool_result
+            try:
+                from skiimo.bot.asistencia_commands import _notificar_extras
+                n = await _notificar_extras(
+                    ctx, r["fecha_desde"], r["fecha_hasta"], r["hora_inicio"], r["hora_fin"]
+                )
+                msg += f"\n\n📣 Notifiqué a {n} empleado(s)."
+            except Exception:
+                log.exception("No se pudo notificar extras (conversacional)")
         # Detectar si la ultima tool fue analizar_pago_factura -> mostrar botones
         if (reply.tools_used and "analizar_pago_factura" in reply.tools_used
                 and reply.last_tool_result and reply.last_tool_result.get("pendiente_confirmacion")):
