@@ -391,6 +391,11 @@ def process_message(
             response = client.models.generate_content(
                 model=GEMINI_MODEL, contents=contents, config=config,
             )
+            try:
+                from skiimo.uso_ia import registrar_uso
+                registrar_uso(getattr(response, "usage_metadata", None), operacion="agente", modelo=GEMINI_MODEL)
+            except Exception:
+                pass
         except Exception as e:
             log.exception("Error LLM en step %d", _step)
             return AgentReply(kind="error", texto=f"Error LLM: {e}")
@@ -477,6 +482,11 @@ def process_message(
                         temperature=0.2,
                     ),
                 )
+                try:
+                    from skiimo.uso_ia import registrar_uso
+                    registrar_uso(getattr(followup, "usage_metadata", None), operacion="agente", modelo=GEMINI_MODEL)
+                except Exception:
+                    pass
                 if followup.candidates and followup.candidates[0].content:
                     for p in (followup.candidates[0].content.parts or []):
                         if getattr(p, "text", None):

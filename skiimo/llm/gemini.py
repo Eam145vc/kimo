@@ -170,6 +170,10 @@ def extract_pedido(texto: str) -> Pedido:
             temperature=0.1,
         ),
     )
+    try:
+        from skiimo.uso_ia import registrar_uso
+        registrar_uso(getattr(response,"usage_metadata",None), operacion="pedido", modelo=GEMINI_MODEL)
+    except Exception: pass
     parsed = response.parsed
     if isinstance(parsed, Pedido):
         return parsed
@@ -195,6 +199,10 @@ def extract_pedido_from_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") 
             temperature=0.1,
         ),
     )
+    try:
+        from skiimo.uso_ia import registrar_uso
+        registrar_uso(getattr(response,"usage_metadata",None), operacion="pedido", modelo=GEMINI_MODEL)
+    except Exception: pass
     parsed = response.parsed
     if isinstance(parsed, Pedido):
         return parsed
@@ -212,6 +220,10 @@ def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
         ],
         config=genai_types.GenerateContentConfig(temperature=0.0),
     )
+    try:
+        from skiimo.uso_ia import registrar_uso
+        registrar_uso(getattr(response,"usage_metadata",None), operacion="audio", modelo=GEMINI_MODEL)
+    except Exception: pass
     return response.text or ""
 
 
@@ -255,6 +267,10 @@ def extract_comprobante_pago(
             temperature=0.0,
         ),
     )
+    try:
+        from skiimo.uso_ia import registrar_uso
+        registrar_uso(getattr(response,"usage_metadata",None), operacion="factura", modelo=GEMINI_MODEL)
+    except Exception: pass
     parsed = response.parsed
     if isinstance(parsed, ComprobantePago):
         return parsed
@@ -281,6 +297,10 @@ def extract_factura_proveedor(
             temperature=0.0,
         ),
     )
+    try:
+        from skiimo.uso_ia import registrar_uso
+        registrar_uso(getattr(response,"usage_metadata",None), operacion="factura", modelo=GEMINI_MODEL)
+    except Exception: pass
     parsed = response.parsed
     if isinstance(parsed, FacturaProveedor):
         return parsed

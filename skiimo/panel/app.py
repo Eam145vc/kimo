@@ -132,8 +132,32 @@ def _render_page(request: Request, template: str, page_key: str, session_token: 
         return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse(
         request=request, name=template,
-        context={"user": user["username"], "page": page_key},
+        context={"user": user["username"], "page": page_key, "role": user.get("role", "admin")},
     )
+
+
+@app.get("/dev", response_class=HTMLResponse)
+async def page_dev(request: Request, session_token: str | None = Cookie(default=None)):
+    """Panel interno (solo rol 'dev'): consumo de IA, costos del plan. Oculto al cliente."""
+    user = validar_sesion(session_token)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    if user.get("role") != "dev":
+        return RedirectResponse(url="/", status_code=303)  # cliente no entra
+    return templates.TemplateResponse(
+        request=request, name="dev.html",
+        context={"user": user["username"], "page": "dev", "role": "dev"},
+    )
+
+
+@app.get("/api/dev/uso-ia")
+async def api_dev_uso_ia(mes: str = "", session_token: str | None = Cookie(default=None)):
+    """Consumo de IA del mes (solo rol dev)."""
+    user = validar_sesion(session_token)
+    if not user or user.get("role") != "dev":
+        raise HTTPException(status_code=403, detail="No autorizado")
+    from skiimo.uso_ia import resumen_mes
+    return resumen_mes(mes or None)
 
 
 @app.get("/", response_class=HTMLResponse)

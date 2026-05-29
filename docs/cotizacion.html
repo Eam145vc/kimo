@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Propuesta · Sistema Esskimo</title>
+<style>
+  :root{
+    --bg:#070b16; --bg2:#0b1322; --surface:#0f1729; --surface2:#16203a;
+    --border:#22304d; --border2:#2c3d61;
+    --text:#eef4ff; --muted:#9fb2d0; --muted2:#6b7d9c;
+    --accent:#4FC4E8; --accent2:#2FA9D6; --accent-deep:#1a6b8a;
+    --success:#22c55e; --warning:#f59e0b; --danger:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  body{
+    font-family:'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--text); line-height:1.55;-webkit-font-smoothing:antialiased;
+  }
+  .tabular{font-variant-numeric:tabular-nums;}
+  .page{max-width:880px;margin:0 auto;}
+  .pad{padding:0 56px;}
+
+  /* HERO */
+  .hero{position:relative;overflow:hidden;padding:72px 56px 56px;
+    background:
+      radial-gradient(900px 380px at 82% -10%, rgba(79,196,232,.20), transparent 60%),
+      radial-gradient(600px 300px at 0% 110%, rgba(47,169,214,.12), transparent 55%),
+      linear-gradient(180deg, var(--bg2), var(--bg));
+    border-bottom:1px solid var(--border);}
+  .hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
+    background:linear-gradient(90deg,transparent,var(--accent),transparent);
+    box-shadow:0 0 24px 2px rgba(79,196,232,.5);}
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:52px;}
+  .logo{font-size:30px;font-weight:800;letter-spacing:-1.2px;color:var(--accent);}
+  .logo span{color:var(--text);}
+  .badge{font-size:11px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent);
+    border:1px solid var(--accent-deep);padding:6px 14px;border-radius:999px;background:rgba(79,196,232,.06);}
+  .hero h1{font-size:44px;font-weight:800;line-height:1.1;letter-spacing:-1.6px;max-width:680px;margin-bottom:18px;}
+  .hero h1 em{font-style:normal;color:var(--accent);}
+  .hero p.lead{font-size:16.5px;color:var(--muted);max-width:600px;}
+  .hero .stats{display:flex;gap:36px;margin-top:42px;flex-wrap:wrap;}
+  .hero .stat .n{font-size:28px;font-weight:800;color:var(--text);letter-spacing:-1px;}
+  .hero .stat .n .u{font-size:14px;color:var(--accent);font-weight:600;}
+  .hero .stat .l{font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:1px;margin-top:2px;}
+
+  section{padding:56px 0;}
+  h2{font-size:28px;font-weight:800;letter-spacing:-.9px;margin-bottom:10px;}
+  .section-sub{color:var(--muted);font-size:14.5px;margin-bottom:30px;max-width:600px;}
+
+  /* DOLORES (antes / después) */
+  .dolores{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .dolor{border-radius:15px;padding:20px 22px;}
+  .dolor.malo{background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.22);}
+  .dolor.bien{background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.25);}
+  .dolor .lbl{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+  .dolor.malo .lbl{color:var(--danger);}
+  .dolor.bien .lbl{color:var(--success);}
+  .dolor ul{list-style:none;}
+  .dolor li{font-size:13.5px;padding:8px 0 8px 24px;position:relative;color:var(--text);border-top:1px solid rgba(255,255,255,.05);}
+  .dolor li:first-child{border-top:none;}
+  .dolor.malo li::before{content:"✕";position:absolute;left:2px;color:var(--danger);font-weight:700;}
+  .dolor.bien li::before{content:"✓";position:absolute;left:2px;color:var(--success);font-weight:700;}
+  .dolor li span{color:var(--muted);font-size:12px;display:block;margin-top:1px;}
+
+  /* MÓDULOS */
+  .area-band{display:flex;align-items:center;gap:14px;margin:6px 0 18px;}
+  .area-band .num{font-size:13px;font-weight:800;color:#06141b;background:var(--accent);width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;}
+  .area-band .t{font-size:18px;font-weight:800;letter-spacing:-.5px;}
+  .area-band .line{flex:1;height:1px;background:var(--border);}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .mod{background:linear-gradient(160deg, var(--surface2), var(--surface));
+    border:1px solid var(--border);border-radius:15px;padding:20px 20px 18px;position:relative;overflow:hidden;}
+  .mod::before{content:"";position:absolute;top:-40px;right:-40px;width:110px;height:110px;
+    background:radial-gradient(circle,rgba(79,196,232,.14),transparent 70%);}
+  .mod .icn{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    background:rgba(79,196,232,.12);border:1px solid var(--accent-deep);margin-bottom:12px;}
+  .mod .icn svg{width:20px;height:20px;stroke:var(--accent);fill:none;stroke-width:2;}
+  .mod h3{font-size:15px;font-weight:700;margin-bottom:9px;}
+  .mod ul{list-style:none;}
+  .mod li{font-size:12.5px;color:var(--muted);padding:3px 0 3px 18px;position:relative;}
+  .mod li::before{content:"";position:absolute;left:0;top:10px;width:5px;height:5px;border-radius:50%;background:var(--accent);}
+  .mod.wide{grid-column:1 / -1;}
+  .pill-new{font-size:10px;font-weight:700;letter-spacing:1px;color:#06141b;background:var(--accent);padding:3px 9px;border-radius:999px;margin-left:8px;vertical-align:middle;}
+
+  /* PRECIO */
+  .precio-wrap{background:radial-gradient(700px 300px at 50% -20%, rgba(79,196,232,.18), transparent 60%),
+      linear-gradient(165deg, var(--surface2), var(--surface));
+    border:1px solid var(--accent-deep);border-radius:24px;padding:40px 44px;position:relative;overflow:hidden;
+    box-shadow:0 24px 60px -24px rgba(0,0,0,.7);}
+  .precio-main{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;}
+  .precio-main .left .k{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);}
+  .precio-main .left .big{font-size:58px;font-weight:800;letter-spacing:-2px;line-height:1;margin:8px 0 6px;
+    background:linear-gradient(90deg,var(--text),var(--accent));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+  .precio-main .left .desc{font-size:13px;color:var(--muted);}
+  .precio-main .right .pago{display:inline-block;font-size:12px;font-weight:600;color:var(--success);
+    border:1px solid rgba(34,197,94,.4);background:rgba(34,197,94,.08);padding:6px 14px;border-radius:999px;}
+  .divider{height:1px;background:var(--border);margin:28px 0;}
+  .mant{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap;}
+  .mant .info{flex:1;min-width:240px;}
+  .mant .info .head{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
+  .mant .info .head h4{font-size:16px;font-weight:700;}
+  .opc{font-size:10px;font-weight:700;letter-spacing:1px;color:#1a1205;background:var(--warning);padding:3px 9px;border-radius:999px;}
+  .mant .precio2{font-size:28px;font-weight:800;color:var(--text);white-space:nowrap;letter-spacing:-1px;}
+  .mant .precio2 small{font-size:14px;color:var(--muted);font-weight:500;}
+  .incluye{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:24px;}
+  .inc-card{border-radius:12px;padding:15px 17px;font-size:12.5px;}
+  .inc-si{background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.25);}
+  .inc-no{background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.22);}
+  .inc-card .t{font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:9px;}
+  .inc-si .t{color:var(--success);} .inc-no .t{color:var(--warning);}
+  .inc-card ul{list-style:none;}
+  .inc-card li{color:var(--muted);padding:3px 0 3px 16px;position:relative;}
+  .inc-si li::before{content:"✓";position:absolute;left:0;color:var(--success);font-weight:700;}
+  .inc-no li::before{content:"·";position:absolute;left:2px;color:var(--warning);font-weight:700;}
+  .nota-opc{margin-top:18px;font-size:12px;color:var(--muted2);text-align:center;font-style:italic;}
+
+  .footer{padding:32px 56px 46px;border-top:1px solid var(--border);margin-top:20px;
+    display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted2);flex-wrap:wrap;gap:8px;}
+  .footer .logo-sm{font-weight:800;color:var(--accent);font-size:14px;}
+  .footer .logo-sm span{color:var(--text);}
+
+  @media print{section{padding:38px 0;} .hero{padding:48px 56px 40px;} .mod,.precio-wrap,.inc-card,.dolor{break-inside:avoid;} .precio-wrap{box-shadow:none;}}
+  @media (max-width:680px){.grid,.incluye,.dolores{grid-template-columns:1fr;} .pad,.hero,.footer{padding-left:28px;padding-right:28px;} .hero h1{font-size:30px;} .precio-main .left .big{font-size:42px;}}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="topbar">
+      <div class="logo">ess<span>kimo</span></div>
+      <div class="badge">Propuesta · 2026</div>
+    </div>
+    <h1>Tu fábrica entera bajo control: <em>ventas, contabilidad, nómina y asistencia</em> en un solo sistema.</h1>
+    <p class="lead">
+      Una plataforma a medida con dos asistentes por chat, conectada a Siigo y a tu terminal facial.
+      Deja de perder plata en errores, tiempo en cuentas y control sobre tu gente.
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="n">2 <span class="u">áreas</span></div><div class="l">Negocio + Personal</div></div>
+      <div class="stat"><div class="n">12 <span class="u">módulos</span></div><div class="l">Sistema completo</div></div>
+      <div class="stat"><div class="n">2 <span class="u">bots IA</span></div><div class="l">Ventas y empleados</div></div>
+      <div class="stat"><div class="n">100<span class="u">%</span></div><div class="l">Automático</div></div>
+    </div>
+  </div>
+
+  <!-- DOLORES -->
+  <section class="pad">
+    <h2>Lo que hoy te cuesta plata y tiempo</h2>
+    <p class="section-sub">Estos son los problemas del día a día de una fábrica. El sistema los resuelve de raíz.</p>
+    <div class="dolores">
+      <div class="dolor malo">
+        <div class="lbl">Hoy, sin el sistema</div>
+        <ul>
+          <li>Pedidos a mano y errores al pasarlos a Siigo</li>
+          <li>Facturas de proveedor que se traspapelan o se digitan mal</li>
+          <li>Nómina calculada a mano: tardanzas, almuerzos y extras mal contados</li>
+          <li>Empleados que marcan extras de más y se llevan minutos que no trabajaron</li>
+          <li>No sabes en vivo quién llegó, quién faltó ni cuánto vas a pagar</li>
+          <li>Despachos mal armados: cajas de más o de menos por pedido</li>
+        </ul>
+      </div>
+      <div class="dolor bien">
+        <div class="lbl">Con Esskimo</div>
+        <ul>
+          <li>El vendedor dicta el pedido y la factura sale en Siigo sola</li>
+          <li>Tomas foto a la factura y queda registrada como gasto</li>
+          <li>La nómina se calcula sola, con reglas justas y al minuto</li>
+          <li>Las extras solo se pagan dentro de la ventana que tú autorizas</li>
+          <li>Ves la asistencia y lo que vas a pagar en tiempo real</li>
+          <li>El sistema calcula las cajas y genera las guías para imprimir</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- MÓDULOS -->
+  <section class="pad">
+    <h2>Un sistema, todo tu negocio</h2>
+    <p class="section-sub">Dos grandes áreas que trabajan conectadas: la operación comercial y la gestión de tu personal.</p>
+
+    <div class="area-band"><span class="num">1</span><span class="t">Ventas y contabilidad</span><span class="line"></span></div>
+    <div class="grid">
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/></svg></div>
+        <h3>Bot de pedidos con IA</h3>
+        <ul>
+          <li>El vendedor manda el pedido por texto o audio</li>
+          <li>La IA lo entiende, busca cliente y productos</li>
+          <li>Genera la factura en Siigo con un toque</li>
+          <li>Repetir pedido, anular o modificar, todo por chat</li>
+        </ul>
+      </div>
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.5v15m16.5-15v15M3.75 4.5h16.5M3.75 19.5h16.5M9 9h6m-6 3h6m-6 3h3"/></svg></div>
+        <h3>Facturas y gastos automáticos</h3>
+        <ul>
+          <li>Foto o PDF de factura a gasto registrado (OCR con IA)</li>
+          <li>Convierte unidades al estándar de Siigo (g / ml)</li>
+          <li>Gastos manuales por chat (documento soporte)</li>
+          <li>Lectura automática de facturas del correo</li>
+        </ul>
+      </div>
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941"/></svg></div>
+        <h3>Reportes en tiempo real</h3>
+        <ul>
+          <li>Ventas, gastos y resumen del día</li>
+          <li>Top clientes y productos</li>
+          <li>Cuentas por cobrar y proveedores por pagar</li>
+          <li>Estado de cuenta de clientes y vencimientos</li>
+        </ul>
+      </div>
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h12M3.75 3h-1.5m1.5 0h16.5M9 11.25v1.5M12 9v3.75m3-6v6"/></svg></div>
+        <h3>Precios e inventario</h3>
+        <ul>
+          <li>Consultar y cambiar precios (individual o por grupo)</li>
+          <li>Categorías de cliente (mayorista, distribuidor)</li>
+          <li>Pronto pago configurable por cliente</li>
+          <li>Consulta de stock en línea</li>
+        </ul>
+      </div>
+      <div class="mod wide">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859M3 16.06V18a2.25 2.25 0 002.25 2.25h13.5A2.25 2.25 0 0021 18v-1.94"/></svg></div>
+        <h3>Panel administrativo comercial</h3>
+        <ul>
+          <li>Tablero con indicadores del negocio</li>
+          <li>Gestión de ventas, compras, clientes, productos y proveedores</li>
+          <li>Todo sincronizado con Siigo</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="area-band" style="margin-top:36px;"><span class="num">2</span><span class="t">Asistencia, nómina y personal</span><span class="line"></span></div>
+    <div class="grid">
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 9.75a3 3 0 11-6 0 3 3 0 016 0zM6 20.25a6 6 0 0112 0v.75H6v-.75z"/></svg></div>
+        <h3>Equipo facial integrado</h3>
+        <ul>
+          <li>Configuración e integración del terminal Hikvision (equipo propio)</li>
+          <li>Lee los marcajes automáticamente y captura foto</li>
+          <li>Sincronización en tiempo real</li>
+        </ul>
+      </div>
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l3.75 1.875M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+        <h3>Nómina inteligente</h3>
+        <ul>
+          <li>Horas con tolerancia y redondeo justo</li>
+          <li>Almuerzo, tardanzas y salidas tempranas</li>
+          <li>Horas extra autorizadas (sin minutos robados)</li>
+          <li>Findes, incapacidades y ciclos semanal / quincenal</li>
+        </ul>
+      </div>
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg></div>
+        <h3>Panel de asistencia y RR.HH.</h3>
+        <ul>
+          <li>Asistencia diaria en vivo con indicadores</li>
+          <li>Corrección de marcajes en segundos</li>
+          <li>Ficha de cada empleado con sus KPIs</li>
+          <li>Nómina por ciclo con exportación</li>
+        </ul>
+      </div>
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 9.75a.375.375 0 11-.75 0 .375.375 0 01.75 0zm4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/></svg></div>
+        <h3>Bot para empleados</h3>
+        <ul>
+          <li>Cada empleado consulta su asistencia y nómina</li>
+          <li>Permisos por cargo (operario, coordinador, admin)</li>
+          <li>Programar extras y corregir marcas por chat</li>
+          <li>Notificaciones y recordatorios automáticos</li>
+        </ul>
+      </div>
+      <div class="mod wide">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg></div>
+        <h3>Módulo de envíos y guías <span class="pill-new">NUEVO</span></h3>
+        <ul>
+          <li>Calcula automáticamente cuántas cajas necesita cada pedido</li>
+          <li>Reparte el contenido del pedido entre las cajas</li>
+          <li>Genera las guías para imprimir (destino · caja X de N · contenido)</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ENTREGA -->
+  <section class="pad">
+    <h2>Qué incluye la entrega</h2>
+    <p class="section-sub">No es solo el software. Te lo dejo instalado, configurado y con tu gente sabiéndolo usar.</p>
+    <div class="grid">
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+        <h3>Instalación y configuración</h3>
+        <ul>
+          <li>Sistema montado en el servidor, funcionando</li>
+          <li>Configuración e integración del equipo facial Hikvision</li>
+          <li>Conexión con Siigo lista</li>
+          <li>Carga inicial de empleados y reglas de tu negocio</li>
+        </ul>
+      </div>
+      <div class="mod">
+        <div class="icn"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/></svg></div>
+        <h3>Capacitación de todo el personal</h3>
+        <ul>
+          <li>Capacitación a la administración en el panel completo</li>
+          <li>A los vendedores en el bot de pedidos</li>
+          <li>A los operarios en cómo marcar y usar el bot</li>
+          <li>Guía rápida de uso para consultas posteriores</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRECIO -->
+  <section class="pad">
+    <h2>Un sistema que se paga solo</h2>
+    <p class="section-sub">Vende más rápido, no pierdas plata en errores ni minutos robados, y controla todo tu negocio desde el celular.</p>
+
+    <div class="precio-wrap">
+      <div class="precio-main">
+        <div class="left">
+          <div class="k">Desarrollo, configuración y capacitación</div>
+          <div class="big tabular">$4.000.000</div>
+          <div class="desc">Sistema completo, instalado, configurado y con tu personal capacitado. Las 2 áreas y los 12 módulos.</div>
+        </div>
+        <div class="right"><span class="pago">Pago único</span></div>
+      </div>
+
+      <div style="margin-top:22px;display:flex;align-items:center;gap:12px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);border-radius:12px;padding:14px 18px;">
+        <svg viewBox="0 0 24 24" style="width:22px;height:22px;stroke:var(--success);fill:none;stroke-width:2;flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <div style="font-size:13.5px;"><strong style="color:var(--success);">Primer mes de soporte incluido, sin costo</strong>, hasta el 1 de julio. Para que arranques tranquilo.</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="mant">
+        <div class="info">
+          <div class="head"><h4>Plan mensual todo incluido</h4><span class="opc">OPCIONAL</span></div>
+          <p style="font-size:13px;color:var(--muted);">Después del primer mes gratis. Soporte, servidor en la nube e inteligencia artificial, todo cubierto en un solo pago.</p>
+        </div>
+        <div class="precio2 tabular">$300.000<small> /mes</small></div>
+      </div>
+
+      <div class="incluye">
+        <div class="inc-card inc-si">
+          <div class="t">Todo incluido</div>
+          <ul>
+            <li>Servidor en la nube (lo pago yo)</li>
+            <li>Inteligencia artificial de los bots</li>
+            <li>Soporte ante fallas y monitoreo</li>
+            <li>Corrección de errores y respaldos</li>
+            <li>Atención a dudas de uso</li>
+          </ul>
+        </div>
+        <div class="inc-card inc-no">
+          <div class="t">No incluye</div>
+          <ul>
+            <li>Desarrollo de funciones nuevas</li>
+            <li>Módulos adicionales</li>
+            <li>Cambios de reglas de negocio</li>
+            <li>Integraciones nuevas</li>
+            <li>(Se cotizan aparte según el alcance)</li>
+          </ul>
+        </div>
+      </div>
+
+      <p class="nota-opc">El plan mensual es opcional pero recomendado: cubre el servidor y la IA que mantienen los bots funcionando. Sin él, esos costos operativos corren por cuenta del cliente.</p>
+    </div>
+  </section>
+
+  <div class="footer">
+    <div class="logo-sm">ess<span>kimo</span></div>
+    <div>Propuesta válida por 30 días · Valores en pesos colombianos (COP)</div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Dev · Esskimo{% endblock %}
+
+{% block content %}
+<div x-data="devPanel()" x-init="init()">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Panel interno (dev)</h1>
+      <p class="text-xs text-text-muted mt-0.5">
+        Consumo de IA y costos del plan. Uso interno, no visible para el cliente.
+      </p>
+    </div>
+    <input type="month" x-model="mes" @change="cargar()"
+           class="bg-surface ring-1 ring-border rounded px-3 py-1.5 text-sm tabular">
+  </div>
+
+  <!-- Consumo del mes vs tope -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-5 mb-4">
+    <div class="flex items-baseline justify-between mb-3">
+      <h3 class="text-sm font-semibold">Créditos de IA · <span x-text="data.mes"></span></h3>
+      <span class="text-xs text-text-muted">Tope del plan: $<span x-text="TOPE.toFixed(2)"></span> USD</span>
+    </div>
+    <div class="flex items-end justify-between mb-2">
+      <span class="text-3xl font-semibold tabular" :class="colorConsumo()" x-text="'$' + (data.costo_usd ?? 0).toFixed(2)"></span>
+      <span class="text-xs text-text-muted tabular" x-text="pct() + '% del tope'"></span>
+    </div>
+    <div class="h-3 rounded-full bg-surface-2 overflow-hidden">
+      <div class="h-full rounded-full transition-all duration-300"
+           :class="pct() >= 90 ? 'bg-danger' : (pct() >= 70 ? 'bg-warning' : 'bg-success')"
+           :style="'width:' + Math.min(100, pct()) + '%'"></div>
+    </div>
+    <p class="text-[11px] text-text-muted mt-2" x-show="pct() >= 80">
+      ⚠️ Cerca del tope. A este ritmo el plan de $300k podría quedar ajustado este mes.
+    </p>
+  </div>
+
+  <!-- KPIs -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">Operaciones</p>
+      <p class="text-2xl font-semibold tabular mt-1" x-text="data.operaciones ?? 0"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">Tokens entrada</p>
+      <p class="text-2xl font-semibold tabular mt-1" x-text="fmt(data.tokens_in)"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">Tokens salida</p>
+      <p class="text-2xl font-semibold tabular mt-1" x-text="fmt(data.tokens_out)"></p>
+    </div>
+    <div class="rounded-xl bg-surface ring-1 ring-border p-4">
+      <p class="text-xs text-text-muted">Margen estimado</p>
+      <p class="text-2xl font-semibold tabular mt-1 text-success" x-text="margen()"></p>
+    </div>
+  </div>
+
+  <!-- Desglose por operación -->
+  <div class="rounded-xl bg-surface ring-1 ring-border overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-surface-2 text-text-muted">
+        <tr>
+          <th class="text-left px-4 py-3 font-medium">Operación</th>
+          <th class="text-right px-4 py-3 font-medium"># </th>
+          <th class="text-right px-4 py-3 font-medium">Costo USD</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-border/40">
+        <template x-if="!(data.por_operacion || []).length">
+          <tr><td colspan="3" class="text-center py-8 text-text-muted">Sin consumo este mes</td></tr>
+        </template>
+        <template x-for="op in data.por_operacion || []" :key="op.operacion">
+          <tr class="hover:bg-surface-2/30">
+            <td class="px-4 py-3" x-text="op.operacion || '(otra)'"></td>
+            <td class="px-4 py-3 text-right tabular" x-text="op.n"></td>
+            <td class="px-4 py-3 text-right tabular" x-text="'$' + (op.costo ?? 0).toFixed(4)"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+function devPanel() {
+  return {
+    data: {},
+    mes: '',
+    TOPE: 20,            // tope de creditos USD que cubre el plan
+    PLAN_COP: 300000,    // plan mensual en COP
+    SERVER_USD: 10,      // costo servidor
+    USD_COP: 4000,       // tasa aprox para estimar margen
+
+    init() {
+      const d = new Date();
+      this.mes = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      this.cargar();
+    },
+    async cargar() {
+      try {
+        const r = await fetch('/api/dev/uso-ia?mes=' + this.mes, { credentials: 'same-origin' });
+        if (r.ok) this.data = await r.json();
+      } catch (e) {}
+    },
+    pct() {
+      return Math.round(((this.data.costo_usd || 0) / this.TOPE) * 100);
+    },
+    colorConsumo() {
+      const p = this.pct();
+      return p >= 90 ? 'text-danger' : (p >= 70 ? 'text-warning' : 'text-success');
+    },
+    fmt(n) { return (Number(n)||0).toLocaleString('es-CO'); },
+    margen() {
+      // plan COP - (creditos + server) en COP
+      const costoUsd = (this.data.costo_usd || 0) + this.SERVER_USD;
+      const costoCop = costoUsd * this.USD_COP;
+      const m = this.PLAN_COP - costoCop;
+      return '$' + Math.round(m).toLocaleString('es-CO');
+    },
+  };
+}
+</script>
+{% endblock %}
