@@ -391,9 +391,17 @@ async def api_resumen_diario(
                     marcas_anomalas_ts.append(ts)
         else:
             posteriores = []
-        # Las marcas 'extra' genericas (Hikvision sin tipo) tambien son posteriores
-        # a la salida -> se suman a la pila para repartir en extra_in/extra_out.
-        posteriores = sorted(posteriores + extra_generico_ts)
+        # Las marcas 'extra' genericas (Hikvision sin tipo): solo son extras si
+        # ocurren DESPUES de la salida. Una marca 'extra' en horario de trabajo
+        # (antes de la salida) es ANOMALA, no extra (ej. paso por el equipo a las
+        # 3pm sin razon). _min_corte = minuto de la salida elegida (o la oficial).
+        _min_salida = _min_del_dia(ultima_salida_ts) if ultima_salida_ts else _salida_min_oficial
+        for ts in extra_generico_ts:
+            if _min_del_dia(ts) >= _min_salida:
+                posteriores.append(ts)
+            else:
+                marcas_anomalas_ts.append(ts)  # 'extra' en horario laboral = anomala
+        posteriores = sorted(posteriores)
         if posteriores and not extra_in_ts:
             extra_in_ts = extra_in_ts + [posteriores[0]]
         if len(posteriores) >= 2 and not extra_out_ts:
