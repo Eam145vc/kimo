@@ -811,11 +811,12 @@ async def api_resumen_diario(
         # tiempo o antes. 'falta' si hizo extras pero no hay marca.
         if item["extra_in_ts"]:
             try:
-                _t_exin = datetime.fromisoformat(item["extra_in_ts"])
+                # Truncar segundos (17:35:30 -> 17:35): los segundos no cuentan.
+                _t_exin = datetime.fromisoformat(item["extra_in_ts"]).replace(second=0, microsecond=0)
                 _inicio_of = _t_exin.replace(
                     hour=salida_h, minute=salida_m, second=0, microsecond=0
                 ) + timedelta(minutes=margen_extras_min)
-                # tolerancia: si entra dentro de TOLERANCIA_MIN despues, sigue ok
+                # 'tarde' SOLO si pasa la tolerancia (>5 min). 17:35 = 5 min exactos = ok.
                 item["status_extra_in"] = (
                     "tarde" if (_t_exin - _inicio_of).total_seconds() / 60.0 > TOLERANCIA_MIN
                     else "ok"
