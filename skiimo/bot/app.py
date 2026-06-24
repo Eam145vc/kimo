@@ -3293,7 +3293,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         label = _doc_type_label(dtype)
         await cb.edit_message_text(
             f"*Pedido #{pedido_id}* — {label}\n\n"
-            f"{format_summary(rp)}\n\n"
+            f"{format_summary(rp, dtype)}\n\n"
             f"¿Cómo se envía?",
             reply_markup=InlineKeyboardMarkup(_build_payment_step_buttons(pedido_id, dtype)),
             parse_mode="Markdown",

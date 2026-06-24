@@ -227,9 +227,14 @@ def resolve_pedido(pedido: Pedido, matcher: Matcher) -> ResolvedPedido:
     return resolved
 
 
-def format_summary(rp: ResolvedPedido) -> str:
+def format_summary(rp: ResolvedPedido, dtype: str | None = None) -> str:
     """Resumen visual para mostrar en el chat antes de confirmar.
     Usa formato Markdown de Telegram (negrita, monospace) sin emojis.
+
+    dtype controla como se muestra el IVA (el TOTAL es el mismo siempre):
+      - None  -> resumen inicial: solo el total, sin desglose de IVA.
+      - 'elec'-> FE: IVA discriminado (Base + IVA), porque se reporta a la DIAN.
+      - 'trad'-> Tradicional: IVA incluido, NO se discrimina (se lo quedan).
     """
     from skiimo.pricing.engine import get_categoria_cliente, obtener_pronto_pago
 
@@ -275,20 +280,23 @@ def format_summary(rp: ResolvedPedido) -> str:
             qty_str = f"{int(qty)}" if qty == int(qty) else f"{qty:g}"
             # Nombre del producto en bold
             lines.append(f"🥤 *{item.elegido.name}*")
-            # Linea principal: cantidad x precio → total CON IVA (destacado)
+            # Linea principal: cantidad x precio (con IVA incl.) → total (destacado)
+            precio_unit_con_iva = round(precio * (1 + iva_pct / 100.0), 2)
             lines.append(
-                f"   {qty_str} × ${precio:,.0f}  →  *${con_iva_item:,.0f}*"
+                f"   {qty_str} × ${precio_unit_con_iva:,.0f}  →  *${con_iva_item:,.0f}*"
             )
-            # Desglose en italic discreto
-            lines.append(
-                f"   _Base ${sub_item:,.0f} + IVA {iva_pct:.0f}% (${iva_item:,.0f})_"
-            )
+            # Desglose Base+IVA SOLO en FE (en tradicional el IVA no se discrimina)
+            if dtype == "elec":
+                lines.append(
+                    f"   _Base ${sub_item:,.0f} + IVA {iva_pct:.0f}% (${iva_item:,.0f})_"
+                )
             lines.append("")  # espacio entre items
         else:
             lines.append(f"❌ _no encontrado:_ {item.raw.descripcion}")
             lines.append("")
 
-    # Bloque de totales: tabla limpia con bold en TOTAL
+    # Bloque de totales: tabla limpia con bold en TOTAL.
+    # El TOTAL es el mismo en FE y tradicional; solo FE muestra Base/IVA.
     total_con_iva = subtotal_sin_iva + iva_total
     dto_pct = rp.raw.descuento_pct or 0.0
     lines.append("━━━━━━━━━━━━━━━━━━")
@@ -298,16 +306,20 @@ def format_summary(rp: ResolvedPedido) -> str:
         descuento_total = dto_val_sin_iva + iva_dto
         final = total_con_iva - descuento_total
         motivo = rp.raw.descuento_motivo or ""
-        lines.append(f"Subtotal sin IVA:  ${subtotal_sin_iva:,.0f}")
-        lines.append(f"IVA:               ${iva_total:,.0f}")
+        if dtype == "elec":
+            lines.append(f"Subtotal sin IVA:  ${subtotal_sin_iva:,.0f}")
+            lines.append(f"IVA:               ${iva_total:,.0f}")
         lines.append(f"Descuento {dto_pct:.0f}%:     −${descuento_total:,.0f}")
         if motivo:
             lines.append(f"_({motivo})_")
         lines.append(f"*TOTAL: ${final:,.0f}*")
     else:
-        lines.append(f"Subtotal sin IVA:  ${subtotal_sin_iva:,.0f}")
-        lines.append(f"IVA:               ${iva_total:,.0f}")
+        if dtype == "elec":
+            lines.append(f"Subtotal sin IVA:  ${subtotal_sin_iva:,.0f}")
+            lines.append(f"IVA:               ${iva_total:,.0f}")
         lines.append(f"*TOTAL: ${total_con_iva:,.0f}*")
+    if dtype == "trad":
+        lines.append("_(IVA no discriminado)_")
 
     # Metadata opcional
     meta_lines = []
