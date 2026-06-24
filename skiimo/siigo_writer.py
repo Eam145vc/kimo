@@ -16,6 +16,7 @@ from skiimo.config import (
     DEFAULT_INVOICE_DOC_ID,
     DEFAULT_IVA_TAX_ID,
     DEFAULT_SELLER_ID,
+    INVOICE_DOC_ID_ELECTRONIC,
     SIIGO_INVOICE_TEST_MODE,
 )
 
@@ -209,33 +210,43 @@ def crear_factura_venta(
             return InvoiceResult(ok=False, error=f"Item '{it.raw.descripcion}' sin producto o precio")
         if it.precio_unitario <= 0:
             return InvoiceResult(ok=False, error=f"Item '{prod.code}' tiene precio cero")
-        # Producto excluido de IVA (tax_classification=Excluded en Siigo):
-        # iva_tax_id es NULL -> NO se factura con impuesto. Solo los gravados
-        # llevan taxes. Antes el `or DEFAULT_IVA_TAX_ID` forzaba IVA 19% a los
-        # excluidos (ej. BOLSA 6L SMIRNOFF DE LULO), facturandolos mal.
-        excluido = prod.iva_tax_id is None
-        if excluido:
-            tax_id = None
-            iva_pct = 0.0
-        else:
-            tax_id = prod.iva_tax_id
-            iva_pct = float(prod.iva_percentage) if prod.iva_percentage is not None else 19.0
-        # Siigo solo acepta hasta 2 decimales en price
-        precio_final = round(float(it.precio_unitario) * factor_descuento, 2)
+        # IVA segun el TIPO DE FACTURA (no por producto). precio_unitario es PRE-IVA.
+        #   - Electronica (FE, doc 27703): se discrimina el IVA -> price=pre-IVA + taxes[IVA].
+        #     El cliente paga pre-IVA*1.19; el IVA se reporta a la DIAN.
+        #   - Tradicional: NO se discrimina -> price=pre-IVA*1.19 (IVA incluido), sin taxes.
+        #     El cliente paga lo MISMO que en FE, pero el IVA no se reporta.
+        es_fe = doc_id == INVOICE_DOC_ID_ELECTRONIC
+        tax_id = prod.iva_tax_id or DEFAULT_IVA_TAX_ID
+        iva_pct = float(prod.iva_percentage) if prod.iva_percentage is not None else 19.0
+        pre_iva = round(float(it.precio_unitario) * factor_descuento, 2)
         qty = float(it.cantidad)
-        item = {
-            "code": prod.code,
-            "description": prod.name,
-            "quantity": qty,
-            "price": precio_final,
-        }
-        if not excluido:
-            item["taxes"] = [{"id": tax_id}]
+        if es_fe:
+            # Siigo aplica el IVA por encima del price
+            precio_final = pre_iva
+            item = {
+                "code": prod.code,
+                "description": prod.name,
+                "quantity": qty,
+                "price": precio_final,
+                "taxes": [{"id": tax_id}],
+            }
+            # total = price * (1 + iva)
+            item_total = round(qty * precio_final * (1.0 + iva_pct / 100.0), 2)
+        else:
+            # Tradicional: IVA incluido en el price, sin taxes (no se discrimina)
+            precio_final = round(pre_iva * (1.0 + iva_pct / 100.0), 2)
+            item = {
+                "code": prod.code,
+                "description": prod.name,
+                "quantity": qty,
+                "price": precio_final,
+            }
+            # total = price (sin IVA por encima)
+            item_total = round(qty * precio_final, 2)
         siigo_items.append(item)
         # Calcular total CON LA MISMA FORMULA que Siigo: por item, redondeado a 2 dec,
         # despues sumamos. Esto evita el error "invalid_total_payments" por 1 centavo
         # de diferencia entre nuestro round y el de Siigo.
-        item_total = round(qty * precio_final * (1.0 + iva_pct / 100.0), 2)
         total_value += item_total
 
     obs_partes = []
