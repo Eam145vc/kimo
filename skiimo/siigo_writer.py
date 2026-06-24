@@ -209,18 +209,29 @@ def crear_factura_venta(
             return InvoiceResult(ok=False, error=f"Item '{it.raw.descripcion}' sin producto o precio")
         if it.precio_unitario <= 0:
             return InvoiceResult(ok=False, error=f"Item '{prod.code}' tiene precio cero")
-        tax_id = prod.iva_tax_id or DEFAULT_IVA_TAX_ID
-        iva_pct = float(prod.iva_percentage) if prod.iva_percentage is not None else 19.0
+        # Producto excluido de IVA (tax_classification=Excluded en Siigo):
+        # iva_tax_id es NULL -> NO se factura con impuesto. Solo los gravados
+        # llevan taxes. Antes el `or DEFAULT_IVA_TAX_ID` forzaba IVA 19% a los
+        # excluidos (ej. BOLSA 6L SMIRNOFF DE LULO), facturandolos mal.
+        excluido = prod.iva_tax_id is None
+        if excluido:
+            tax_id = None
+            iva_pct = 0.0
+        else:
+            tax_id = prod.iva_tax_id
+            iva_pct = float(prod.iva_percentage) if prod.iva_percentage is not None else 19.0
         # Siigo solo acepta hasta 2 decimales en price
         precio_final = round(float(it.precio_unitario) * factor_descuento, 2)
         qty = float(it.cantidad)
-        siigo_items.append({
+        item = {
             "code": prod.code,
             "description": prod.name,
             "quantity": qty,
             "price": precio_final,
-            "taxes": [{"id": tax_id}],
-        })
+        }
+        if not excluido:
+            item["taxes"] = [{"id": tax_id}]
+        siigo_items.append(item)
         # Calcular total CON LA MISMA FORMULA que Siigo: por item, redondeado a 2 dec,
         # despues sumamos. Esto evita el error "invalid_total_payments" por 1 centavo
         # de diferencia entre nuestro round y el de Siigo.
@@ -907,13 +918,18 @@ def crear_nota_credito_anulacion(invoice_id: str, motivo: str = "Anulacion solic
 
     nc_items = []
     for it in items_fv:
-        nc_items.append({
+        nc_it = {
             "code": it.get("code"),
             "description": it.get("description"),
             "quantity": float(it.get("quantity") or 1),
             "price": float(it.get("price") or 0),
-            "taxes": it.get("taxes") or [{"id": DEFAULT_IVA_TAX_ID}],
-        })
+        }
+        # Replicar fielmente los impuestos de la factura original: si el item
+        # era excluido (sin taxes) NO le inventamos IVA, o la NC descuadra.
+        taxes_orig = it.get("taxes")
+        if taxes_orig:
+            nc_it["taxes"] = taxes_orig
+        nc_items.append(nc_it)
 
     total = float(inv.get("total") or 0)
     customer_ident = (inv.get("customer") or {}).get("identification") or ""
