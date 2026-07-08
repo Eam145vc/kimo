@@ -22,15 +22,17 @@ from skiimo.config import (
 
 
 # Mapeo lenguaje natural -> payment_id de Siigo (formas de pago de contado)
+# TEMPORAL: la cuenta nueva (ESSKIMO SAS) no tiene Nequi/Daviplata/Banco Ahorros
+# creados en Siigo; van como Efectivo hasta que se creen (actualizar ids aqui).
 PAYMENT_METHODS_CONTADO: dict[str, int] = {
-    "efectivo": 3043,
-    "nequi": 8102,
-    "daviplata": 8103,
-    "banco_ahorros": 8104,
-    "tarjeta_debito": 3045,
-    "tarjeta_credito": 3046,
+    "efectivo": 1837,
+    "nequi": 1837,
+    "daviplata": 1837,
+    "banco_ahorros": 1837,
+    "tarjeta_debito": 1839,
+    "tarjeta_credito": 1840,
 }
-CREDITO_PAYMENT_ID = 3044  # "Crédito" en Siigo
+CREDITO_PAYMENT_ID = 1838  # "Crédito" en Siigo
 from skiimo.db.schema import get_conn
 from skiimo.pipeline import ResolvedPedido
 
@@ -162,14 +164,14 @@ def crear_factura_venta(
     """Crea una factura de venta a partir de un ResolvedPedido.
 
     Args:
-      payment_mode: 'credito' -> factura queda con saldo pendiente (id 3044 + due_date).
+      payment_mode: 'credito' -> factura queda con saldo pendiente (CREDITO_PAYMENT_ID + due_date).
                     'contado' -> registra el pago en el momento (efectivo/nequi/etc).
       payment_method: solo aplica si payment_mode='contado'. Valores:
                       'efectivo', 'nequi', 'daviplata', 'banco_ahorros',
                       'tarjeta_debito', 'tarjeta_credito'.
       due_days: dias de plazo si es credito (default 30).
       doc_id: id del tipo de documento Siigo. Si None usa DEFAULT_INVOICE_DOC_ID (FV-1 tradicional).
-              Pasar INVOICE_DOC_ID_ELECTRONIC (27703) para factura electronica DIAN.
+              Pasar INVOICE_DOC_ID_ELECTRONIC para factura electronica DIAN.
     """
     # Validaciones de entrada
     if rp.cliente_elegido is None:
@@ -211,7 +213,7 @@ def crear_factura_venta(
         if it.precio_unitario <= 0:
             return InvoiceResult(ok=False, error=f"Item '{prod.code}' tiene precio cero")
         # IVA segun el TIPO DE FACTURA (no por producto). precio_unitario es PRE-IVA.
-        #   - Electronica (FE, doc 27703): se discrimina el IVA -> price=pre-IVA + taxes[IVA].
+        #   - Electronica (FE, INVOICE_DOC_ID_ELECTRONIC): se discrimina el IVA -> price=pre-IVA + taxes[IVA].
         #     El cliente paga pre-IVA*1.19; el IVA se reporta a la DIAN.
         #   - Tradicional: NO se discrimina -> price=pre-IVA*1.19 (IVA incluido), sin taxes.
         #     El cliente paga lo MISMO que en FE, pero el IVA no se reporta.
@@ -348,8 +350,9 @@ def crear_factura_compra(
     """Crea factura de compra en Siigo a partir de un dict FacturaProveedor.
 
     Si doc_id no se pasa, se elige segun la categoria detectada:
-      materias_primas -> 13219 (MATERIAS PRIMAS)
-      gasto_administrativo / otro -> 27394 (GASTO ADMINISTRATIVO)
+      materias_primas -> PURCHASE_DOC_ID_MATERIAS
+      gasto_administrativo / otro -> DEFAULT_PURCHASE_DOC_ID
+    (En la cuenta ESSKIMO SAS ambos apuntan al mismo doc 7993: solo hay un doc de compras.)
 
     Args:
       tipo_factura: 'elec' (proveedor emite FE DIAN con CUFE) o 'trad' (sin CUFE).
@@ -458,7 +461,7 @@ def crear_factura_compra(
     )
 
 
-DS_DOC_ID = 25720
+DS_DOC_ID = 25586
 DS_DEFAULT_ACCOUNT_CODE = "511040"  # Honorarios. Se puede sobreescribir por item.
 
 
@@ -921,7 +924,7 @@ def crear_nota_credito_anulacion(invoice_id: str, motivo: str = "Anulacion solic
         return InvoiceResult(ok=False, error=f"No pude obtener la factura: {e}")
 
     fv_doc_id = (inv.get("document") or {}).get("id")
-    nc_doc_id = 27704 if fv_doc_id == 27703 else 13221  # electronica vs tradicional
+    nc_doc_id = 42547 if fv_doc_id == 42546 else 7995  # electronica vs tradicional
 
     items_fv = inv.get("items") or []
     if not items_fv:
@@ -954,7 +957,7 @@ def crear_nota_credito_anulacion(invoice_id: str, motivo: str = "Anulacion solic
         "seller": DEFAULT_SELLER_ID,
         "observations": f"Anulacion factura {inv.get('name')} - {motivo}"[:300],
         "items": nc_items,
-        "payments": [{"id": 3043, "value": round(total, 2)}],  # Efectivo (formalismo)
+        "payments": [{"id": 1837, "value": round(total, 2)}],  # Efectivo (formalismo)
     }
 
     _audit("credit_note", None, "annul_request", actor,

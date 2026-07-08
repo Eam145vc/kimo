@@ -973,8 +973,10 @@ def proponer_anular_factura(factura: str, motivo: str = "Anulacion solicitada po
     fue_pagada = saldo_actual < total - 0.5
 
     # Tipo de doc para decidir camino
+    from skiimo.config import INVOICE_DOC_ID_ELECTRONIC
     doc_id = int(inv.get("document_id") or 0)
-    es_electronica = doc_id == 27703  # FV-2 con DIAN
+    # 27703 era la FV electronica de la cuenta vieja (facturas historicas)
+    es_electronica = doc_id in (INVOICE_DOC_ID_ELECTRONIC, 27703)  # FV-2 con DIAN
     stamp_status = inv.get("stamp_status")
     tiene_stamp = stamp_status in ("Accepted", "ACCEPTED")
 

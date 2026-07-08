@@ -16,26 +16,29 @@ from typing import Any
 import httpx
 
 from siigo_client import SiigoClient
+from skiimo.config import DEFAULT_IVA_TAX_ID, DEFAULT_SELLER_ID, INVOICE_DOC_ID_ELECTRONIC
 from skiimo.db.schema import get_conn
 from skiimo.pricing.engine import obtener_pronto_pago
 
 
-# IDs descubiertos en exploracion
-RC_DOC_ID = 13213  # Recibo de Caja (cobros de clientes)
-RP_DOC_ID = 13218  # Recibo de Pago / Egreso (pagos a proveedores)
-NC_DOC_ID_TRADICIONAL = 13221  # NC tradicional (asociada a FV tradicional 13214)
-NC_DOC_ID_ELECTRONICA = 27704  # NC electronica (asociada a FV electronica 27703)
+# IDs de la cuenta Siigo ESSKIMO COCKTAILS SAS (migrada 2026-07-08)
+RC_DOC_ID = 7987  # Recibo de Caja (cobros de clientes)
+RP_DOC_ID = 7992  # Recibo de Pago / Egreso (pagos a proveedores)
+NC_DOC_ID_TRADICIONAL = 7995  # NC tradicional (asociada a FV tradicional 7988)
+NC_DOC_ID_ELECTRONICA = 42547  # NC electronica (asociada a FV electronica 42546)
 
 # Razon NC: 1=Devolucion 2=Anulacion 3=Rebaja 4=Descuento 7=Otros
 NC_REASON_DESCUENTO = 4
 
+# TEMPORAL: la cuenta nueva no tiene Nequi/Daviplata/Banco Ahorros en Siigo;
+# van como Efectivo hasta que se creen (actualizar ids aqui).
 PAYMENT_METHODS_CONTADO = {
-    "efectivo": 3043,
-    "nequi": 8102,
-    "daviplata": 8103,
-    "banco_ahorros": 8104,
-    "tarjeta_debito": 3045,
-    "tarjeta_credito": 3046,
+    "efectivo": 1837,
+    "nequi": 1837,
+    "daviplata": 1837,
+    "banco_ahorros": 1837,
+    "tarjeta_debito": 1839,
+    "tarjeta_credito": 1840,
 }
 
 
@@ -516,7 +519,7 @@ def registrar_pago_proveedor(
     finally:
         conn.close()
 
-    payment_id = PAYMENT_METHODS_CONTADO.get(metodo, 8104)  # default BANCO AHORROS
+    payment_id = PAYMENT_METHODS_CONTADO.get(metodo, 1837)  # default Efectivo (banco ahorros no existe aun en cuenta nueva)
     fecha_recibo = fecha_pago or date.today().isoformat()
     monto_2 = round(float(monto), 2)
 
@@ -582,7 +585,7 @@ def _crear_recibo_caja(
     finally:
         conn.close()
 
-    payment_id = PAYMENT_METHODS_CONTADO.get(metodo, 3043)
+    payment_id = PAYMENT_METHODS_CONTADO.get(metodo, 1837)
     fecha_recibo = fecha_pago or date.today().isoformat()
     monto_2 = round(float(monto), 2)
 
@@ -643,7 +646,8 @@ def _crear_nota_credito_pp(
     if not row:
         return PagoResult(ok=False, error="Factura no encontrada para NC")
     fv_doc = int(row["document_id"])
-    nc_doc_id = NC_DOC_ID_ELECTRONICA if fv_doc == 27703 else NC_DOC_ID_TRADICIONAL
+    # 27703 era la FV electronica de la cuenta vieja (facturas historicas en DB)
+    nc_doc_id = NC_DOC_ID_ELECTRONICA if fv_doc in (INVOICE_DOC_ID_ELECTRONIC, 27703) else NC_DOC_ID_TRADICIONAL
 
     # Items: reducir proporcionalmente el primer item para construir NC del monto requerido
     try:
@@ -668,16 +672,16 @@ def _crear_nota_credito_pp(
         "invoice": factura_id,
         "reason": NC_REASON_DESCUENTO,
         "customer": {"identification": cliente_ident, "branch_office": 0},
-        "seller": 341,
+        "seller": DEFAULT_SELLER_ID,
         "observations": f"Descuento pronto pago {descuento_pct:.0f}% (factura {factura_name})",
         "items": [{
             "code": primer.get("code"),
             "description": f"Descuento pronto pago {descuento_pct:.0f}%",
             "quantity": 1.0,
             "price": pre_iva,
-            "taxes": [{"id": 7108}],  # IVA 19%
+            "taxes": [{"id": DEFAULT_IVA_TAX_ID}],  # IVA 19%
         }],
-        "payments": [{"id": 3043, "value": round(monto_nc, 2)}],  # Efectivo (formalismo)
+        "payments": [{"id": 1837, "value": round(monto_nc, 2)}],  # Efectivo (formalismo)
     }
     _audit("nc_request", {"factura_id": factura_id, "payload": payload}, actor)
     try:

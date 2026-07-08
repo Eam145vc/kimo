@@ -825,7 +825,7 @@ class EquipoBody(BaseModel):
     nombre: str
     telegram_chat_id: int
     rol: str = "vendedor"
-    siigo_seller_id: int = 341
+    siigo_seller_id: int = 206  # ESSKIMO COCKTAIL SAS (cuenta nueva)
 
 
 @app.post("/api/equipo")

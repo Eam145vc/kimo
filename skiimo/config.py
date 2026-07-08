@@ -23,16 +23,19 @@ SIIGO_ACCESS_KEY = _get("SIIGO_ACCESS_KEY", required=True)
 SIIGO_BASE_URL = _get("SIIGO_BASE_URL", "https://api.siigo.com")
 SIIGO_PARTNER_ID = _get("SIIGO_PARTNER_ID", "Skiimo")
 
-# IDs descubiertos en la exploracion
-DEFAULT_INVOICE_DOC_ID = int(_get("DEFAULT_INVOICE_DOC_ID", "13214"))  # FV tradicional
-DEFAULT_PURCHASE_DOC_ID = int(_get("DEFAULT_PURCHASE_DOC_ID", "27394"))  # FC Gasto Admin
-DEFAULT_SELLER_ID = int(_get("DEFAULT_SELLER_ID", "341"))  # Oscar (admin)
-DEFAULT_IVA_TAX_ID = int(_get("DEFAULT_IVA_TAX_ID", "7108"))  # IVA 19%
-DEFAULT_PAYMENT_ID = int(_get("DEFAULT_PAYMENT_ID", "3043"))  # Efectivo
+# IDs de la cuenta Siigo de ESSKIMO COCKTAILS SAS (migrada 2026-07-08;
+# la cuenta anterior era de Oscar persona natural y tenia OTROS ids)
+DEFAULT_INVOICE_DOC_ID = int(_get("DEFAULT_INVOICE_DOC_ID", "7988"))  # FV tradicional
+DEFAULT_PURCHASE_DOC_ID = int(_get("DEFAULT_PURCHASE_DOC_ID", "7993"))  # FC Compra (unico doc de compras)
+DEFAULT_SELLER_ID = int(_get("DEFAULT_SELLER_ID", "206"))  # ESSKIMO COCKTAIL SAS
+DEFAULT_IVA_TAX_ID = int(_get("DEFAULT_IVA_TAX_ID", "4294"))  # IVA 19%
+DEFAULT_PAYMENT_ID = int(_get("DEFAULT_PAYMENT_ID", "1837"))  # Efectivo
 
 # Doc-type alternativo: factura electronica
-INVOICE_DOC_ID_ELECTRONIC = 27703
-PURCHASE_DOC_ID_MATERIAS = 13219
+INVOICE_DOC_ID_ELECTRONIC = 42546
+# La cuenta nueva solo tiene UN doc de compras (7993); antes habia uno aparte
+# para materias primas. Ambas categorias van al mismo doc.
+PURCHASE_DOC_ID_MATERIAS = 7993
 
 # Modo prueba: si esta activo, las facturas se envian al cliente test y se etiquetan [TEST BOT].
 # Default OFF: produccion real. Solo activar manualmente para pruebas de regresion locales.
@@ -77,20 +80,19 @@ HIK_ENABLED = bool(HIK_HOST and HIK_PASSWORD)
 
 # Mapping Siigo de impuestos
 IVA_TAX_IDS_BY_PCT: dict[float, int] = {
-    0.0: 13999,
-    5.0: 7109,
-    19.0: 7108,
+    0.0: 13865,
+    5.0: 4295,
+    19.0: 4294,
 }
 
 # Forms de pago disponibles (id -> nombre)
+# OJO: la cuenta nueva NO tiene Nequi/Daviplata/Banco Ahorros creados en Siigo.
+# Cuando se creen, agregarlos aqui y en PAYMENT_METHODS_CONTADO (siigo_writer/siigo_payments).
 PAYMENT_METHODS: dict[int, str] = {
-    3043: "Efectivo",
-    3044: "Credito",
-    3045: "Tarjeta Debito",
-    3046: "Tarjeta Credito",
-    8102: "Nequi",
-    8103: "Daviplata",
-    8104: "Banco Ahorros",
-    10766: "Clientes Nacionales",
-    10767: "Clientes Extranjero",
+    1837: "Efectivo",
+    1838: "Credito",
+    1839: "Tarjeta Debito",
+    1840: "Tarjeta Credito",
+    8880: "Clientes Nacionales",
+    8881: "Clientes Extranjero",
 }
