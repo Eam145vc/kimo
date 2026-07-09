@@ -22,13 +22,14 @@ from skiimo.config import (
 
 
 # Mapeo lenguaje natural -> payment_id de Siigo (formas de pago de contado)
-# TEMPORAL: la cuenta nueva (ESSKIMO SAS) no tiene Nequi/Daviplata/Banco Ahorros
-# creados en Siigo; van como Efectivo hasta que se creen (actualizar ids aqui).
+# TEMPORAL: la cuenta nueva (ESSKIMO SAS) no tiene Nequi/Daviplata en Siigo;
+# van como Efectivo hasta que se creen (actualizar ids aqui).
+# OJO: Tarjeta Debito/Credito (1839/1840) estan INACTIVAS en Siigo.
 PAYMENT_METHODS_CONTADO: dict[str, int] = {
     "efectivo": 1837,
     "nequi": 1837,
     "daviplata": 1837,
-    "banco_ahorros": 1837,
+    "banco_ahorros": 13431,  # BANCOLOMBIA ESSKIMO 7556
     "tarjeta_debito": 1839,
     "tarjeta_credito": 1840,
 }

@@ -30,13 +30,14 @@ NC_DOC_ID_ELECTRONICA = 42547  # NC electronica (asociada a FV electronica 42546
 # Razon NC: 1=Devolucion 2=Anulacion 3=Rebaja 4=Descuento 7=Otros
 NC_REASON_DESCUENTO = 4
 
-# TEMPORAL: la cuenta nueva no tiene Nequi/Daviplata/Banco Ahorros en Siigo;
+# TEMPORAL: la cuenta nueva no tiene Nequi/Daviplata en Siigo;
 # van como Efectivo hasta que se creen (actualizar ids aqui).
+# OJO: Tarjeta Debito/Credito (1839/1840) estan INACTIVAS en Siigo.
 PAYMENT_METHODS_CONTADO = {
     "efectivo": 1837,
     "nequi": 1837,
     "daviplata": 1837,
-    "banco_ahorros": 1837,
+    "banco_ahorros": 13431,  # BANCOLOMBIA ESSKIMO 7556
     "tarjeta_debito": 1839,
     "tarjeta_credito": 1840,
 }
