@@ -182,10 +182,26 @@ def crear_factura_venta(
     key = rp.idempotency_key
     existing = _existing_invoice_for_key(key)
     if existing:
+        # Recuperar total/url de la factura ya sincronizada (puede no estar aun)
+        total_prev = None
+        url_prev = None
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT total, public_url FROM siigo_invoices WHERE id = ?",
+                (existing["siigo_invoice_id"],),
+            ).fetchone()
+            if row:
+                total_prev = row["total"]
+                url_prev = row["public_url"]
+        finally:
+            conn.close()
         return InvoiceResult(
             ok=True,
             siigo_id=existing["siigo_invoice_id"],
             siigo_name=existing["siigo_invoice_name"],
+            total=total_prev,
+            public_url=url_prev,
             error="Pedido ya creado previamente (idempotencia)",
         )
 

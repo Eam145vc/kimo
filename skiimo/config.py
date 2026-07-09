@@ -48,7 +48,9 @@ ADMIN_TELEGRAM_CHAT_ID = _get("ADMIN_TELEGRAM_CHAT_ID", "")
 
 # Gemini
 GEMINI_API_KEY = _get("GEMINI_API_KEY", required=True)
-GEMINI_MODEL = _get("GEMINI_MODEL", "gemini-2.5-flash")
+# Alias estable de Google: siempre apunta al flash vigente (gemini-2.5-flash
+# fue retirado el 2026-07 y rompio el bot con 404)
+GEMINI_MODEL = _get("GEMINI_MODEL", "gemini-flash-latest")
 
 # Storage: en Railway montaremos un Volume en /data, en local usamos ./data
 _db_path_env = _get("DB_PATH", "")

@@ -3134,11 +3134,15 @@ async def _post_send(cb, ctx, pedido_row: dict, pedido_id: int, result, modo: st
         siigo_invoice_name=result.siigo_name,
     )
 
-    base_msg = (
-        f"✅ *Factura {result.siigo_name} creada*\n"
-        f"_{modo}_\n\n"
-        f"💰 Total: `${result.total:,.0f}`"
-    )
+    # El total puede venir None (ej. retorno por idempotencia sin sync todavia)
+    total_line = f"💰 Total: `${result.total:,.0f}`" if result.total is not None else ""
+    if result.error and "idempotencia" in result.error:
+        encabezado = f"⚠️ *Este pedido ya estaba facturado como {result.siigo_name}*\nNo se creo una factura nueva."
+    else:
+        encabezado = f"✅ *Factura {result.siigo_name} creada*"
+    base_msg = f"{encabezado}\n_{modo}_"
+    if total_line:
+        base_msg += f"\n\n{total_line}"
     if result.public_url:
         base_msg += f"\n\n🔗 [Ver en Siigo]({result.public_url})"
 
