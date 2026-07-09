@@ -3105,14 +3105,13 @@ def _build_payment_step_buttons(pedido_id: int, dtype: str) -> list[list[InlineK
 
 
 def _build_payment_method_picker(pedido_id: int, dtype: str) -> list[list[InlineKeyboardButton]]:
-    """Sub-menu cuando el usuario elige 'Enviar como PAGADA': elegir metodo de pago."""
+    """Sub-menu cuando el usuario elige 'Enviar como PAGADA': elegir metodo de pago.
+    Solo se acepta transferencia (BANCOLOMBIA ESSKIMO) y efectivo (raro).
+    Los callbacks legacy (nequi/daviplata/tarjetas) siguen mapeados en
+    PAYMENT_METHODS_CONTADO por compatibilidad con botones viejos en chats."""
     return [
-        [InlineKeyboardButton("💵  Efectivo", callback_data=f"pay:{pedido_id}:{dtype}:efectivo")],
-        [InlineKeyboardButton("📱  Nequi", callback_data=f"pay:{pedido_id}:{dtype}:nequi")],
-        [InlineKeyboardButton("📱  Daviplata", callback_data=f"pay:{pedido_id}:{dtype}:daviplata")],
         [InlineKeyboardButton("🏦  Transferencia bancaria", callback_data=f"pay:{pedido_id}:{dtype}:banco_ahorros")],
-        [InlineKeyboardButton("💳  Tarjeta débito", callback_data=f"pay:{pedido_id}:{dtype}:tarjeta_debito")],
-        [InlineKeyboardButton("💳  Tarjeta crédito", callback_data=f"pay:{pedido_id}:{dtype}:tarjeta_credito")],
+        [InlineKeyboardButton("💵  Efectivo", callback_data=f"pay:{pedido_id}:{dtype}:efectivo")],
         [InlineKeyboardButton("← Volver", callback_data=f"dtyp:{pedido_id}:{dtype}")],
     ]
 
