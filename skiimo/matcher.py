@@ -27,6 +27,9 @@ def _normalize(s: str) -> str:
     # quitar puntuacion comun
     s = re.sub(r"[^\w\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
+    # unificar tamano de bolsa: "6 lt" / "6 l" -> "6l" (un solo token, para que
+    # el conteo de tokens y el fuzzy no dependan de como escribieron el nombre)
+    s = re.sub(r"\b6 ?l(t)?\b", "6l", s)
     return s
 
 
@@ -245,11 +248,18 @@ class Matcher:
         # con licor NO llevan la palabra licor en el nombre).
         q_fuzzy = q.replace("con licor", " ").strip() if quiere_con_licor else q
 
-        # token_set_ratio: ignora orden y duplicados
+        # WRatio: combina token_set con partial ratio -> tolera typos del vendedor
+        # ("bubalo", "smirnoof", "Blubberry"). token_set_ratio puro exigia tokens
+        # exactos y devolvia 0 candidatos ante un typo de una letra.
+        # limit=100: con 300+ productos, top-30 dejaba fuera al producto correcto
+        # cuando muchos nombres compartian tokens genericos.
         all_results = process.extract(
-            q_fuzzy or q, self._product_keys, scorer=fuzz.token_set_ratio,
-            limit=30, score_cutoff=min_score,  # tomar mas para filtrar despues
+            q_fuzzy or q, self._product_keys, scorer=fuzz.WRatio,
+            limit=100, score_cutoff=min_score,  # tomar mas para filtrar despues
         )
+        # Tokens "significativos" del query para bonus por match exacto
+        _genericos = {"bolsa", "sachet", "licor", "perlas", "gelatina", "explosivas", "con", "sin"}
+        q_tokens_sig = {t for t in (q_fuzzy or q).split() if len(t) >= 4 and t not in _genericos}
 
         # Re-rankear segun intencion
         scored: list[tuple[float, int]] = []
@@ -289,6 +299,12 @@ class Matcher:
                 sin_tamano = not any(t in q for t in ("350", "1200", "3400", "grande", "pequen", "chic", "median"))
                 if sin_tamano:
                     penalty -= 2
+            # Bonus por token EXACTO del query presente en el nombre: evita que
+            # un sabor que es substring de otro gane por partial ratio
+            # (ej. "tussi" no debe matchear MARACUTUSSI si existe TUSSI).
+            name_tokens = set(_normalize(p["name"]).split())
+            exactos = len(q_tokens_sig & name_tokens)
+            penalty -= 3 * min(exactos, 2)
             # Desempate: ante scores iguales (token_set da 100 a cualquier superset),
             # preferir el nombre con MENOS tokens sobrantes. Evita que "sandia"
             # matchee SANDIA LIMON o que "perlas mango" de MANGO BICHE 350.
