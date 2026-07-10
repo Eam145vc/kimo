@@ -231,15 +231,23 @@ class Matcher:
         q = _normalize(query)
         # Detectar intencion del query
         quiere_sin_licor = "sin licor" in q or "sin lic" in q
+        quiere_con_licor = (not quiere_sin_licor) and ("con licor" in q)
         quiere_sachet = "sachet" in q or " 8 oz" in q or " 08 oz" in q
         quiere_6l = "6l" in q or "6 l" in q or "bolsa 6" in q
         # Si no menciona tamano y dice "bolsa", default es 6L
         if "bolsa" in q and not quiere_sachet and not quiere_6l:
             quiere_6l = True
+        # Grupos con keyword explicita (para no aplicar el default 6L)
+        quiere_otro_grupo = any(k in q for k in ("perla", "gelatina", "azucar", "sirup", "sirope", "sal para", "sal michelar"))
+
+        # OJO: si piden "con licor", quitar la frase antes del fuzzy: el token
+        # "licor" infla el score de los nombres "... SIN LICOR" (los productos
+        # con licor NO llevan la palabra licor en el nombre).
+        q_fuzzy = q.replace("con licor", " ").strip() if quiere_con_licor else q
 
         # token_set_ratio: ignora orden y duplicados
         all_results = process.extract(
-            q, self._product_keys, scorer=fuzz.token_set_ratio,
+            q_fuzzy or q, self._product_keys, scorer=fuzz.token_set_ratio,
             limit=30, score_cutoff=min_score,  # tomar mas para filtrar despues
         )
 
@@ -264,12 +272,28 @@ class Matcher:
                 penalty += 30  # buscaste 6L, no es 6L
             if quiere_sin_licor and not is_sin:
                 penalty += 20  # pediste sin licor, este es con licor
-            # Si NO pediste sin licor, penalizar levemente los sin licor (default = con licor)
+            # Si NO pediste sin licor, penalizar los sin licor (default = con licor).
+            # Con "con licor" EXPLICITO la penalizacion es fuerte: jamas debe ganar un SIN LICOR.
             if not quiere_sin_licor and is_sin:
-                penalty += 5
+                penalty += 30 if quiere_con_licor else 5
             # Si NO pediste sachet, penalizar fuerte los sachets cuando hay alternativa 6L
             if not quiere_sachet and is_sachet and quiere_6l:
                 penalty += 40
+            elif not quiere_sachet and is_sachet:
+                penalty += 15  # default del negocio = bolsa 6L, no sachet
+            # Default del negocio: sin tamano ni grupo explicito, preferir bolsa 6L
+            if is_6l and not quiere_sachet and not quiere_otro_grupo:
+                penalty -= 5
+            # Perlas sin tamano explicito -> default 1200 GR (regla del negocio)
+            if "perla" in q and "1200" in name:
+                sin_tamano = not any(t in q for t in ("350", "1200", "3400", "grande", "pequen", "chic", "median"))
+                if sin_tamano:
+                    penalty -= 2
+            # Desempate: ante scores iguales (token_set da 100 a cualquier superset),
+            # preferir el nombre con MENOS tokens sobrantes. Evita que "sandia"
+            # matchee SANDIA LIMON o que "perlas mango" de MANGO BICHE 350.
+            extra_tokens = max(0, len(name.split()) - len((q_fuzzy or q).split()))
+            penalty += 0.3 * extra_tokens
 
             scored.append((float(score) - penalty, idx))
 

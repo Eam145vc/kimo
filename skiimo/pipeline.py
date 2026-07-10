@@ -184,6 +184,18 @@ def resolve_pedido(pedido: Pedido, matcher: Matcher) -> ResolvedPedido:
         if codigo_llm:
             hit_directo = matcher.find_product_by_code(codigo_llm)
 
+        # Guardrail: el LLM a veces asigna un codigo SIN LICOR cuando el texto
+        # dice "con licor" (o al reves). Si hay contradiccion explicita entre la
+        # descripcion y el nombre del producto, NO confiar en el codigo del LLM
+        # y re-matchear por descripcion (el matcher penaliza bien el licor).
+        if hit_directo and raw_item.descripcion:
+            desc_l = raw_item.descripcion.lower()
+            dice_sin = "sin licor" in desc_l or "sin lic" in desc_l
+            dice_con = ("con licor" in desc_l) and not dice_sin
+            es_sin = "SIN LIC" in hit_directo.name.upper()
+            if (dice_con and es_sin) or (dice_sin and not es_sin):
+                hit_directo = None  # codigo contradice el texto -> matchear por descripcion
+
         if hit_directo:
             # Tambien traemos candidatos por descripcion para que el usuario pueda cambiar si el codigo del LLM fue erroneo
             candidatos = matcher.search_product(raw_item.descripcion or hit_directo.name, limit=5)

@@ -94,6 +94,9 @@ REGLAS DE NEGOCIO PARA ASIGNAR EL CODIGO DEL PRODUCTO (codigo del catalogo):
 3. "coco" sin mas contexto -> A1O (Bolsa 6L Coco Loco con licor) por regla 1.
    "coco sin licor" -> A2X. "sachet coco" -> A3M.
 4. Si el sabor mencionado NO existe en el catalogo, deja codigo=null y pon descripcion con lo que dijo el vendedor.
+4b. OJO CRITICO: los productos SIN licor llevan "SIN LICOR" en el nombre. Si el pedido dice
+   "con licor" (o no dice nada), el codigo NUNCA puede ser de un producto cuyo nombre contenga
+   "SIN LICOR". Verifica el codigo caracter por caracter contra el catalogo (A1AS != A1AT).
 5. Cantidades sin unidad -> unidades. "2 cajas de X" -> cantidad=2 (caja la maneja el sistema).
 6. Cada sabor es un item aparte. "3 coco 2 bombon" -> 2 items: (A1O, 3) y (A2AO, 2).
 

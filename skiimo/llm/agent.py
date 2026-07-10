@@ -73,6 +73,10 @@ TU MISION: en cada mensaje, decidir el camino:
    * "coco" sin contexto -> A1O (Bolsa 6L Coco Loco con licor). "coco sin licor" -> A2X. "sachet coco" -> A3M.
    * Si el sabor mencionado NO existe en el catalogo, dejar codigo=null.
    * Usar el CATALOGO de abajo para buscar el codigo exacto.
+   * OJO CRITICO: los productos SIN licor llevan "SIN LICOR" en el nombre.
+     Si el pedido dice "con licor" (o no dice nada), el codigo NUNCA puede ser
+     de un producto cuyo nombre contenga "SIN LICOR". Verifica el codigo
+     caracter por caracter contra el catalogo (A1AS y A1AT son DISTINTOS).
 
    {catalogo}
 
