@@ -159,7 +159,7 @@ def crear_factura_venta(
     *,
     payment_mode: str = "credito",
     payment_method: str = "efectivo",
-    due_days: int = 30,
+    due_days: int = 15,
     doc_id: int | None = None,
 ) -> InvoiceResult:
     """Crea una factura de venta a partir de un ResolvedPedido.
@@ -170,7 +170,7 @@ def crear_factura_venta(
       payment_method: solo aplica si payment_mode='contado'. Valores:
                       'efectivo', 'nequi', 'daviplata', 'banco_ahorros',
                       'tarjeta_debito', 'tarjeta_credito'.
-      due_days: dias de plazo si es credito (default 30).
+      due_days: dias de plazo si es credito (default 15; regla del negocio: MAXIMO 15).
       doc_id: id del tipo de documento Siigo. Si None usa DEFAULT_INVOICE_DOC_ID (FV-1 tradicional).
               Pasar INVOICE_DOC_ID_ELECTRONIC para factura electronica DIAN.
     """
@@ -284,8 +284,9 @@ def crear_factura_venta(
         pay_id = PAYMENT_METHODS_CONTADO.get(payment_method, PAYMENT_METHODS_CONTADO["efectivo"])
         payments_block = [{"id": pay_id, "value": total_payment}]
     else:
-        # Credito: requiere due_date
+        # Credito: requiere due_date. Regla del negocio: plazo maximo 15 dias.
         from datetime import timedelta as _td
+        due_days = max(1, min(int(due_days), 15))
         due = (date.fromisoformat(fecha) + _td(days=due_days)).isoformat()
         payments_block = [{
             "id": CREDITO_PAYMENT_ID,

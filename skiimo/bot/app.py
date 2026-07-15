@@ -3303,22 +3303,48 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
-    # Enviar como CREDITO
+    # Enviar como CREDITO: primero elegir plazo (max 15 dias)
     if accion == "sendcr":
         dtype = parts[2] if len(parts) > 2 else "trad"
+        if dtype not in ("elec", "trad"):
+            dtype = "trad"
+        label = _doc_type_label(dtype)
+        await cb.edit_message_text(
+            f"*Pedido #{pedido_id}* — {label}\n\n📅 ¿A cuántos días vence el crédito?",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("5 días", callback_data=f"crdias:{pedido_id}:{dtype}:5"),
+                    InlineKeyboardButton("8 días", callback_data=f"crdias:{pedido_id}:{dtype}:8"),
+                    InlineKeyboardButton("15 días", callback_data=f"crdias:{pedido_id}:{dtype}:15"),
+                ],
+                [InlineKeyboardButton("← Volver", callback_data=f"dtyp:{pedido_id}:{dtype}")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    # Ejecutar envio CREDITO con plazo elegido
+    if accion == "crdias":
+        dtype = parts[2] if len(parts) > 2 else "trad"
+        try:
+            dias = int(parts[3]) if len(parts) > 3 else 15
+        except ValueError:
+            dias = 15
+        dias = max(1, min(dias, 15))  # plazo maximo 15 dias
         from skiimo.config import DEFAULT_INVOICE_DOC_ID, INVOICE_DOC_ID_ELECTRONIC
         doc_id_pick = INVOICE_DOC_ID_ELECTRONIC if dtype == "elec" else DEFAULT_INVOICE_DOC_ID
         label = _doc_type_label(dtype)
         rp = _rehydrate_resolved(pedido_row)
         await cb.edit_message_text(
-            f"⏳ *Pedido #{pedido_id}*\n\nEnviando {label} como CRÉDITO a Siigo...",
+            f"⏳ *Pedido #{pedido_id}*\n\nEnviando {label} como CRÉDITO a {dias} días...",
             parse_mode="Markdown",
         )
         result = await asyncio.to_thread(
             crear_factura_venta, rp, f"chat:{pedido_row['telegram_chat_id']}",
             payment_mode="credito", payment_method="efectivo", doc_id=doc_id_pick,
+            due_days=dias,
         )
-        await _post_send(cb, ctx, pedido_row, pedido_id, result, modo=f"{label} · CRÉDITO")
+        await _post_send(cb, ctx, pedido_row, pedido_id, result, modo=f"{label} · CRÉDITO a {dias} días")
         return
 
     # Pedir metodo de pago para envio PAGADA
