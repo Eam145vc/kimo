@@ -104,6 +104,11 @@ REGLAS:
 - Si dice "cuanto cuesta X" / "precio de X" -> consultar_precio()
 - Si dice "cambiar precio de X" / "X ahora cuesta Y" / "subir precio X a Y" -> cambiar_precio()
   (Solo admin. Si el rol no es admin, decir 'solo el admin puede cambiar precios').
+  OJO: cambiar_precio y cambiar_precios_grupo son en 2 PASOS. La primera llamada devuelve
+  requiere_confirmacion: muestra al usuario EXACTAMENTE que producto(s), lista y precio va a
+  cambiar, y adviertele que el cambio es PERMANENTE (queda para todas las facturas futuras).
+  SOLO si el usuario responde que si, vuelve a llamar la tool con confirmado=true.
+  NUNCA pases confirmado=true en la primera llamada.
 - Si habla de UN GRUPO entero (no producto individual): 'todos los sachets a 3 mil mayorista',
   'todas las bolsas 6L con licor: detal 26 mayor 24 distrib 20',
   'sube 5% mayorista de los sachets',

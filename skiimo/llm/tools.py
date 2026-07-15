@@ -1106,12 +1106,17 @@ def cambiar_precio(
     categoria: str,
     nuevo_precio_con_iva: float,
     actor: str = "chat",
+    confirmado: bool = False,
 ) -> dict:
     """Cambia el precio oficial de un producto en una categoria especifica.
 
     El precio se entiende como CON IVA (ej: 27000 = $27,000 con IVA).
     El sistema calcula el pre-IVA automaticamente.
     Solo ADMIN debe poder usar esto (se valida en el agente).
+
+    Flujo en 2 pasos: la primera llamada (confirmado=False) NO cambia nada,
+    devuelve requiere_confirmacion con el resumen para que el usuario confirme.
+    Solo con confirmado=True se aplica el cambio.
     """
     from skiimo.matcher import Matcher
     m = Matcher()
@@ -1140,6 +1145,22 @@ def cambiar_precio(
             (prod["id"], cat),
         ).fetchone()
         precio_anterior = float(anterior["precio_con_iva"]) if anterior else None
+
+        if not confirmado:
+            return {
+                "ok": False,
+                "requiere_confirmacion": True,
+                "advertencia": (
+                    "⚠️ CAMBIO PERMANENTE: este precio quedara fijo para TODAS las "
+                    "facturas futuras de este producto hasta que alguien lo vuelva a cambiar. "
+                    "Verifica que el producto y la lista sean los correctos antes de confirmar."
+                ),
+                "producto": h.name,
+                "code": h.code,
+                "categoria": cat,
+                "precio_actual_con_iva": precio_anterior,
+                "precio_nuevo_con_iva": nuevo_precio_con_iva,
+            }
 
         from datetime import datetime as _dt
         now = _dt.now().isoformat(timespec="seconds")
@@ -1188,6 +1209,7 @@ def cambiar_precios_grupo(
     distribuidor: float | None = None,
     aumento_pct: float | None = None,
     actor: str = "chat",
+    confirmado: bool = False,
 ) -> dict:
     """Cambia precios oficiales de TODO un grupo de productos al mismo precio.
 
@@ -1322,6 +1344,28 @@ def cambiar_precios_grupo(
         conn.close()
     if not productos:
         return {"ok": False, "error": f"No encontre productos en el grupo '{descripcion}'"}
+
+    if not confirmado:
+        cambios = []
+        if aumento_pct is not None:
+            cambios.append(f"{aumento_pct:+.0f}% en todas las listas indicadas")
+        else:
+            if detal is not None: cambios.append(f"DETAL a ${detal:,.0f}")
+            if mayorista is not None: cambios.append(f"MAYORISTA a ${mayorista:,.0f}")
+            if distribuidor is not None: cambios.append(f"DISTRIBUIDOR a ${distribuidor:,.0f}")
+        return {
+            "ok": False,
+            "requiere_confirmacion": True,
+            "advertencia": (
+                "⚠️ CAMBIO PERMANENTE Y MASIVO: esto cambia el precio de "
+                f"{len(productos)} productos del grupo '{descripcion}' para TODAS las "
+                "facturas futuras, hasta que alguien lo vuelva a cambiar. "
+                "Verifica el grupo y los valores antes de confirmar."
+            ),
+            "grupo": descripcion,
+            "productos_afectados": len(productos),
+            "cambios": cambios,
+        }
 
     # Helpers
     from datetime import datetime as _dt
@@ -2218,7 +2262,11 @@ TOOL_DECLARATIONS: list[dict] = [
             "Cambia el precio oficial de UN producto especifico en una categoria. "
             "Usar cuando el usuario dice 'subir/bajar/cambiar precio detal de X a $Y', "
             "'la bolsa chicle mayorista ahora cuesta 24000'. "
-            "El precio se interpreta SIEMPRE CON IVA. Solo admin puede usar esto."
+            "El precio se interpreta SIEMPRE CON IVA. Solo admin puede usar esto. "
+            "FLUJO OBLIGATORIO EN 2 PASOS: llamar primero SIN confirmado -> devuelve "
+            "requiere_confirmacion con el producto exacto y la advertencia de que el "
+            "cambio es PERMANENTE; mostrar eso al usuario y SOLO si responde que si, "
+            "volver a llamar con confirmado=true."
         ),
         "parameters": {
             "type": "object",
@@ -2226,6 +2274,7 @@ TOOL_DECLARATIONS: list[dict] = [
                 "product_query": {"type": "string", "description": "Producto a cambiar"},
                 "categoria": {"type": "string", "description": "DETAL, MAYORISTA o DISTRIBUIDOR"},
                 "nuevo_precio_con_iva": {"type": "number", "description": "Nuevo precio CON IVA"},
+                "confirmado": {"type": "boolean", "description": "true SOLO despues de que el usuario confirmo explicitamente el cambio permanente"},
             },
             "required": ["product_query", "categoria", "nuevo_precio_con_iva"],
         },
@@ -2241,7 +2290,11 @@ TOOL_DECLARATIONS: list[dict] = [
             "Para grupos: bolsas 6L con/sin licor, cremosos, sachets con/sin licor, "
             "perlas (350/1200/3400)gr, gelatinas (330/1200/2300)gr, "
             "siropes (360/1000)ml, sales (250/500)gr. "
-            "Precios SIEMPRE CON IVA. Si dice 'a 3 mil' es 3000. Solo admin."
+            "Precios SIEMPRE CON IVA. Si dice 'a 3 mil' es 3000. Solo admin. "
+            "FLUJO OBLIGATORIO EN 2 PASOS: llamar primero SIN confirmado -> devuelve "
+            "requiere_confirmacion con cuantos productos afecta y la advertencia de "
+            "cambio PERMANENTE; mostrar eso al usuario y SOLO si responde que si, "
+            "volver a llamar con confirmado=true."
         ),
         "parameters": {
             "type": "object",
@@ -2263,6 +2316,7 @@ TOOL_DECLARATIONS: list[dict] = [
                         "Si se usa, no pasar precios absolutos."
                     ),
                 },
+                "confirmado": {"type": "boolean", "description": "true SOLO despues de que el usuario confirmo explicitamente el cambio permanente y masivo"},
             },
             "required": ["grupo"],
         },
