@@ -463,11 +463,19 @@ async def _job_sync_periodico(context: ContextTypes.DEFAULT_TYPE) -> None:
     Mantiene el espejo local al dia con cambios hechos desde Siigo web.
     """
     try:
-        from skiimo.llm.tools import _sync_invoices_recientes, _sync_purchases_recientes
+        from skiimo.llm.tools import (
+            _refresh_saldos_facturas_abiertas,
+            _sync_invoices_recientes,
+            _sync_purchases_recientes,
+        )
         ni = await asyncio.to_thread(_sync_invoices_recientes, 2)
         nf = await asyncio.to_thread(_sync_purchases_recientes, 2)
-        if ni > 0 or nf > 0:
-            log.info("Sync periodico: %d invoices, %d purchases", ni, nf)
+        # Refrescar saldos de facturas abiertas: cubre pagos registrados en
+        # Siigo web sobre facturas viejas y facturas anuladas (cartera real).
+        nu, nb = await asyncio.to_thread(_refresh_saldos_facturas_abiertas)
+        if ni > 0 or nf > 0 or nu > 0 or nb > 0:
+            log.info("Sync periodico: %d invoices, %d purchases, %d saldos refrescados, %d anuladas",
+                     ni, nf, nu, nb)
     except Exception:
         log.exception("Error en sync periodico (invoices/purchases)")
 

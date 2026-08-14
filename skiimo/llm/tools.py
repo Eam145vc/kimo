@@ -287,6 +287,77 @@ def _sync_invoices_recientes(dias: int = 7) -> int:
     return n
 
 
+def _refresh_saldos_facturas_abiertas() -> tuple[int, int]:
+    """Refresca total/balance/stamp de TODAS las facturas desde la mas vieja con
+    saldo pendiente, y borra las anuladas (presentes local pero no en Siigo).
+
+    Necesario porque el sync incremental usa created_start: un pago registrado
+    en Siigo web sobre una factura vieja jamas re-baja el balance local, y el
+    bot reporta cartera fantasma (bug reportado 2026-07-29: bot decia $3.059M
+    con 449 pendientes vs $2.676M con 149 reales). La ventana se auto-limita
+    por el plazo de credito (max 15 dias), asi que son pocas paginas.
+
+    Devuelve (actualizadas, borradas). Best-effort: (0, 0) si Siigo no responde.
+    """
+    from siigo_client import SiigoClient
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT MIN(date) FROM siigo_invoices WHERE balance > 0").fetchone()
+    finally:
+        conn.close()
+    start = row[0] if row and row[0] else None
+    if not start:
+        return (0, 0)
+    items = []
+    try:
+        with SiigoClient() as s:
+            page = 1
+            while True:
+                data = s.get("/v1/invoices", params={
+                    "created_start": start, "page_size": 100, "page": page,
+                })
+                res = (data.get("results") if isinstance(data, dict) else []) or []
+                if not res:
+                    break
+                items.extend(res)
+                page += 1
+                if page > 40:  # tope de seguridad (4000 facturas)
+                    break
+    except Exception:
+        return (0, 0)
+    api_ids = {inv["id"] for inv in items}
+    conn = get_conn()
+    try:
+        from datetime import datetime as _dt
+        now = _dt.now().isoformat(timespec="seconds")
+        actualizadas = 0
+        for inv in items:
+            stamp = inv.get("stamp") or {}
+            cur = conn.execute(
+                """UPDATE siigo_invoices SET total=?, balance=?, stamp_status=?, updated_at=?
+                   WHERE id=? AND (total IS NOT ? OR balance IS NOT ?)""",
+                (
+                    float(inv.get("total", 0) or 0),
+                    float(inv.get("balance", 0) or 0) if inv.get("balance") is not None else None,
+                    stamp.get("status") if isinstance(stamp, dict) else None,
+                    now, inv["id"],
+                    float(inv.get("total", 0) or 0),
+                    float(inv.get("balance", 0) or 0) if inv.get("balance") is not None else None,
+                ),
+            )
+            actualizadas += cur.rowcount
+        # Anuladas: estan local con date >= start pero ya no existen en Siigo
+        borradas = 0
+        for (lid,) in conn.execute("SELECT id FROM siigo_invoices WHERE date >= ?", (start,)).fetchall():
+            if lid not in api_ids:
+                conn.execute("DELETE FROM siigo_invoices WHERE id = ?", (lid,))
+                borradas += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return (actualizadas, borradas)
+
+
 def ultima_venta(vendedor_id: int | None = None) -> dict:
     """Devuelve la factura mas reciente (opcionalmente filtrada por vendedor).
     Antes de consultar el espejo local, sincroniza las facturas creadas en los
