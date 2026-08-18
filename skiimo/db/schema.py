@@ -483,6 +483,86 @@ CREATE TABLE IF NOT EXISTS extras_autorizadas (
     created_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_extras_fechas ON extras_autorizadas(fecha_desde, fecha_hasta);
+
+-- ==========================================================================
+-- CRM WHATSAPP (Cloud API + historial importado de la app)
+-- ==========================================================================
+
+-- Lineas de WhatsApp de la empresa (ventas, atencion). Una linea = una agente.
+CREATE TABLE IF NOT EXISTS wa_lineas (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre          TEXT NOT NULL,               -- "Ventas", "Atencion al cliente"
+    phone_number_id TEXT UNIQUE,                 -- id del numero en Meta (NULL hasta registrar en Cloud API)
+    display_number  TEXT,                        -- +573001234567 (informativo)
+    agente_user_id  INTEGER REFERENCES panel_users(id),  -- panel_user duena de la linea
+    activo          INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL
+);
+
+-- Contactos (clientes que escriben por WhatsApp). Global entre lineas.
+CREATE TABLE IF NOT EXISTS wa_contactos (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    telefono          TEXT UNIQUE NOT NULL,      -- wa_id de Meta: E164 sin '+' (573001234567)
+    nombre_wa         TEXT,                      -- nombre de perfil que reporta WhatsApp
+    nombre_custom     TEXT,                      -- editable por la agente
+    siigo_customer_id TEXT,                      -- match con siigo_customers.id (por telefono)
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wa_contactos_tel ON wa_contactos(telefono);
+
+-- Etapas del pipeline (kanban). Seed en ensure_crm_seed().
+CREATE TABLE IF NOT EXISTS crm_etapas (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre   TEXT NOT NULL,
+    orden    INTEGER NOT NULL,
+    color    TEXT
+);
+
+-- Un chat = un contacto en una linea.
+CREATE TABLE IF NOT EXISTS wa_chats (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    linea_id         INTEGER NOT NULL REFERENCES wa_lineas(id),
+    contacto_id      INTEGER NOT NULL REFERENCES wa_contactos(id),
+    etapa_id         INTEGER REFERENCES crm_etapas(id),
+    last_msg_at      TEXT,
+    last_msg_preview TEXT,
+    unread           INTEGER NOT NULL DEFAULT 0,
+    archivado        INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL,
+    UNIQUE(linea_id, contacto_id)
+);
+CREATE INDEX IF NOT EXISTS idx_wa_chats_linea ON wa_chats(linea_id, last_msg_at);
+
+-- Mensajes. origen 'api' = Cloud API en vivo; 'import' = historial migrado de la app.
+CREATE TABLE IF NOT EXISTS wa_mensajes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     INTEGER NOT NULL REFERENCES wa_chats(id),
+    wa_msg_id   TEXT UNIQUE,                     -- id de Meta (dedup); NULL en importados
+    direccion   TEXT NOT NULL,                   -- in | out
+    tipo        TEXT NOT NULL DEFAULT 'text',    -- text | image | audio | video | document | sticker | location | otro
+    body        TEXT,
+    media_path  TEXT,                            -- ruta local relativa si se descargo
+    media_mime  TEXT,
+    ts          TEXT NOT NULL,                   -- ISO-8601
+    status      TEXT,                            -- sent | delivered | read | failed (solo out)
+    origen      TEXT NOT NULL DEFAULT 'api',     -- api | import
+    enviado_por TEXT,                            -- username del panel (out)
+    raw         TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wa_msgs_chat ON wa_mensajes(chat_id, ts);
+
+-- Notas internas por chat (no se envian al cliente)
+CREATE TABLE IF NOT EXISTS crm_notas (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id    INTEGER NOT NULL REFERENCES wa_chats(id),
+    user_id    INTEGER,
+    username   TEXT,
+    texto      TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_crm_notas_chat ON crm_notas(chat_id);
 """
 
 

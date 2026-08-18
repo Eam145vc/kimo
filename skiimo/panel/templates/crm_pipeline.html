@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Pipeline · Esskimo CRM{% endblock %}
+
+{% block content %}
+<div x-data="crmPipeline()" x-init="init()">
+
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Pipeline</h1>
+      <p class="text-xs text-text-muted mt-0.5">Arrastra las tarjetas entre etapas</p>
+    </div>
+    <template x-if="lineas.length > 1">
+      <select x-model.number="filtroLinea" @change="cargar()"
+              class="text-sm bg-surface-2 ring-1 ring-border rounded-lg px-3 py-2 text-text">
+        <option value="0">Todas las líneas</option>
+        <template x-for="l in lineas" :key="l.id">
+          <option :value="l.id" x-text="l.nombre"></option>
+        </template>
+      </select>
+    </template>
+  </div>
+
+  <div class="overflow-x-auto pb-4">
+    <div class="flex gap-3 min-w-max">
+      <template x-for="e in etapas" :key="e.id">
+        <div class="w-64 flex-shrink-0 rounded-xl bg-surface ring-1 ring-border flex flex-col max-h-[calc(100vh-14rem)]"
+             @dragover.prevent
+             @drop.prevent="soltar(e.id)">
+          <div class="px-3 py-2.5 border-b border-border/40 flex items-center justify-between flex-shrink-0">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full" :style="'background:' + (e.color || '#5b6b8f')"></span>
+              <p class="text-sm font-semibold" x-text="e.nombre"></p>
+            </div>
+            <span class="text-[10px] text-text-muted tabular" x-text="e.chats.length"></span>
+          </div>
+          <div class="flex-1 overflow-y-auto p-2 space-y-2">
+            <template x-for="c in e.chats" :key="c.id">
+              <div draggable="true"
+                   @dragstart="arrastrando = c.id"
+                   @click="location.href = '/crm?chat=' + c.id"
+                   class="rounded-lg bg-surface-2 ring-1 ring-border/60 p-2.5 cursor-pointer hover:ring-accent/50 transition-all">
+                <div class="flex items-center justify-between gap-2">
+                  <p class="text-xs font-medium truncate" x-text="nombreDe(c)"></p>
+                  <span x-show="c.unread > 0"
+                        class="h-4 min-w-4 px-1 rounded-full bg-accent text-bg text-[9px] font-bold flex items-center justify-center flex-shrink-0"
+                        x-text="c.unread"></span>
+                </div>
+                <p class="text-[10px] text-text-muted truncate mt-1" x-text="c.last_msg_preview || '—'"></p>
+                <div class="flex items-center justify-between mt-1.5">
+                  <span class="text-[9px] text-text-muted" x-text="c.linea_nombre"></span>
+                  <span class="text-[9px] text-text-muted" x-text="horaCorta(c.last_msg_at)"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<script>
+function crmPipeline() {
+  return {
+    lineas: [], etapas: [], filtroLinea: 0, arrastrando: null,
+
+    async init() {
+      const ls = await fetch('/api/crm/lineas').then(r => r.json());
+      this.lineas = ls.items;
+      await this.cargar();
+      setInterval(() => this.cargar(), 15000);
+    },
+
+    async cargar() {
+      const d = await fetch('/api/crm/pipeline?linea_id=' + (this.filtroLinea || 0)).then(r => r.json());
+      this.etapas = d.etapas;
+    },
+
+    async soltar(etapaId) {
+      if (!this.arrastrando) return;
+      const id = this.arrastrando;
+      this.arrastrando = null;
+      await fetch('/api/crm/chats/' + id + '/etapa', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({etapa_id: etapaId}),
+      });
+      await this.cargar();
+    },
+
+    nombreDe(c) { return c.nombre_custom || c.siigo_name || c.nombre_wa || ('+' + c.telefono); },
+    horaCorta(ts) {
+      if (!ts) return '';
+      const d = new Date(ts), hoy = new Date();
+      if (d.toDateString() === hoy.toDateString())
+        return d.toLocaleTimeString('es-CO', {hour: '2-digit', minute: '2-digit'});
+      return d.toLocaleDateString('es-CO', {day: '2-digit', month: 'short'});
+    },
+  };
+}
+</script>
+{% endblock %}

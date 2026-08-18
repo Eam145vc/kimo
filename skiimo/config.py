@@ -60,6 +60,13 @@ else:
     DB_PATH = ROOT / "data" / "skiimo.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+# WhatsApp Cloud API (CRM). Un token de system-user sirve para toda la WABA
+# (todas las lineas); el phone_number_id de cada linea vive en wa_lineas.
+WA_VERIFY_TOKEN = _get("WA_VERIFY_TOKEN", "")     # el que se pega en Meta al registrar el webhook
+WA_ACCESS_TOKEN = _get("WA_ACCESS_TOKEN", "")     # token permanente del system user
+WA_APP_SECRET = _get("WA_APP_SECRET", "")         # opcional: valida X-Hub-Signature-256
+WA_GRAPH_BASE = _get("WA_GRAPH_BASE", "https://graph.facebook.com/v23.0")
+
 # IMAP (correo de facturas de proveedor)
 IMAP_HOST = _get("IMAP_HOST", "imap.gmail.com")
 IMAP_PORT = int(_get("IMAP_PORT", "993"))

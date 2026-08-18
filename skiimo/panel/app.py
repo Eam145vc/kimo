@@ -19,6 +19,12 @@ from skiimo.panel.auth import (
     autenticar, crear_sesion, validar_sesion, cerrar_sesion,
 )
 from skiimo.panel.asistencia_routes import router as asistencia_router, register_pages as register_asistencia_pages
+from skiimo.panel.crm_routes import (
+    router as crm_router,
+    register_pages as register_crm_pages,
+    ensure_crm_seed,
+    WA_MEDIA_DIR,
+)
 
 
 log = logging.getLogger("skiimo.panel")
@@ -43,10 +49,34 @@ _inc_dir = _DB_PATH.parent / "incapacidades"
 _inc_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/incapacidades", StaticFiles(directory=str(_inc_dir)), name="incapacidades")
 
+# Media de WhatsApp (imagenes/audios/docs descargados de Cloud API)
+app.mount("/wa-media", StaticFiles(directory=str(WA_MEDIA_DIR)), name="wa_media")
+
+
+# Rutas que un rol 'agente' SI puede usar. Todo lo demas (ventas, asistencia,
+# nomina, etc.) queda reservado a admin/dev.
+_AGENTE_PREFIJOS = (
+    "/crm", "/api/crm", "/login", "/logout", "/static", "/wa-media",
+    "/webhooks", "/healthz", "/favicon",
+)
+
+
+@app.middleware("http")
+async def _role_gate(request: Request, call_next):
+    path = request.url.path
+    if not any(path == p or path.startswith(p) for p in _AGENTE_PREFIJOS):
+        user = validar_sesion(request.cookies.get("session_token"))
+        if user and user.get("role") == "agente":
+            if path.startswith("/api/"):
+                return JSONResponse({"detail": "No autorizado para tu rol"}, status_code=403)
+            return RedirectResponse(url="/crm", status_code=303)
+    return await call_next(request)
+
 
 @app.on_event("startup")
 async def _startup() -> None:
     ensure_db_ready()
+    ensure_crm_seed()
     log.info("Panel Esskimo arrancado")
 
     # Background: sync periodico de asistencia (Hikvision)
@@ -198,6 +228,10 @@ async def page_equipo(request: Request, session_token: str | None = Cookie(defau
 # Asistencia: registrar paginas HTML y API
 register_asistencia_pages(app, templates)
 app.include_router(asistencia_router)
+
+# CRM WhatsApp: paginas + API + webhook
+register_crm_pages(app, templates)
+app.include_router(crm_router)
 
 
 # =============================================================================

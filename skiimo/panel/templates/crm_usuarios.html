@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Líneas &amp; Usuarios · Esskimo CRM{% endblock %}
+
+{% block content %}
+<div x-data="crmUsuarios()" x-init="init()">
+
+  <div class="mb-6">
+    <h1 class="text-xl font-semibold tracking-tight">Líneas &amp; Usuarios</h1>
+    <p class="text-xs text-text-muted mt-0.5">Configura las líneas de WhatsApp y quién atiende cada una</p>
+  </div>
+
+  <!-- LINEAS -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-5 mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-sm font-semibold">Líneas de WhatsApp</h3>
+      <button @click="crearLinea()" class="text-xs bg-surface-2 ring-1 ring-border rounded-lg px-3 py-1.5 hover:text-accent">+ Línea</button>
+    </div>
+    <p x-show="msgLinea" class="text-xs mb-3" :class="msgLinea.startsWith('✓') ? 'text-success' : 'text-danger'" x-text="msgLinea"></p>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-[10px] uppercase tracking-wider text-text-muted border-b border-border/40">
+            <th class="py-2 pr-3">Nombre</th>
+            <th class="py-2 pr-3">Número</th>
+            <th class="py-2 pr-3">Phone Number ID (Meta)</th>
+            <th class="py-2 pr-3">Agente</th>
+            <th class="py-2 pr-3">Activa</th>
+            <th class="py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="l in lineas" :key="l.id">
+            <tr class="border-b border-border/20">
+              <td class="py-2 pr-3">
+                <input x-model="l.nombre" class="bg-surface-2 ring-1 ring-border rounded px-2 py-1 text-sm w-40">
+              </td>
+              <td class="py-2 pr-3">
+                <input x-model="l.display_number" placeholder="+57…" class="bg-surface-2 ring-1 ring-border rounded px-2 py-1 text-sm w-36 font-mono">
+              </td>
+              <td class="py-2 pr-3">
+                <input x-model="l.phone_number_id" placeholder="(al registrar en Meta)" class="bg-surface-2 ring-1 ring-border rounded px-2 py-1 text-sm w-44 font-mono">
+              </td>
+              <td class="py-2 pr-3">
+                <select x-model.number="l.agente_user_id" class="bg-surface-2 ring-1 ring-border rounded px-2 py-1 text-sm">
+                  <option :value="null">— sin asignar —</option>
+                  <template x-for="u in usuarios.filter(u => u.active)" :key="u.id">
+                    <option :value="u.id" x-text="u.username + ' (' + u.role + ')'"></option>
+                  </template>
+                </select>
+              </td>
+              <td class="py-2 pr-3">
+                <input type="checkbox" :checked="l.activo" @change="l.activo = $event.target.checked ? 1 : 0">
+              </td>
+              <td class="py-2 text-right">
+                <button @click="guardarLinea(l)" class="text-xs bg-accent text-bg rounded-lg px-3 py-1.5 font-medium hover:bg-accent-hover">Guardar</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-[11px] text-text-muted mt-3">
+      El <span class="font-mono">Phone Number ID</span> aparece en Meta for Developers → WhatsApp → API Setup
+      al registrar cada número en la Cloud API. Sin ese ID la línea recibe pero no puede responder.
+    </p>
+  </div>
+
+  <!-- USUARIOS -->
+  <div class="rounded-xl bg-surface ring-1 ring-border p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-sm font-semibold">Usuarios del panel</h3>
+    </div>
+
+    <!-- crear -->
+    <div class="rounded-lg bg-surface-2/60 ring-1 ring-border/60 p-3 mb-4">
+      <p class="text-[10px] uppercase tracking-wider text-text-muted mb-2">Crear usuario</p>
+      <div class="flex flex-wrap items-end gap-2">
+        <div>
+          <label class="text-[10px] text-text-muted block mb-1">Usuario</label>
+          <input x-model="nuevo.username" class="bg-surface ring-1 ring-border rounded px-2 py-1.5 text-sm w-36">
+        </div>
+        <div>
+          <label class="text-[10px] text-text-muted block mb-1">Contraseña (mín. 6)</label>
+          <input x-model="nuevo.password" type="text" class="bg-surface ring-1 ring-border rounded px-2 py-1.5 text-sm w-36 font-mono">
+        </div>
+        <div>
+          <label class="text-[10px] text-text-muted block mb-1">Rol</label>
+          <select x-model="nuevo.role" class="bg-surface ring-1 ring-border rounded px-2 py-1.5 text-sm">
+            <option value="agente">agente (solo CRM)</option>
+            <option value="admin">admin (todo)</option>
+          </select>
+        </div>
+        <div x-show="nuevo.role === 'agente'">
+          <label class="text-[10px] text-text-muted block mb-1">Línea asignada</label>
+          <select x-model.number="nuevo.linea_id" class="bg-surface ring-1 ring-border rounded px-2 py-1.5 text-sm">
+            <option :value="null">— luego —</option>
+            <template x-for="l in lineas" :key="l.id">
+              <option :value="l.id" x-text="l.nombre"></option>
+            </template>
+          </select>
+        </div>
+        <button @click="crearUsuario()" class="text-sm bg-accent text-bg rounded-lg px-4 py-1.5 font-medium hover:bg-accent-hover">Crear</button>
+      </div>
+      <p x-show="msgUsuario" class="text-xs mt-2" :class="msgUsuario.startsWith('✓') ? 'text-success' : 'text-danger'" x-text="msgUsuario"></p>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-[10px] uppercase tracking-wider text-text-muted border-b border-border/40">
+            <th class="py-2 pr-3">Usuario</th>
+            <th class="py-2 pr-3">Rol</th>
+            <th class="py-2 pr-3">Líneas</th>
+            <th class="py-2 pr-3">Último login</th>
+            <th class="py-2 pr-3">Estado</th>
+            <th class="py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="u in usuarios" :key="u.id">
+            <tr class="border-b border-border/20">
+              <td class="py-2 pr-3 font-medium" x-text="u.username"></td>
+              <td class="py-2 pr-3">
+                <span class="text-[10px] px-2 py-0.5 rounded-full ring-1 ring-inset"
+                      :class="u.role === 'agente' ? 'text-accent ring-accent/40' : 'text-warning ring-warning/40'"
+                      x-text="u.role"></span>
+              </td>
+              <td class="py-2 pr-3 text-xs text-text-muted" x-text="u.lineas || '—'"></td>
+              <td class="py-2 pr-3 text-xs text-text-muted" x-text="u.last_login_at || 'nunca'"></td>
+              <td class="py-2 pr-3">
+                <span class="text-xs" :class="u.active ? 'text-success' : 'text-danger'"
+                      x-text="u.active ? 'activo' : 'inactivo'"></span>
+              </td>
+              <td class="py-2 text-right whitespace-nowrap">
+                <button @click="resetPass(u)" class="text-xs text-text-muted hover:text-accent px-2 py-1 rounded hover:bg-surface-2">Contraseña</button>
+                <button @click="toggle(u)" class="text-xs text-text-muted hover:text-warning px-2 py-1 rounded hover:bg-surface-2"
+                        x-text="u.active ? 'Desactivar' : 'Activar'"></button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+function crmUsuarios() {
+  return {
+    lineas: [], usuarios: [],
+    nuevo: {username: '', password: '', role: 'agente', linea_id: null},
+    msgLinea: '', msgUsuario: '',
+
+    async init() { await this.cargar(); },
+
+    async cargar() {
+      const [ls, us] = await Promise.all([
+        fetch('/api/crm/lineas').then(r => r.json()),
+        fetch('/api/crm/usuarios').then(r => r.json()),
+      ]);
+      this.lineas = ls.items; this.usuarios = us.items;
+    },
+
+    async guardarLinea(l) {
+      const r = await fetch('/api/crm/lineas/' + l.id, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          nombre: l.nombre, display_number: l.display_number,
+          phone_number_id: l.phone_number_id, agente_user_id: l.agente_user_id,
+          activo: l.activo,
+        }),
+      }).then(r => r.json());
+      this.msgLinea = r.ok ? '✓ Línea guardada' : (r.error || 'Error');
+      setTimeout(() => this.msgLinea = '', 4000);
+      this.cargar();
+    },
+
+    async crearLinea() {
+      const nombre = prompt('Nombre de la nueva línea:');
+      if (!nombre) return;
+      await fetch('/api/crm/lineas', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({nombre}),
+      });
+      this.cargar();
+    },
+
+    async crearUsuario() {
+      const r = await fetch('/api/crm/usuarios', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(this.nuevo),
+      }).then(r => r.json());
+      this.msgUsuario = r.ok ? '✓ Usuario creado' : (r.error || 'Error');
+      if (r.ok) this.nuevo = {username: '', password: '', role: 'agente', linea_id: null};
+      setTimeout(() => this.msgUsuario = '', 5000);
+      this.cargar();
+    },
+
+    async toggle(u) {
+      const r = await fetch('/api/crm/usuarios/' + u.id + '/toggle', {method: 'POST'}).then(r => r.json());
+      if (!r.ok && r.error) alert(r.error);
+      this.cargar();
+    },
+
+    async resetPass(u) {
+      const pw = prompt('Nueva contraseña para ' + u.username + ' (mín. 6):');
+      if (!pw) return;
+      const r = await fetch('/api/crm/usuarios/' + u.id + '/password', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({password: pw}),
+      }).then(r => r.json());
+      alert(r.ok ? 'Contraseña cambiada' : (r.error || 'Error'));
+    },
+  };
+}
+</script>
+{% endblock %}

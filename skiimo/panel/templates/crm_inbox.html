@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% block title %}Bandeja · Esskimo CRM{% endblock %}
+
+{% block content %}
+<div x-data="crmInbox()" x-init="init()" class="h-[calc(100vh-7rem)] lg:h-[calc(100vh-4.5rem)] flex flex-col">
+
+  <div class="flex items-center justify-between mb-4 flex-shrink-0">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Bandeja WhatsApp</h1>
+      <p class="text-xs text-text-muted mt-0.5" x-text="subtitulo()"></p>
+    </div>
+    <div class="flex items-center gap-2">
+      <template x-if="lineas.length > 1">
+        <select x-model.number="filtroLinea" @change="cargarChats()"
+                class="text-sm bg-surface-2 ring-1 ring-border rounded-lg px-3 py-2 text-text">
+          <option value="0">Todas las líneas</option>
+          <template x-for="l in lineas" :key="l.id">
+            <option :value="l.id" x-text="l.nombre"></option>
+          </template>
+        </select>
+      </template>
+      <button @click="verArchivados = !verArchivados; cargarChats()"
+              class="text-xs px-3 py-2 rounded-lg ring-1 ring-border transition-colors"
+              :class="verArchivados ? 'bg-accent/10 text-accent' : 'bg-surface-2 text-text-muted hover:text-text'">
+        Archivados
+      </button>
+    </div>
+  </div>
+
+  <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(280px,340px)_1fr] xl:grid-cols-[minmax(280px,340px)_1fr_minmax(260px,300px)] gap-4">
+
+    <!-- Columna 1: lista de chats -->
+    <div class="rounded-xl bg-surface ring-1 ring-border flex flex-col min-h-0"
+         :class="chatActivo ? 'hidden lg:flex' : 'flex'">
+      <div class="p-3 border-b border-border/40 flex-shrink-0">
+        <input x-model="busqueda" @input.debounce.400ms="cargarChats()"
+               placeholder="Buscar nombre o teléfono…"
+               class="w-full text-sm bg-surface-2 ring-1 ring-border rounded-lg px-3 py-2 placeholder:text-muted">
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        <template x-if="!chats.length">
+          <p class="text-center text-xs text-text-muted py-10">
+            Sin conversaciones todavía.<br>Cuando un cliente escriba a la línea, aparece aquí.
+          </p>
+        </template>
+        <template x-for="c in chats" :key="c.id">
+          <button @click="abrirChat(c.id)"
+                  class="w-full text-left px-3 py-2.5 border-b border-border/20 hover:bg-surface-2 transition-colors"
+                  :class="chatActivo && chatActivo.id === c.id ? 'bg-surface-2' : ''">
+            <div class="flex items-center gap-2.5">
+              <div class="h-9 w-9 rounded-full bg-accent-soft text-accent flex items-center justify-center text-xs font-bold flex-shrink-0"
+                   x-text="iniciales(nombreDe(c))"></div>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-2">
+                  <p class="text-sm font-medium truncate" x-text="nombreDe(c)"></p>
+                  <span class="text-[10px] text-text-muted flex-shrink-0" x-text="horaCorta(c.last_msg_at)"></span>
+                </div>
+                <div class="flex items-center justify-between gap-2 mt-0.5">
+                  <p class="text-xs text-text-muted truncate" x-text="c.last_msg_preview || '—'"></p>
+                  <span x-show="c.unread > 0"
+                        class="flex-shrink-0 h-4 min-w-4 px-1 rounded-full bg-accent text-bg text-[10px] font-bold flex items-center justify-center"
+                        x-text="c.unread"></span>
+                </div>
+                <div class="flex items-center gap-1.5 mt-1">
+                  <span class="text-[9px] px-1.5 py-px rounded-full ring-1 ring-inset"
+                        :style="'color:' + (c.etapa_color || '#5b6b8f') + '; border-color:' + (c.etapa_color || '#5b6b8f')"
+                        x-text="c.etapa_nombre || 'Sin etapa'"></span>
+                  <span x-show="lineas.length > 1" class="text-[9px] text-text-muted" x-text="c.linea_nombre"></span>
+                  <span x-show="c.siigo_name" class="text-[9px] text-success">● Siigo</span>
+                </div>
+              </div>
+            </div>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <!-- Columna 2: conversacion -->
+    <div class="rounded-xl bg-surface ring-1 ring-border flex-col min-h-0"
+         :class="chatActivo ? 'flex' : 'hidden lg:flex'">
+      <template x-if="!chatActivo">
+        <div class="flex-1 flex items-center justify-center">
+          <p class="text-sm text-text-muted">Elige una conversación</p>
+        </div>
+      </template>
+      <template x-if="chatActivo">
+        <div class="flex flex-col h-full min-h-0">
+          <!-- header chat -->
+          <div class="px-4 py-3 border-b border-border/40 flex items-center justify-between flex-shrink-0">
+            <div class="flex items-center gap-3 min-w-0">
+              <button @click="chatActivo = null" class="lg:hidden text-text-muted">←</button>
+              <div class="h-9 w-9 rounded-full bg-accent-soft text-accent flex items-center justify-center text-xs font-bold"
+                   x-text="iniciales(nombreActivo())"></div>
+              <div class="min-w-0">
+                <p class="text-sm font-semibold truncate" x-text="nombreActivo()"></p>
+                <p class="text-[11px] text-text-muted">
+                  +<span x-text="chatActivo.chat.telefono"></span>
+                  · <span x-text="chatActivo.chat.linea_nombre"></span>
+                </p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <select :value="chatActivo.chat.etapa_id" @change="cambiarEtapa($event.target.value)"
+                      class="text-xs bg-surface-2 ring-1 ring-border rounded-lg px-2 py-1.5">
+                <template x-for="e in etapas" :key="e.id">
+                  <option :value="e.id" x-text="e.nombre"></option>
+                </template>
+              </select>
+              <button @click="archivar()" class="text-xs text-text-muted hover:text-warning px-2 py-1.5 rounded-lg hover:bg-surface-2"
+                      x-text="chatActivo.chat.archivado ? 'Desarchivar' : 'Archivar'"></button>
+              <button @click="panelInfo = !panelInfo" class="xl:hidden text-xs text-text-muted hover:text-text px-2 py-1.5 rounded-lg hover:bg-surface-2">Info</button>
+            </div>
+          </div>
+          <!-- mensajes -->
+          <div class="flex-1 overflow-y-auto px-4 py-3 space-y-1.5" x-ref="scroll">
+            <template x-for="m in chatActivo.mensajes" :key="m.id">
+              <div class="flex" :class="m.direccion === 'out' ? 'justify-end' : 'justify-start'">
+                <div class="max-w-[78%] rounded-2xl px-3 py-2 text-sm"
+                     :class="m.direccion === 'out' ? 'bg-accent-soft rounded-br-sm' : 'bg-surface-2 rounded-bl-sm'">
+                  <template x-if="m.media_path && (m.media_mime || '').startsWith('image')">
+                    <img :src="'/wa-media/' + m.media_path" class="rounded-lg max-h-56 mb-1" loading="lazy">
+                  </template>
+                  <template x-if="m.media_path && !(m.media_mime || '').startsWith('image')">
+                    <a :href="'/wa-media/' + m.media_path" target="_blank"
+                       class="text-accent underline text-xs block mb-1">📎 Abrir adjunto</a>
+                  </template>
+                  <template x-if="!m.media_path && m.tipo !== 'text'">
+                    <p class="text-xs text-text-muted italic mb-0.5">📎 <span x-text="m.tipo"></span></p>
+                  </template>
+                  <p class="whitespace-pre-wrap break-words" x-text="m.body || ''"></p>
+                  <p class="text-[9px] text-text-muted mt-1 text-right">
+                    <span x-text="horaCorta(m.ts)"></span>
+                    <span x-show="m.direccion === 'out'" x-text="checkStatus(m.status)"></span>
+                    <span x-show="m.origen === 'import'" title="Historial migrado de la app">·hist</span>
+                  </p>
+                </div>
+              </div>
+            </template>
+          </div>
+          <!-- composer -->
+          <div class="p-3 border-t border-border/40 flex-shrink-0">
+            <p x-show="errorEnvio" class="text-xs text-danger mb-2" x-text="errorEnvio"></p>
+            <div class="flex items-end gap-2">
+              <textarea x-model="borrador" rows="1"
+                        @keydown.enter.prevent="if (!$event.shiftKey) enviar(); else borrador += '\n'"
+                        placeholder="Escribe un mensaje…"
+                        class="flex-1 text-sm bg-surface-2 ring-1 ring-border rounded-xl px-3 py-2.5 resize-none placeholder:text-muted"></textarea>
+              <button @click="enviar()" :disabled="enviando"
+                      class="bg-accent hover:bg-accent-hover disabled:opacity-50 text-bg font-medium px-4 py-2.5 rounded-xl text-sm transition-all">
+                Enviar
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Columna 3: info del contacto -->
+    <div class="rounded-xl bg-surface ring-1 ring-border flex-col min-h-0 overflow-y-auto"
+         :class="chatActivo && panelInfo ? 'flex fixed inset-4 z-50 xl:static xl:inset-auto' : (chatActivo ? 'hidden xl:flex' : 'hidden')">
+      <template x-if="chatActivo">
+        <div class="p-4 space-y-4">
+          <div class="flex items-center justify-between xl:hidden">
+            <p class="text-sm font-semibold">Info del contacto</p>
+            <button @click="panelInfo = false" class="text-text-muted">✕</button>
+          </div>
+          <!-- nombre editable -->
+          <div>
+            <p class="text-[10px] uppercase tracking-wider text-text-muted mb-1">Nombre en el CRM</p>
+            <div class="flex gap-1.5">
+              <input x-model="nombreEdit" :placeholder="chatActivo.chat.nombre_wa || 'Sin nombre'"
+                     class="flex-1 text-sm bg-surface-2 ring-1 ring-border rounded-lg px-2.5 py-1.5 min-w-0">
+              <button @click="guardarNombre()" class="text-xs bg-surface-2 ring-1 ring-border rounded-lg px-2.5 hover:text-accent">✓</button>
+            </div>
+            <p class="text-[11px] text-text-muted mt-1">
+              Perfil WA: <span x-text="chatActivo.chat.nombre_wa || '—'"></span>
+            </p>
+          </div>
+          <!-- tarjeta Siigo -->
+          <div class="rounded-lg ring-1 ring-border bg-surface-2 p-3">
+            <p class="text-[10px] uppercase tracking-wider text-text-muted mb-2">Cliente en Siigo</p>
+            <template x-if="siigo === null">
+              <p class="text-xs text-text-muted">Cargando…</p>
+            </template>
+            <template x-if="siigo && !siigo.match">
+              <p class="text-xs text-text-muted">Sin match por teléfono. Se enlaza al facturarle la primera vez.</p>
+            </template>
+            <template x-if="siigo && siigo.match">
+              <div class="space-y-2">
+                <div>
+                  <p class="text-sm font-medium" x-text="siigo.cliente.name"></p>
+                  <p class="text-[11px] text-text-muted">
+                    <span x-text="siigo.cliente.identification"></span>
+                    <span x-show="siigo.categoria"> · <span class="text-accent" x-text="siigo.categoria"></span></span>
+                  </p>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div class="rounded bg-bg/60 p-2">
+                    <p class="text-[9px] text-text-muted uppercase">Cartera</p>
+                    <p class="text-sm tabular font-semibold" :class="siigo.saldo > 0 ? 'text-warning' : 'text-success'"
+                       x-text="plata(siigo.saldo)"></p>
+                  </div>
+                  <div class="rounded bg-bg/60 p-2">
+                    <p class="text-[9px] text-text-muted uppercase">Compró 12m</p>
+                    <p class="text-sm tabular font-semibold" x-text="plata(siigo.total_12m)"></p>
+                  </div>
+                </div>
+                <div x-show="siigo.ultimas_facturas.length">
+                  <p class="text-[9px] text-text-muted uppercase mb-1">Últimas facturas</p>
+                  <template x-for="f in siigo.ultimas_facturas" :key="f.name">
+                    <div class="flex justify-between text-[11px] py-0.5 border-b border-border/20">
+                      <span x-text="f.name + ' · ' + f.date"></span>
+                      <span class="tabular" x-text="plata(f.total)"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+          <!-- notas -->
+          <div>
+            <p class="text-[10px] uppercase tracking-wider text-text-muted mb-1.5">Notas internas</p>
+            <div class="flex gap-1.5 mb-2">
+              <input x-model="notaNueva" @keydown.enter="agregarNota()"
+                     placeholder="Agregar nota…"
+                     class="flex-1 text-xs bg-surface-2 ring-1 ring-border rounded-lg px-2.5 py-1.5 min-w-0 placeholder:text-muted">
+              <button @click="agregarNota()" class="text-xs bg-surface-2 ring-1 ring-border rounded-lg px-2.5 hover:text-accent">+</button>
+            </div>
+            <template x-for="n in notas" :key="n.id">
+              <div class="text-xs bg-surface-2/60 rounded-lg p-2 mb-1.5">
+                <p x-text="n.texto"></p>
+                <p class="text-[9px] text-text-muted mt-1" x-text="n.username + ' · ' + horaCorta(n.created_at)"></p>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<script>
+function crmInbox() {
+  return {
+    lineas: [], etapas: [], chats: [],
+    chatActivo: null, siigo: null, notas: [],
+    filtroLinea: 0, busqueda: '', verArchivados: false,
+    borrador: '', enviando: false, errorEnvio: '',
+    nombreEdit: '', notaNueva: '', panelInfo: false,
+    _timer: null,
+
+    async init() {
+      const [ls, es] = await Promise.all([
+        fetch('/api/crm/lineas').then(r => r.json()),
+        fetch('/api/crm/etapas').then(r => r.json()),
+      ]);
+      this.lineas = ls.items; this.etapas = es.items;
+      await this.cargarChats();
+      const qchat = new URLSearchParams(location.search).get('chat');
+      if (qchat) this.abrirChat(parseInt(qchat));
+      this._timer = setInterval(() => this.refrescar(), 5000);
+    },
+
+    subtitulo() {
+      const n = this.chats.reduce((a, c) => a + (c.unread || 0), 0);
+      return n > 0 ? n + ' mensajes sin leer' : 'Al día ✓';
+    },
+
+    async cargarChats() {
+      const p = new URLSearchParams({
+        linea_id: this.filtroLinea || 0,
+        q: this.busqueda,
+        archivado: this.verArchivados ? 1 : 0,
+      });
+      const d = await fetch('/api/crm/chats?' + p).then(r => r.json());
+      this.chats = d.items;
+    },
+
+    async abrirChat(id) {
+      const d = await fetch('/api/crm/chats/' + id).then(r => r.json());
+      this.chatActivo = d;
+      this.nombreEdit = d.chat.nombre_custom || '';
+      this.errorEnvio = ''; this.siigo = null; this.notas = [];
+      this.$nextTick(() => this.scrollAbajo());
+      fetch('/api/crm/contactos/' + d.chat.contacto_id + '/siigo')
+        .then(r => r.json()).then(s => this.siigo = s);
+      fetch('/api/crm/chats/' + id + '/notas')
+        .then(r => r.json()).then(n => this.notas = n.items);
+      const c = this.chats.find(x => x.id === id);
+      if (c) c.unread = 0;
+    },
+
+    async refrescar() {
+      await this.cargarChats();
+      if (this.chatActivo) {
+        const id = this.chatActivo.id ?? this.chatActivo.chat.id;
+        const d = await fetch('/api/crm/chats/' + this.chatActivo.chat.id).then(r => r.json());
+        const creció = d.mensajes.length !== this.chatActivo.mensajes.length;
+        d.chat.etapa_id = this.chatActivo.chat.etapa_id;  // no pisar el select mientras edita
+        this.chatActivo.mensajes = d.mensajes;
+        if (creció) this.$nextTick(() => this.scrollAbajo());
+      }
+    },
+
+    scrollAbajo() {
+      const el = this.$refs.scroll;
+      if (el) el.scrollTop = el.scrollHeight;
+    },
+
+    async enviar() {
+      const texto = this.borrador.trim();
+      if (!texto || this.enviando) return;
+      this.enviando = true; this.errorEnvio = '';
+      try {
+        const r = await fetch('/api/crm/chats/' + this.chatActivo.chat.id + '/enviar', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({texto}),
+        }).then(r => r.json());
+        if (!r.ok) { this.errorEnvio = r.error || 'Error al enviar'; }
+        else {
+          this.borrador = '';
+          await this.refrescar();
+        }
+      } finally { this.enviando = false; }
+    },
+
+    async cambiarEtapa(etapaId) {
+      this.chatActivo.chat.etapa_id = parseInt(etapaId);
+      await fetch('/api/crm/chats/' + this.chatActivo.chat.id + '/etapa', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({etapa_id: parseInt(etapaId)}),
+      });
+      this.cargarChats();
+    },
+
+    async archivar() {
+      const nuevo = this.chatActivo.chat.archivado ? 0 : 1;
+      await fetch('/api/crm/chats/' + this.chatActivo.chat.id + '/archivar', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({archivado: nuevo}),
+      });
+      this.chatActivo = null;
+      this.cargarChats();
+    },
+
+    async guardarNombre() {
+      await fetch('/api/crm/contactos/' + this.chatActivo.chat.contacto_id, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({nombre_custom: this.nombreEdit}),
+      });
+      this.chatActivo.chat.nombre_custom = this.nombreEdit;
+      this.cargarChats();
+    },
+
+    async agregarNota() {
+      const texto = this.notaNueva.trim();
+      if (!texto) return;
+      await fetch('/api/crm/chats/' + this.chatActivo.chat.id + '/notas', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({texto}),
+      });
+      this.notaNueva = '';
+      const n = await fetch('/api/crm/chats/' + this.chatActivo.chat.id + '/notas').then(r => r.json());
+      this.notas = n.items;
+    },
+
+    nombreDe(c) { return c.nombre_custom || c.siigo_name || c.nombre_wa || ('+' + c.telefono); },
+    nombreActivo() {
+      const ch = this.chatActivo.chat;
+      return ch.nombre_custom || ch.nombre_wa || ('+' + ch.telefono);
+    },
+    iniciales(n) {
+      return (n || '?').replace('+', '').split(/\s+/).slice(0, 2).map(x => x[0]).join('').toUpperCase();
+    },
+    horaCorta(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      const hoy = new Date();
+      if (d.toDateString() === hoy.toDateString())
+        return d.toLocaleTimeString('es-CO', {hour: '2-digit', minute: '2-digit'});
+      return d.toLocaleDateString('es-CO', {day: '2-digit', month: 'short'});
+    },
+    checkStatus(s) {
+      return {sent: '✓', delivered: '✓✓', read: '✓✓', failed: '⚠'}[s] || '';
+    },
+    plata(v) {
+      return '$' + Math.round(v || 0).toLocaleString('es-CO');
+    },
+  };
+}
+</script>
+{% endblock %}
