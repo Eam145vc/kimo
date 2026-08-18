@@ -46,6 +46,12 @@
                         x-text="c.unread"></span>
                 </div>
                 <p class="text-[10px] text-text-muted truncate mt-1" x-text="c.last_msg_preview || '—'"></p>
+                <div class="flex flex-wrap gap-1 mt-1.5" x-show="c.etiquetas">
+                  <template x-for="t in parseEtiquetas(c.etiquetas)" :key="t.id">
+                    <span class="text-[8px] px-1.5 py-px rounded-full text-bg font-medium"
+                          :style="'background:' + t.color" x-text="t.nombre"></span>
+                  </template>
+                </div>
                 <div class="flex items-center justify-between mt-1.5">
                   <span class="text-[9px] text-text-muted" x-text="c.linea_nombre"></span>
                   <span class="text-[9px] text-text-muted" x-text="horaCorta(c.last_msg_at)"></span>
@@ -88,6 +94,13 @@ function crmPipeline() {
     },
 
     nombreDe(c) { return c.nombre_custom || c.siigo_name || c.nombre_wa || ('+' + c.telefono); },
+    parseEtiquetas(s) {
+      if (!s) return [];
+      return s.split(';').map(x => {
+        const [id, nombre, color] = x.split('|');
+        return {id: parseInt(id), nombre, color};
+      });
+    },
     horaCorta(ts) {
       if (!ts) return '';
       const d = new Date(ts), hoy = new Date();

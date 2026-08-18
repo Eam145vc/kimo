@@ -553,6 +553,19 @@ CREATE TABLE IF NOT EXISTS wa_mensajes (
 );
 CREATE INDEX IF NOT EXISTS idx_wa_msgs_chat ON wa_mensajes(chat_id, ts);
 
+-- Etiquetas libres (tags) para chats
+CREATE TABLE IF NOT EXISTS crm_etiquetas (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre  TEXT UNIQUE NOT NULL,
+    color   TEXT NOT NULL DEFAULT '#4FC4E8'
+);
+
+CREATE TABLE IF NOT EXISTS wa_chat_etiquetas (
+    chat_id     INTEGER NOT NULL REFERENCES wa_chats(id),
+    etiqueta_id INTEGER NOT NULL REFERENCES crm_etiquetas(id),
+    PRIMARY KEY (chat_id, etiqueta_id)
+);
+
 -- Notas internas por chat (no se envian al cliente)
 CREATE TABLE IF NOT EXISTS crm_notas (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

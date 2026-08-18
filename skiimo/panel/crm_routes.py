@@ -389,10 +389,19 @@ async def api_etapas(session_token: str | None = Cookie(default=None)):
     return {"items": [dict(r) for r in rows]}
 
 
+# Subquery reutilizada: etiquetas del chat como "id|nombre|color;id|nombre|color"
+_SQL_ETIQUETAS = (
+    "(SELECT GROUP_CONCAT(e2.id || '|' || e2.nombre || '|' || e2.color, ';') "
+    " FROM wa_chat_etiquetas ce JOIN crm_etiquetas e2 ON e2.id = ce.etiqueta_id "
+    " WHERE ce.chat_id = ch.id) AS etiquetas"
+)
+
+
 @router.get("/api/crm/chats")
 async def api_chats(
     session_token: str | None = Cookie(default=None),
     linea_id: int = 0, etapa_id: int = 0, q: str = "", archivado: int = 0,
+    etiqueta_id: int = 0,
 ):
     user = _require_crm(session_token)
     permitidas = _lineas_permitidas(user)
@@ -407,6 +416,11 @@ async def api_chats(
         where.append("ch.linea_id = ?"); params.append(linea_id)
     if etapa_id:
         where.append("ch.etapa_id = ?"); params.append(etapa_id)
+    if etiqueta_id:
+        where.append(
+            "EXISTS (SELECT 1 FROM wa_chat_etiquetas ce WHERE ce.chat_id = ch.id AND ce.etiqueta_id = ?)"
+        )
+        params.append(etiqueta_id)
     if q:
         like = f"%{q}%"
         where.append("(co.telefono LIKE ? OR LOWER(COALESCE(co.nombre_custom, co.nombre_wa, '')) LIKE LOWER(?) OR LOWER(COALESCE(sc.name,'')) LIKE LOWER(?))")
@@ -418,7 +432,8 @@ async def api_chats(
                        ch.unread, ch.archivado,
                        co.id AS contacto_id, co.telefono, co.nombre_wa, co.nombre_custom,
                        co.siigo_customer_id, sc.name AS siigo_name,
-                       l.nombre AS linea_nombre, e.nombre AS etapa_nombre, e.color AS etapa_color
+                       l.nombre AS linea_nombre, e.nombre AS etapa_nombre, e.color AS etapa_color,
+                       {_SQL_ETIQUETAS}
                 FROM wa_chats ch
                 JOIN wa_contactos co ON co.id = ch.contacto_id
                 JOIN wa_lineas l ON l.id = ch.linea_id
@@ -457,6 +472,12 @@ async def api_chat_detalle(
         ).fetchall()
         conn.execute("UPDATE wa_chats SET unread = 0 WHERE id = ?", (chat_id,))
         conn.commit()
+        etiquetas = conn.execute(
+            """SELECT e.id, e.nombre, e.color
+               FROM wa_chat_etiquetas ce JOIN crm_etiquetas e ON e.id = ce.etiqueta_id
+               WHERE ce.chat_id = ?""",
+            (chat_id,),
+        ).fetchall()
     finally:
         conn.close()
     mensajes = [dict(r) for r in rows][::-1]
@@ -464,6 +485,7 @@ async def api_chat_detalle(
         "chat": {k: chat[k] for k in (
             "id", "linea_id", "linea_nombre", "etapa_id", "contacto_id", "telefono",
             "nombre_wa", "nombre_custom", "siigo_customer_id", "archivado")},
+        "etiquetas": [dict(r) for r in etiquetas],
         "mensajes": mensajes,
     }
 
@@ -694,6 +716,89 @@ async def api_notas_create(
     return {"ok": True}
 
 
+# =============================================================================
+# API: etiquetas
+# =============================================================================
+
+@router.get("/api/crm/etiquetas")
+async def api_etiquetas(session_token: str | None = Cookie(default=None)):
+    _require_crm(session_token)
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT id, nombre, color FROM crm_etiquetas ORDER BY nombre").fetchall()
+    finally:
+        conn.close()
+    return {"items": [dict(r) for r in rows]}
+
+
+class EtiquetaBody(BaseModel):
+    nombre: str
+    color: str = "#4FC4E8"
+
+
+@router.post("/api/crm/etiquetas")
+async def api_etiqueta_crear(body: EtiquetaBody, session_token: str | None = Cookie(default=None)):
+    _require_crm(session_token)
+    nombre = (body.nombre or "").strip()
+    if not nombre or len(nombre) > 30:
+        return {"ok": False, "error": "Nombre requerido (máx. 30)"}
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO crm_etiquetas (nombre, color) VALUES (?, ?)", (nombre, body.color)
+        )
+        conn.commit()
+        return {"ok": True, "id": cur.lastrowid}
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            return {"ok": False, "error": "Ya existe una etiqueta con ese nombre"}
+        return {"ok": False, "error": str(e)[:200]}
+    finally:
+        conn.close()
+
+
+@router.post("/api/crm/etiquetas/{etiqueta_id}/eliminar")
+async def api_etiqueta_eliminar(etiqueta_id: int, session_token: str | None = Cookie(default=None)):
+    _require_admin(session_token)
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM wa_chat_etiquetas WHERE etiqueta_id = ?", (etiqueta_id,))
+        conn.execute("DELETE FROM crm_etiquetas WHERE id = ?", (etiqueta_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+class ChatEtiquetaBody(BaseModel):
+    etiqueta_id: int
+    poner: int = 1  # 1 = agregar, 0 = quitar
+
+
+@router.post("/api/crm/chats/{chat_id}/etiquetas")
+async def api_chat_etiqueta(
+    chat_id: int, body: ChatEtiquetaBody, session_token: str | None = Cookie(default=None),
+):
+    user = _require_crm(session_token)
+    conn = get_conn()
+    try:
+        _chat_permitido(conn, chat_id, user)
+        if body.poner:
+            conn.execute(
+                "INSERT OR IGNORE INTO wa_chat_etiquetas (chat_id, etiqueta_id) VALUES (?, ?)",
+                (chat_id, body.etiqueta_id),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM wa_chat_etiquetas WHERE chat_id = ? AND etiqueta_id = ?",
+                (chat_id, body.etiqueta_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
 @router.get("/api/crm/pipeline")
 async def api_pipeline(
     session_token: str | None = Cookie(default=None), linea_id: int = 0,
@@ -715,7 +820,8 @@ async def api_pipeline(
         rows = conn.execute(
             f"""SELECT ch.id, ch.etapa_id, ch.last_msg_at, ch.last_msg_preview, ch.unread,
                        co.telefono, co.nombre_wa, co.nombre_custom, sc.name AS siigo_name,
-                       l.nombre AS linea_nombre
+                       l.nombre AS linea_nombre,
+                       {_SQL_ETIQUETAS}
                 FROM wa_chats ch
                 JOIN wa_contactos co ON co.id = ch.contacto_id
                 JOIN wa_lineas l ON l.id = ch.linea_id

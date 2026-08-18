@@ -19,6 +19,13 @@
           </template>
         </select>
       </template>
+      <select x-model.number="filtroEtiqueta" @change="cargarChats()"
+              class="text-sm bg-surface-2 ring-1 ring-border rounded-lg px-3 py-2 text-text">
+        <option value="0">Todas las etiquetas</option>
+        <template x-for="e in etiquetas" :key="e.id">
+          <option :value="e.id" x-text="e.nombre"></option>
+        </template>
+      </select>
       <button @click="verArchivados = !verArchivados; cargarChats()"
               class="text-xs px-3 py-2 rounded-lg ring-1 ring-border transition-colors"
               :class="verArchivados ? 'bg-accent/10 text-accent' : 'bg-surface-2 text-text-muted hover:text-text'">
@@ -61,10 +68,14 @@
                         class="flex-shrink-0 h-4 min-w-4 px-1 rounded-full bg-accent text-bg text-[10px] font-bold flex items-center justify-center"
                         x-text="c.unread"></span>
                 </div>
-                <div class="flex items-center gap-1.5 mt-1">
+                <div class="flex items-center gap-1.5 mt-1 flex-wrap">
                   <span class="text-[9px] px-1.5 py-px rounded-full ring-1 ring-inset"
                         :style="'color:' + (c.etapa_color || '#5b6b8f') + '; border-color:' + (c.etapa_color || '#5b6b8f')"
                         x-text="c.etapa_nombre || 'Sin etapa'"></span>
+                  <template x-for="t in parseEtiquetas(c.etiquetas)" :key="t.id">
+                    <span class="text-[9px] px-1.5 py-px rounded-full text-bg font-medium"
+                          :style="'background:' + t.color" x-text="t.nombre"></span>
+                  </template>
                   <span x-show="lineas.length > 1" class="text-[9px] text-text-muted" x-text="c.linea_nombre"></span>
                   <span x-show="c.siigo_name" class="text-[9px] text-success">● Siigo</span>
                 </div>
@@ -217,6 +228,26 @@
               </div>
             </template>
           </div>
+          <!-- etiquetas -->
+          <div>
+            <p class="text-[10px] uppercase tracking-wider text-text-muted mb-1.5">Etiquetas</p>
+            <div class="flex flex-wrap gap-1.5 mb-2">
+              <template x-for="e in etiquetas" :key="e.id">
+                <button @click="toggleEtiqueta(e)"
+                        class="text-[10px] px-2 py-1 rounded-full font-medium transition-all ring-1 ring-inset"
+                        :style="tieneEtiqueta(e.id)
+                          ? 'background:' + e.color + '; color:#080d1a; border-color:' + e.color
+                          : 'color:' + e.color + '; border-color:' + e.color + '; opacity:.6'"
+                        x-text="e.nombre"></button>
+              </template>
+            </div>
+            <div class="flex gap-1.5">
+              <input x-model="nuevaEtiqueta" @keydown.enter="crearEtiqueta()"
+                     placeholder="Nueva etiqueta…"
+                     class="flex-1 text-xs bg-surface-2 ring-1 ring-border rounded-lg px-2.5 py-1.5 min-w-0 placeholder:text-muted">
+              <button @click="crearEtiqueta()" class="text-xs bg-surface-2 ring-1 ring-border rounded-lg px-2.5 hover:text-accent">+</button>
+            </div>
+          </div>
           <!-- notas -->
           <div>
             <p class="text-[10px] uppercase tracking-wider text-text-muted mb-1.5">Notas internas</p>
@@ -242,19 +273,21 @@
 <script>
 function crmInbox() {
   return {
-    lineas: [], etapas: [], chats: [],
-    chatActivo: null, siigo: null, notas: [],
-    filtroLinea: 0, busqueda: '', verArchivados: false,
+    lineas: [], etapas: [], etiquetas: [], chats: [],
+    chatActivo: null, siigo: null, notas: [], chatEtiquetas: [],
+    filtroLinea: 0, filtroEtiqueta: 0, busqueda: '', verArchivados: false,
     borrador: '', enviando: false, errorEnvio: '',
-    nombreEdit: '', notaNueva: '', panelInfo: false,
+    nombreEdit: '', notaNueva: '', nuevaEtiqueta: '', panelInfo: false,
     _timer: null,
+    _paleta: ['#4FC4E8', '#f59e0b', '#22c55e', '#a78bfa', '#ef4444', '#ec4899', '#14b8a6', '#f97316'],
 
     async init() {
-      const [ls, es] = await Promise.all([
+      const [ls, es, ts] = await Promise.all([
         fetch('/api/crm/lineas').then(r => r.json()),
         fetch('/api/crm/etapas').then(r => r.json()),
+        fetch('/api/crm/etiquetas').then(r => r.json()),
       ]);
-      this.lineas = ls.items; this.etapas = es.items;
+      this.lineas = ls.items; this.etapas = es.items; this.etiquetas = ts.items;
       await this.cargarChats();
       const qchat = new URLSearchParams(location.search).get('chat');
       if (qchat) this.abrirChat(parseInt(qchat));
@@ -269,6 +302,7 @@ function crmInbox() {
     async cargarChats() {
       const p = new URLSearchParams({
         linea_id: this.filtroLinea || 0,
+        etiqueta_id: this.filtroEtiqueta || 0,
         q: this.busqueda,
         archivado: this.verArchivados ? 1 : 0,
       });
@@ -280,6 +314,7 @@ function crmInbox() {
       const d = await fetch('/api/crm/chats/' + id).then(r => r.json());
       this.chatActivo = d;
       this.nombreEdit = d.chat.nombre_custom || '';
+      this.chatEtiquetas = (d.etiquetas || []).map(e => e.id);
       this.errorEnvio = ''; this.siigo = null; this.notas = [];
       this.$nextTick(() => this.scrollAbajo());
       fetch('/api/crm/contactos/' + d.chat.contacto_id + '/siigo')
@@ -362,6 +397,42 @@ function crmInbox() {
       this.notaNueva = '';
       const n = await fetch('/api/crm/chats/' + this.chatActivo.chat.id + '/notas').then(r => r.json());
       this.notas = n.items;
+    },
+
+    tieneEtiqueta(id) { return this.chatEtiquetas.includes(id); },
+
+    async toggleEtiqueta(e) {
+      const poner = this.tieneEtiqueta(e.id) ? 0 : 1;
+      if (poner) this.chatEtiquetas.push(e.id);
+      else this.chatEtiquetas = this.chatEtiquetas.filter(x => x !== e.id);
+      await fetch('/api/crm/chats/' + this.chatActivo.chat.id + '/etiquetas', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({etiqueta_id: e.id, poner}),
+      });
+      this.cargarChats();
+    },
+
+    async crearEtiqueta() {
+      const nombre = this.nuevaEtiqueta.trim();
+      if (!nombre) return;
+      const color = this._paleta[this.etiquetas.length % this._paleta.length];
+      const r = await fetch('/api/crm/etiquetas', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({nombre, color}),
+      }).then(r => r.json());
+      if (!r.ok) { alert(r.error || 'Error'); return; }
+      this.nuevaEtiqueta = '';
+      this.etiquetas = (await fetch('/api/crm/etiquetas').then(r => r.json())).items;
+      const nueva = this.etiquetas.find(e => e.id === r.id);
+      if (nueva && this.chatActivo) this.toggleEtiqueta(nueva);
+    },
+
+    parseEtiquetas(s) {
+      if (!s) return [];
+      return s.split(';').map(x => {
+        const [id, nombre, color] = x.split('|');
+        return {id: parseInt(id), nombre, color};
+      });
     },
 
     nombreDe(c) { return c.nombre_custom || c.siigo_name || c.nombre_wa || ('+' + c.telefono); },
